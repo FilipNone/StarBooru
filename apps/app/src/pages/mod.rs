@@ -3,6 +3,7 @@ mod login;
 mod post;
 mod settings;
 mod shell;
+mod tags;
 mod trash;
 mod upload;
 
@@ -12,6 +13,7 @@ pub use gallery::Gallery;
 pub use post::PostView;
 pub use settings::Settings;
 pub use shell::Shell;
+pub use tags::{TagPage, Tags};
 pub use trash::Trash;
 pub use upload::Upload;
 

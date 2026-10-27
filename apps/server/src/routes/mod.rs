@@ -52,7 +52,17 @@ pub fn router(state: AppState) -> Router {
         .route("/trash/empty", post(trash::empty))
         .route("/posts/{id}/vote", put(posts::vote))
         .route("/tags", get(tags::list))
-        .route("/tags/{name}", axum::routing::patch(tags::update))
+        .route("/tags/{name}", get(tags::detail).patch(tags::update))
+        .route("/tags/{name}/aliases", post(tags::add_alias))
+        .route(
+            "/tags/{name}/aliases/{alias}",
+            axum::routing::delete(tags::remove_alias),
+        )
+        .route("/tags/{name}/implications", post(tags::add_implication))
+        .route(
+            "/tags/{name}/implications/{implied}",
+            axum::routing::delete(tags::remove_implication),
+        )
         .fallback(api_not_found)
         .layer(CompressionLayer::new());
 

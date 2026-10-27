@@ -4,12 +4,15 @@ use dioxus::prelude::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Icon {
+    Add,
     Check,
+    Close,
     Delete,
     DeleteForever,
     Download,
     Edit,
     Gallery,
+    Label,
     Logout,
     Play,
     Restore,
@@ -24,7 +27,11 @@ pub enum Icon {
 impl Icon {
     fn path(self) -> &'static str {
         match self {
+            Icon::Add => "M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z",
             Icon::Check => "M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z",
+            Icon::Close => {
+                "M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"
+            }
             Icon::Delete => {
                 "M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"
             }
@@ -37,6 +44,9 @@ impl Icon {
             }
             Icon::Gallery => {
                 "M22 16V4c0-1.1-.9-2-2-2H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2zm-11-4l2.03 2.71L16 11l4 5H8l3-4zM2 6v14c0 1.1.9 2 2 2h14v-2H4V6H2z"
+            }
+            Icon::Label => {
+                "M17.63 5.84C17.27 5.33 16.67 5 16 5L5 5.01C3.9 5.01 3 5.9 3 7v10c0 1.1.9 1.99 2 1.99L16 19c.67 0 1.27-.33 1.63-.84L22 12l-4.37-6.16z"
             }
             Icon::Logout => {
                 "M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z"

@@ -9,7 +9,7 @@ mod util;
 
 use dioxus::prelude::*;
 
-use crate::pages::{Gallery, NotFound, PostView, Settings, Shell, Trash, Upload};
+use crate::pages::{Gallery, NotFound, PostView, Settings, Shell, TagPage, Tags, Trash, Upload};
 use crate::store::{PREFS, SESSION};
 
 const MAIN_CSS: Asset = asset!("/assets/main.css");
@@ -22,6 +22,10 @@ pub enum Route {
         Gallery { q: String },
         #[route("/post/:id")]
         PostView { id: i64 },
+        #[route("/tags")]
+        Tags {},
+        #[route("/tag?:name")]
+        TagPage { name: String },
         #[route("/upload")]
         Upload {},
         #[route("/settings")]

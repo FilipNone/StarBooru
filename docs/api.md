@@ -81,8 +81,15 @@ Browse the bin with `GET /posts?q=status:deleted`. `STARBOORU_TRASH_DAYS` purges
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
-| GET | `/tags?prefix=&limit=` | | `Tag[]`, by usage. With `prefix` it is the autocomplete list. |
-| PATCH | `/tags/{name}` | `{category}` | `Tag`. Categories: `general`, `artist`, `character`, `copyright`, `meta`. |
+| GET | `/tags?q=&order=&page=&limit=` | | `Tag[]`. `order` is `count` (most used first, the default) or `name`. Without `q`, only tags in use are listed. With `q` it is the autocomplete list: tags whose name or alias starts with `q`. `limit` is 1–100 (default 20). |
+| GET | `/tags/{name}` | | `TagDetail {tag, aliases, implies, implied_by}`. An alias resolves to its tag. 404 if neither exists. |
+| PATCH | `/tags/{name}` | `{category}` | `Tag`. Categories: `general`, `artist`, `character`, `copyright`, `meta`. Any signed-in user. |
+| POST | `/tags/{name}/aliases` | `{alias}` | `TagDetail`. Admin only. If a tag called `alias` exists, it is merged in: its posts, aliases and implications move to `{name}` and it is deleted. 400 if `alias` is the tag itself. |
+| DELETE | `/tags/{name}/aliases/{alias}` | | `TagDetail`. Admin only. |
+| POST | `/tags/{name}/implications` | `{implies}` | `TagDetail`. Admin only. Missing tags are created. Posts that already have `{name}` get the implied tags (transitively). 409 `implication_cycle` if `implies` already implies `{name}`; 400 if they are the same tag. |
+| DELETE | `/tags/{name}/implications/{implied}` | | `TagDetail`. Admin only. Posts keep the tags they already got. |
+
+Tags are resolved the same way everywhere: an alias in a post's tags or in a search means its tag, and implied tags are added whenever tags are set on a post. Implied tags are stored on the post, so they show up in its tag list and in searches. Path segments are percent-encoded.
 
 ## Media
 

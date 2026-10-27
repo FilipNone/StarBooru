@@ -24,7 +24,7 @@ _Status as of 2026-10-27. Scope comes from `docs/checklist.md`._
 |---|---|---|
 | docker | ✅ | `Dockerfile`, `docker-compose.yml` for Dokploy, healthcheck, non-root user |
 | blazingly fast database | 🟡 | Tags as an `int[]` with a GIN index, partial indexes, counts kept in step. Not yet benchmarked at 1M posts. |
-| tag system | 🟡 | Normalisation, categories, autocomplete. Missing: aliases, implications, a tag page. |
+| tag system | ✅ | Normalisation, categories, autocomplete (also by alias), aliases (adding one merges an existing tag), transitive implications applied to old and new posts, cycle detection. A Tags tab lists tags by use or name, and each tag has a page to edit its category, aliases and implications. |
 | score system | ✅ | Up/down votes, `order:score` |
 | feature rich and fast sorting | ✅ | Newest, oldest, score, file size, resolution, tag count, last edit and random, in either direction (`_asc`/`_desc`). Each sort has a partial index on live posts. A sort menu sits in the gallery header. |
 | grid view of media | ✅ | |

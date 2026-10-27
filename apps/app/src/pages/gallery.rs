@@ -83,6 +83,9 @@ pub fn Gallery(q: String) -> Element {
     };
     // The sort menu shows the order, so the title leaves it out.
     let title = with_order(&q, None);
+    // A search for one plain tag links to that tag's page.
+    let single_tag = (!title.is_empty() && !title.contains([' ', ':']) && !title.starts_with('-'))
+        .then(|| title.clone());
     let is_empty = posts.read().is_empty() && !loading() && error().is_none() && !has_more();
 
     rsx! {
@@ -90,6 +93,12 @@ pub fn Gallery(q: String) -> Element {
             div { class: "page-head",
                 h1 { class: if title.is_empty() { "page-title visually-hidden" } else { "page-title" },
                     if title.is_empty() { "Gallery" } else { "{title}" }
+                }
+                if let Some(name) = single_tag {
+                    Link { class: "icon-btn tag-info", title: "About this tag", aria_label: "About this tag",
+                        to: Route::TagPage { name },
+                        Ico { icon: Icon::Label }
+                    }
                 }
                 SortMenu { q: q.clone() }
             }

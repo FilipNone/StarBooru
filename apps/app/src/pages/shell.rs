@@ -41,6 +41,7 @@ fn NavItems(route: Route) -> Element {
             Icon::Gallery,
             "Gallery",
         ),
+        (Route::Tags {}, Icon::Label, "Tags"),
         (Route::Upload {}, Icon::Upload, "Upload"),
         (Route::Settings {}, Icon::Tune, "Settings"),
     ];

@@ -5,7 +5,7 @@ use axum::http::StatusCode;
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use sqlx::{FromRow, Postgres, QueryBuilder, Transaction};
-use starbooru_core::query::SortKey;
+use starbooru_core::query::{SearchQuery, SortKey};
 use starbooru_core::tag::normalize_tags;
 use starbooru_core::{
     DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT, MediaKind, Post, PostPage, PostUpdate, Rating, VoteRequest,
@@ -104,16 +104,18 @@ async fn load(state: &AppState, user_id: i64, id: i64) -> AppResult<Post> {
     Ok(to_post(state, load_row(state, user_id, id).await?))
 }
 
-async fn tag_ids(state: &AppState, names: &[String]) -> AppResult<Vec<i64>> {
+/// Ids of the tags `names` refer to (aliases resolved), and how many distinct
+/// tags were asked for.
+async fn tag_ids(state: &AppState, names: &[String]) -> AppResult<(Vec<i64>, usize)> {
+    let names = super::tags::canonical_names(&state.db, names).await?;
     if names.is_empty() {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), 0));
     }
-    Ok(
-        sqlx::query_scalar("SELECT id FROM tags WHERE name = ANY($1)")
-            .bind(names)
-            .fetch_all(&state.db)
-            .await?,
-    )
+    let ids = sqlx::query_scalar("SELECT id FROM tags WHERE name = ANY($1)")
+        .bind(&names)
+        .fetch_all(&state.db)
+        .await?;
+    Ok((ids, names.len()))
 }
 
 /// Sort expression for a key; the id is always the tie-breaker. These match
@@ -126,6 +128,39 @@ fn sort_column(key: SortKey) -> Option<&'static str> {
         SortKey::Pixels => Some("(p.width::bigint * p.height)"),
         SortKey::TagCount => Some("cardinality(p.tag_ids)"),
         SortKey::Updated => Some("p.updated_at"),
+    }
+}
+
+/// ` WHERE ...` for a parsed search, given its resolved tag ids.
+fn push_filters(
+    qb: &mut QueryBuilder<Postgres>,
+    query: &SearchQuery,
+    include: Vec<i64>,
+    exclude: Vec<i64>,
+) {
+    qb.push(if query.deleted {
+        " WHERE p.deleted_at IS NOT NULL"
+    } else {
+        " WHERE p.deleted_at IS NULL"
+    });
+    if !include.is_empty() {
+        qb.push(" AND p.tag_ids @> ").push_bind(include);
+    }
+    if !exclude.is_empty() {
+        qb.push(" AND NOT (p.tag_ids && ")
+            .push_bind(exclude)
+            .push(")");
+    }
+    if !query.ratings.is_empty() {
+        let r: Vec<i16> = query.ratings.iter().map(|r| r.to_db()).collect();
+        qb.push(" AND p.rating = ANY(").push_bind(r).push(")");
+    }
+    if !query.exclude_ratings.is_empty() {
+        let r: Vec<i16> = query.exclude_ratings.iter().map(|r| r.to_db()).collect();
+        qb.push(" AND NOT (p.rating = ANY(").push_bind(r).push("))");
+    }
+    if let Some(kind) = query.kind {
+        qb.push(" AND p.kind = ").push_bind(kind.to_db());
     }
 }
 
@@ -158,37 +193,14 @@ pub async fn search(
         })
     };
 
-    let include = tag_ids(&state, &query.include).await?;
-    if include.len() < query.include.len() {
+    let (include, wanted) = tag_ids(&state, &query.include).await?;
+    if include.len() < wanted {
         return Ok(empty()); // a required tag does not exist
     }
-    let exclude = tag_ids(&state, &query.exclude).await?;
+    let (exclude, _) = tag_ids(&state, &query.exclude).await?;
 
     let mut qb = select_posts(user.id);
-    qb.push(if query.deleted {
-        " WHERE p.deleted_at IS NOT NULL"
-    } else {
-        " WHERE p.deleted_at IS NULL"
-    });
-    if !include.is_empty() {
-        qb.push(" AND p.tag_ids @> ").push_bind(include);
-    }
-    if !exclude.is_empty() {
-        qb.push(" AND NOT (p.tag_ids && ")
-            .push_bind(exclude)
-            .push(")");
-    }
-    if !query.ratings.is_empty() {
-        let r: Vec<i16> = query.ratings.iter().map(|r| r.to_db()).collect();
-        qb.push(" AND p.rating = ANY(").push_bind(r).push(")");
-    }
-    if !query.exclude_ratings.is_empty() {
-        let r: Vec<i16> = query.exclude_ratings.iter().map(|r| r.to_db()).collect();
-        qb.push(" AND NOT (p.rating = ANY(").push_bind(r).push("))");
-    }
-    if let Some(kind) = query.kind {
-        qb.push(" AND p.kind = ").push_bind(kind.to_db());
-    }
+    push_filters(&mut qb, &query, include, exclude);
     if query.order.key == SortKey::Random {
         qb.push(" ORDER BY random()");
     } else {
@@ -359,21 +371,14 @@ fn clean_source(raw: String) -> AppResult<Option<String>> {
     Ok(Some(s.to_owned()))
 }
 
-/// Replaces a live post's tags, creating missing tags and keeping
-/// `tags.post_count` in step.
+/// Replaces a live post's tags (aliases resolved, implications added),
+/// creating missing tags and keeping `tags.post_count` in step.
 async fn set_tags(
     tx: &mut Transaction<'_, Postgres>,
     post_id: i64,
     names: &[String],
 ) -> AppResult<()> {
-    sqlx::query("INSERT INTO tags (name) SELECT unnest($1::text[]) ON CONFLICT (name) DO NOTHING")
-        .bind(names)
-        .execute(&mut **tx)
-        .await?;
-    let new_ids: Vec<i64> = sqlx::query_scalar("SELECT id FROM tags WHERE name = ANY($1)")
-        .bind(names)
-        .fetch_all(&mut **tx)
-        .await?;
+    let new_ids = super::tags::resolve_for_post(tx, names).await?;
     let old_ids: Vec<i64> = sqlx::query_scalar(
         "SELECT tag_ids FROM posts WHERE id = $1 AND deleted_at IS NULL FOR UPDATE",
     )

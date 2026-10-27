@@ -46,12 +46,14 @@ PostgreSQL schema: `apps/server/migrations/`.
 | `tags` | Normalised name, category (general / artist / character / copyright / meta) and a `post_count` kept in step inside the same transaction as post edits |
 | `posts` | One per file: `sha256` (unique, so duplicates are refused), format, size, dimensions, rating, source, score, `tag_ids BIGINT[]`, `deleted_at` (soft delete) |
 | `post_votes` | One vote per user and post, −1 or +1. `posts.score` is their sum. |
+| `tag_aliases` | `alias → tag_id`. Aliases are resolved when tagging, searching and in autocomplete. |
+| `tag_implications` | `tag_id → implied_id`. Expanded transitively (a recursive CTE) when tags are set, so implied tags are stored on posts. Cycles are refused. Edits take an advisory lock, since they may rewrite many posts. |
 
 ### Search
 
 Tags are stored on each post as a `BIGINT[]` with a GIN index. A query like `blue_sky night -cloud rating:g order:score` becomes:
 
-1. The tag names are resolved to ids. If an included tag doesn't exist, the result is empty, with no scan.
+1. The tag names are resolved to ids, following aliases. If an included tag doesn't exist, the result is empty, with no scan.
 2. The SQL is `tag_ids @> {include} AND NOT tag_ids && {exclude} AND rating = ANY(...)`.
 3. Rows are ordered by id, score or random, and paginated by limit and offset (at most 200 per page).
 
@@ -85,5 +87,5 @@ Media URLs look like `/media/thumb/<sha>.jpg?exp=…&sig=…`:
 | File | Role |
 |---|---|
 | `store.rs` | The session (server URL, token, user) and preferences (theme, accent hue) in global signals. They persist to `localStorage` on the web and to `<config dir>/StarBooru/state.json` on native. |
-| `pages/` | `shell` (top bar, search with tag autocomplete, navigation; bottom bar on phones), `login`, `gallery` (infinite scroll), `post` (viewer, votes, edit, delete/restore), `upload` (drag and drop, queue), `trash` (recycle bin), `settings` |
+| `pages/` | `shell` (top bar, search with tag autocomplete, navigation; bottom bar on phones), `login`, `gallery` (infinite scroll), `post` (viewer, votes, edit, delete/restore), `upload` (drag and drop, queue), `trash` (recycle bin), `tags` (tag list; tag page with category, aliases and implications), `settings` |
 | `assets/main.css` | The design system. Material-You-style colour roles come from one OKLCH seed hue (`--seed-hue`), with light, dark and system themes. Glass applies to the bars only. Animations use spring easing and are disabled under reduced motion. |

@@ -249,6 +249,38 @@ pub struct TagUpdate {
     pub category: TagCategory,
 }
 
+/// A tag with its aliases and implications (`GET /tags/{name}`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TagDetail {
+    pub tag: Tag,
+    /// Other names that resolve to this tag.
+    pub aliases: Vec<String>,
+    /// Tags added automatically to every post with this tag.
+    pub implies: Vec<Tag>,
+    /// Tags that add this one.
+    pub implied_by: Vec<Tag>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AliasRequest {
+    pub alias: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImplicationRequest {
+    pub implies: String,
+}
+
+/// Sort order of the tag list.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TagOrder {
+    /// Most used first.
+    #[default]
+    Count,
+    Name,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PurgeResult {
     /// Posts permanently deleted.

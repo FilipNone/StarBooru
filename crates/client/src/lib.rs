@@ -7,8 +7,9 @@ use reqwest::{Method, RequestBuilder, StatusCode, header};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use starbooru_core::{
-    API_PREFIX, ApiError, AuthResponse, Credentials, Post, PostPage, PostUpdate, PurgeResult,
-    Rating, ServerInfo, Tag, TagUpdate, User, VoteRequest,
+    API_PREFIX, AliasRequest, ApiError, AuthResponse, Credentials, ImplicationRequest, Post,
+    PostPage, PostUpdate, PurgeResult, Rating, ServerInfo, Tag, TagDetail, TagOrder, TagUpdate,
+    User, VoteRequest,
 };
 use thiserror::Error;
 use url::Url;
@@ -213,11 +214,76 @@ impl Client {
         Self::send(req).await
     }
 
+    /// One page of the tag list, optionally filtered by a name prefix.
+    pub async fn tag_list(
+        &self,
+        prefix: &str,
+        order: TagOrder,
+        page: u32,
+        limit: u32,
+    ) -> Result<Vec<Tag>> {
+        let order = match order {
+            TagOrder::Count => "count",
+            TagOrder::Name => "name",
+        };
+        let req = self.request(Method::GET, "/tags")?.query(&[
+            ("q", prefix.to_owned()),
+            ("order", order.to_owned()),
+            ("page", page.to_string()),
+            ("limit", limit.to_string()),
+        ]);
+        Self::send(req).await
+    }
+
+    /// A tag with its aliases and implications. An alias resolves to its tag.
+    pub async fn tag(&self, name: &str) -> Result<TagDetail> {
+        Self::send(self.request(Method::GET, &format!("/tags/{}", segment(name)))?).await
+    }
+
     pub async fn update_tag(&self, name: &str, update: &TagUpdate) -> Result<Tag> {
-        let name = url::form_urlencoded::byte_serialize(name.as_bytes()).collect::<String>();
-        self.json(Method::PATCH, &format!("/tags/{name}"), update)
+        self.json(Method::PATCH, &format!("/tags/{}", segment(name)), update)
             .await
     }
+
+    /// Admins: makes `alias` another name for the tag, merging an existing
+    /// tag of that name into it.
+    pub async fn add_alias(&self, name: &str, alias: &str) -> Result<TagDetail> {
+        let body = AliasRequest {
+            alias: alias.to_owned(),
+        };
+        self.json(
+            Method::POST,
+            &format!("/tags/{}/aliases", segment(name)),
+            &body,
+        )
+        .await
+    }
+
+    pub async fn remove_alias(&self, name: &str, alias: &str) -> Result<TagDetail> {
+        let path = format!("/tags/{}/aliases/{}", segment(name), segment(alias));
+        Self::send(self.request(Method::DELETE, &path)?).await
+    }
+
+    /// Admins: every post tagged `name` also gets `implies`.
+    pub async fn add_implication(&self, name: &str, implies: &str) -> Result<TagDetail> {
+        let body = ImplicationRequest {
+            implies: implies.to_owned(),
+        };
+        let path = format!("/tags/{}/implications", segment(name));
+        self.json(Method::POST, &path, &body).await
+    }
+
+    pub async fn remove_implication(&self, name: &str, implied: &str) -> Result<TagDetail> {
+        let path = format!("/tags/{}/implications/{}", segment(name), segment(implied));
+        Self::send(self.request(Method::DELETE, &path)?).await
+    }
+}
+
+/// Percent-encodes one URL path segment.
+fn segment(s: &str) -> String {
+    url::form_urlencoded::byte_serialize(s.as_bytes())
+        .collect::<String>()
+        .replace('+', "%20")
 }
 
 async fn check(resp: reqwest::Response) -> Result<reqwest::Response> {
@@ -262,5 +328,13 @@ mod tests {
             c.absolute("/media/thumb/ab.jpg?sig=1"),
             "https://b.example.com/sub/media/thumb/ab.jpg?sig=1"
         );
+    }
+
+    #[test]
+    fn encodes_path_segments() {
+        assert_eq!(segment("blue_sky"), "blue_sky");
+        assert_eq!(segment("a/b?c#d"), "a%2Fb%3Fc%23d");
+        assert_eq!(segment("c++ x"), "c%2B%2B%20x");
+        assert_eq!(segment("città"), "citt%C3%A0");
     }
 }
