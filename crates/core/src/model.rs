@@ -284,6 +284,10 @@ pub struct Post {
     pub file_url: String,
     /// Signed, server-relative URL of the thumbnail, if one exists.
     pub thumb_url: Option<String>,
+    /// Signed, server-relative URL of a smaller JPEG copy for viewing, for
+    /// big still images. The original stays the download.
+    #[serde(default)]
+    pub sample_url: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

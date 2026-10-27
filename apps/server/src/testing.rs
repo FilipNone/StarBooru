@@ -76,7 +76,8 @@ pub async fn app_with(tweak: impl FnOnce(&mut Config)) -> Option<TestApp> {
     let storage = Storage::open(&config.data_dir)
         .await
         .unwrap()
-        .with_tools(config.tools.clone());
+        .with_tools(config.tools.clone())
+        .with_samples(config.samples);
     let state = AppState::new(config, db, storage);
     let router = crate::routes::router(state.clone());
     Some(TestApp {
@@ -248,6 +249,23 @@ pub fn png(w: u32, h: u32, seed: u32) -> Vec<u8> {
             ((v >> 8) & 0xff) as u8,
             (seed & 0xff) as u8,
         ])
+    });
+    let mut out = Cursor::new(Vec::new());
+    img.write_to(&mut out, image::ImageFormat::Png).unwrap();
+    out.into_inner()
+}
+
+/// Generated noise, which compresses badly: a PNG this size is big enough
+/// to get a sample.
+pub fn noise_png(w: u32, h: u32, seed: u32) -> Vec<u8> {
+    let mut state = seed.wrapping_mul(2_654_435_761) | 1;
+    let img = image::RgbImage::from_fn(w, h, |_, _| {
+        // xorshift32
+        state ^= state << 13;
+        state ^= state >> 17;
+        state ^= state << 5;
+        let [r, g, b, _] = state.to_le_bytes();
+        image::Rgb([r, g, b])
     });
     let mut out = Cursor::new(Vec::new());
     img.write_to(&mut out, image::ImageFormat::Png).unwrap();

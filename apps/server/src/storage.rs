@@ -3,13 +3,18 @@
 //! ```text
 //! <data>/original/ab/cd/<sha256>.<ext>
 //! <data>/thumb/ab/cd/<sha256>.jpg
+//! <data>/sample/ab/cd/<sha256>.jpg
 //! ```
 
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
+use image::codecs::jpeg::JpegEncoder;
+use image::imageops::FilterType;
 use image::metadata::Orientation;
-use image::{DynamicImage, ImageDecoder, ImageReader, Limits, Rgb, RgbImage};
+use image::{
+    DynamicImage, ExtendedColorType, ImageDecoder, ImageEncoder, ImageReader, Limits, Rgb, RgbImage,
+};
 use sha2::{Digest, Sha256};
 use starbooru_core::MediaKind;
 
@@ -20,6 +25,14 @@ use crate::similar::Fingerprint;
 pub const THUMB_SIZE: u32 = 512;
 const THUMB_EXT: &str = "jpg";
 const THUMB_QUALITY: u8 = 85;
+/// Samples fit in this square.
+pub const SAMPLE_SIZE: u32 = 2560;
+const SAMPLE_EXT: &str = "jpg";
+const SAMPLE_QUALITY: u8 = 85;
+/// Originals smaller than this are shown as they are.
+const SAMPLE_MIN_BYTES: usize = 1 << 20;
+/// A sample is kept only when it is at most this percentage of the original.
+const SAMPLE_MAX_PERCENT: usize = 75;
 /// Refuse to decode images whose pixel buffers would exceed this.
 const MAX_DECODE_BYTES: u64 = 1 << 30;
 
@@ -27,6 +40,8 @@ const MAX_DECODE_BYTES: u64 = 1 << 30;
 pub enum Variant {
     Original,
     Thumb,
+    /// A smaller copy of a big image, for viewing.
+    Sample,
 }
 
 impl Variant {
@@ -34,6 +49,7 @@ impl Variant {
         match self {
             Variant::Original => "original",
             Variant::Thumb => "thumb",
+            Variant::Sample => "sample",
         }
     }
 
@@ -41,6 +57,7 @@ impl Variant {
         match s {
             "original" => Some(Variant::Original),
             "thumb" => Some(Variant::Thumb),
+            "sample" => Some(Variant::Sample),
             _ => None,
         }
     }
@@ -59,6 +76,9 @@ pub struct Ingested {
     pub has_thumb: bool,
     /// The thumbnail's fingerprint for the duplicate finder.
     pub print: Option<Fingerprint>,
+    /// Whether a sample was made; `None` when samples are off, so they
+    /// can be made later.
+    pub has_sample: Option<bool>,
 }
 
 /// What ffmpeg found in a file `image` can't decode.
@@ -90,11 +110,12 @@ const FORMATS: &[(&str, &str, MediaKind, bool)] = &[
 pub struct Storage {
     root: PathBuf,
     tools: Option<Tools>,
+    samples: bool,
 }
 
 impl Storage {
     pub async fn open(root: &Path) -> std::io::Result<Self> {
-        for v in [Variant::Original, Variant::Thumb] {
+        for v in [Variant::Original, Variant::Thumb, Variant::Sample] {
             tokio::fs::create_dir_all(root.join(v.as_str())).await?;
         }
         let tmp = root.join("tmp");
@@ -107,6 +128,7 @@ impl Storage {
         Ok(Self {
             root: root.to_path_buf(),
             tools: None,
+            samples: true,
         })
     }
 
@@ -114,6 +136,16 @@ impl Storage {
     pub fn with_tools(mut self, tools: Option<Tools>) -> Self {
         self.tools = tools;
         self
+    }
+
+    /// Turns making samples on or off (on by default).
+    pub fn with_samples(mut self, samples: bool) -> Self {
+        self.samples = samples;
+        self
+    }
+
+    pub fn makes_samples(&self) -> bool {
+        self.samples
     }
 
     pub fn has_tools(&self) -> bool {
@@ -145,6 +177,7 @@ impl Storage {
         match variant {
             Variant::Original => format!("{sha_hex}.{ext}"),
             Variant::Thumb => format!("{sha_hex}.{THUMB_EXT}"),
+            Variant::Sample => format!("{sha_hex}.{SAMPLE_EXT}"),
         }
     }
 
@@ -182,12 +215,21 @@ impl Storage {
         let sha256: [u8; 32] = Sha256::digest(bytes).into();
         let sha_hex = hex::encode(sha256);
 
-        let (mut width, mut height, mut thumb) = (None, None, None);
+        let (mut width, mut height, mut thumb, mut sample) = (None, None, None, None);
+        let mut has_sample = Some(false);
         if decodable {
             let img = decode(bytes)?;
             width = i32::try_from(img.width()).ok();
             height = i32::try_from(img.height()).ok();
             thumb = Some(make_thumbnail(&img)?);
+            if kind == MediaKind::Image {
+                if self.samples {
+                    sample = make_sample(&img, bytes);
+                    has_sample = Some(sample.is_some());
+                } else {
+                    has_sample = None;
+                }
+            }
         }
 
         let original = self
@@ -199,6 +241,9 @@ impl Storage {
         self.write_atomic(&original, bytes)?;
         if let Some(jpeg) = &thumb {
             self.write_thumb(&sha_hex, ext, jpeg)?;
+        }
+        if let Some(jpeg) = &sample {
+            self.write_sample(&sha_hex, jpeg)?;
         }
         let mut derived = Derived {
             width,
@@ -221,7 +266,41 @@ impl Storage {
             duration_ms: derived.duration_ms,
             has_thumb: derived.has_thumb,
             print: derived.print,
+            has_sample,
         })
+    }
+
+    /// Makes the sample of a stored original, for posts uploaded before
+    /// samples existed. `false` when it doesn't need one or can't be read;
+    /// only disk errors fail. Call from a blocking thread.
+    pub fn make_sample_for(&self, sha_hex: &str, ext: &str) -> AppResult<bool> {
+        let original = self
+            .original_path(sha_hex, ext)
+            .ok_or_else(|| AppError::internal("bad storage path"))?;
+        let bytes = match std::fs::read(&original) {
+            Ok(b) => b,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(e) => return Err(AppError::internal(e)),
+        };
+        let Some(sample) = decode(&bytes)
+            .ok()
+            .and_then(|img| make_sample(&img, &bytes))
+        else {
+            return Ok(false);
+        };
+        self.write_sample(sha_hex, &sample)?;
+        Ok(true)
+    }
+
+    fn write_sample(&self, sha_hex: &str, jpeg: &[u8]) -> AppResult<()> {
+        let path = self
+            .path_for_file(
+                Variant::Sample,
+                &Self::file_name(Variant::Sample, sha_hex, SAMPLE_EXT),
+            )
+            .ok_or_else(|| AppError::internal("bad storage path"))?;
+        self.write_atomic(&path, jpeg)?;
+        Ok(())
     }
 
     /// Dimensions, duration and a thumbnail through ffmpeg, for a stored
@@ -277,9 +356,10 @@ impl Storage {
         Ok(())
     }
 
-    /// Deletes a post's original and thumbnail. Missing files are not an error.
+    /// Deletes a post's original, thumbnail and sample. Missing files are
+    /// not an error.
     pub fn remove(&self, sha_hex: &str, ext: &str) -> std::io::Result<()> {
-        for variant in [Variant::Original, Variant::Thumb] {
+        for variant in [Variant::Original, Variant::Thumb, Variant::Sample] {
             let Some(path) = self.path_for_file(variant, &Self::file_name(variant, sha_hex, ext))
             else {
                 continue;
@@ -333,6 +413,63 @@ fn fingerprint_jpeg(bytes: &[u8]) -> Option<Fingerprint> {
     decode(bytes).ok().map(|img| Fingerprint::of(&img))
 }
 
+/// A JPEG copy of a big still image that fits in `SAMPLE_SIZE`² and keeps
+/// the original's colour profile. `None` when the original is small, has
+/// transparency, or the copy wouldn't save at least a quarter of its size.
+fn make_sample(img: &DynamicImage, original: &[u8]) -> Option<Vec<u8>> {
+    if original.len() < SAMPLE_MIN_BYTES || !is_opaque(img) {
+        return None;
+    }
+    let small;
+    let src = if img.width() > SAMPLE_SIZE || img.height() > SAMPLE_SIZE {
+        small = img.resize(SAMPLE_SIZE, SAMPLE_SIZE, FilterType::CatmullRom);
+        &small
+    } else {
+        img
+    };
+    let rgb = src.to_rgb8();
+    let mut out = Vec::new();
+    let mut encoder = JpegEncoder::new_with_quality(&mut out, SAMPLE_QUALITY);
+    if let Some(icc) = icc_profile(original) {
+        // Unsupported profiles are left out; the colours are then sRGB.
+        let _ = encoder.set_icc_profile(icc);
+    }
+    encoder
+        .write_image(
+            rgb.as_raw(),
+            rgb.width(),
+            rgb.height(),
+            ExtendedColorType::Rgb8,
+        )
+        .ok()?;
+    let worth_it =
+        out.len().saturating_mul(100) <= original.len().saturating_mul(SAMPLE_MAX_PERCENT);
+    worth_it.then_some(out)
+}
+
+/// Whether every pixel is fully opaque, so JPEG loses nothing there.
+fn is_opaque(img: &DynamicImage) -> bool {
+    match img {
+        DynamicImage::ImageLumaA8(b) => b.pixels().all(|p| p.0[1] == u8::MAX),
+        DynamicImage::ImageRgba8(b) => b.pixels().all(|p| p.0[3] == u8::MAX),
+        DynamicImage::ImageLumaA16(b) => b.pixels().all(|p| p.0[1] == u16::MAX),
+        DynamicImage::ImageRgba16(b) => b.pixels().all(|p| p.0[3] == u16::MAX),
+        other if other.color().has_alpha() => other.to_rgba8().pixels().all(|p| p.0[3] == u8::MAX),
+        _ => true,
+    }
+}
+
+fn icc_profile(bytes: &[u8]) -> Option<Vec<u8>> {
+    ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()?
+        .into_decoder()
+        .ok()?
+        .icc_profile()
+        .ok()
+        .flatten()
+}
+
 /// Fits the image in `THUMB_SIZE`² (never enlarging it), flattens
 /// transparency onto white, JPEG.
 fn make_thumbnail(img: &DynamicImage) -> AppResult<Vec<u8>> {
@@ -348,7 +485,7 @@ fn make_thumbnail(img: &DynamicImage) -> AppResult<Vec<u8>> {
         Rgb([blend(r), blend(g), blend(b)])
     });
     let mut out = Vec::new();
-    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, THUMB_QUALITY)
+    JpegEncoder::new_with_quality(&mut out, THUMB_QUALITY)
         .encode_image(&rgb)
         .map_err(AppError::internal)?;
     Ok(out)
@@ -363,6 +500,126 @@ mod tests {
         let mut out = Cursor::new(Vec::new());
         img.write_to(&mut out, image::ImageFormat::Png).unwrap();
         out.into_inner()
+    }
+
+    fn rgba_noise(w: u32, h: u32, alpha: u8) -> DynamicImage {
+        let rgb = image::load_from_memory(&crate::testing::noise_png(w, h, 9)).unwrap();
+        let mut rgba = rgb.to_rgba8();
+        for p in rgba.pixels_mut() {
+            p.0[3] = alpha;
+        }
+        DynamicImage::ImageRgba8(rgba)
+    }
+
+    fn encoded(img: &DynamicImage, format: image::ImageFormat) -> Vec<u8> {
+        let mut out = Cursor::new(Vec::new());
+        img.write_to(&mut out, format).unwrap();
+        out.into_inner()
+    }
+
+    #[test]
+    fn samples_only_big_opaque_images() {
+        let png = crate::testing::noise_png(3000, 500, 1);
+        assert!(png.len() > SAMPLE_MIN_BYTES);
+        let img = decode(&png).unwrap();
+        let sample = make_sample(&img, &png).unwrap();
+        assert!(sample.len() * 100 <= png.len() * SAMPLE_MAX_PERCENT);
+        let s = decode(&sample).unwrap();
+        assert_eq!(s.width(), SAMPLE_SIZE);
+        assert!((426..=427).contains(&s.height()), "{}", s.height());
+
+        // Fits already: the same size, only re-encoded.
+        let png = crate::testing::noise_png(800, 600, 2);
+        let s = decode(&make_sample(&decode(&png).unwrap(), &png).unwrap()).unwrap();
+        assert_eq!((s.width(), s.height()), (800, 600));
+
+        // Small files, transparency and already compact JPEGs are left alone.
+        let small = png_bytes(64, 64);
+        assert_eq!(make_sample(&decode(&small).unwrap(), &small), None);
+        let clear = rgba_noise(800, 600, 128);
+        assert_eq!(
+            make_sample(&clear, &encoded(&clear, image::ImageFormat::Png)),
+            None
+        );
+        let solid = rgba_noise(800, 600, 255);
+        assert!(make_sample(&solid, &encoded(&solid, image::ImageFormat::Png)).is_some());
+        let photo = rgba_noise(1600, 1200, 255).to_rgb8();
+        let mut jpeg = Vec::new();
+        JpegEncoder::new_with_quality(&mut jpeg, SAMPLE_QUALITY)
+            .encode_image(&photo)
+            .unwrap();
+        assert!(jpeg.len() > SAMPLE_MIN_BYTES);
+        assert_eq!(make_sample(&decode(&jpeg).unwrap(), &jpeg), None);
+    }
+
+    #[test]
+    fn samples_keep_the_colour_profile() {
+        let img = decode(&crate::testing::noise_png(800, 600, 4))
+            .unwrap()
+            .to_rgb8();
+        // Any bytes do: the encoders store the profile without reading it.
+        let icc: Vec<u8> = (0..=255u8).cycle().take(3000).collect();
+        let mut png = Vec::new();
+        let mut encoder = image::codecs::png::PngEncoder::new(&mut png);
+        encoder.set_icc_profile(icc.clone()).unwrap();
+        encoder
+            .write_image(img.as_raw(), 800, 600, ExtendedColorType::Rgb8)
+            .unwrap();
+        let sample = make_sample(&decode(&png).unwrap(), &png).unwrap();
+        assert_eq!(icc_profile(&sample), Some(icc));
+        assert_eq!(icc_profile(b"not an image"), None);
+    }
+
+    #[test]
+    fn opacity() {
+        assert!(is_opaque(&rgba_noise(4, 4, 255)));
+        assert!(!is_opaque(&rgba_noise(4, 4, 254)));
+        let luma = DynamicImage::ImageLumaA16(image::ImageBuffer::from_pixel(
+            2,
+            2,
+            image::LumaA([7u16, u16::MAX]),
+        ));
+        assert!(is_opaque(&luma));
+        assert!(is_opaque(&DynamicImage::new_rgb8(2, 2)));
+        assert!(!is_opaque(&DynamicImage::new_rgba32f(2, 2)));
+    }
+
+    #[tokio::test]
+    async fn stores_and_removes_samples() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(dir.path()).await.unwrap();
+        let png = crate::testing::noise_png(800, 600, 3);
+        let info = storage.ingest(&png).unwrap();
+        assert_eq!(info.has_sample, Some(true));
+        let sha = hex::encode(info.sha256);
+        let path = storage
+            .path_for_file(
+                Variant::Sample,
+                &Storage::file_name(Variant::Sample, &sha, "png"),
+            )
+            .unwrap();
+        assert!(path.ends_with(format!("{sha}.jpg")));
+        assert_eq!(
+            image::guess_format(&std::fs::read(&path).unwrap()).unwrap(),
+            image::ImageFormat::Jpeg
+        );
+
+        // Made again for an original stored without one.
+        std::fs::remove_file(&path).unwrap();
+        assert!(storage.make_sample_for(&sha, "png").unwrap());
+        assert!(path.exists());
+        assert!(!storage.make_sample_for(&"0".repeat(64), "png").unwrap());
+        storage.remove(&sha, "png").unwrap();
+        assert!(!path.exists());
+
+        // Small images have none; with samples off, they're left for later.
+        assert_eq!(
+            storage.ingest(&png_bytes(64, 64)).unwrap().has_sample,
+            Some(false)
+        );
+        let off = Storage::open(dir.path()).await.unwrap().with_samples(false);
+        assert_eq!(off.ingest(&png).unwrap().has_sample, None);
+        assert!(!path.exists());
     }
 
     #[test]
@@ -455,6 +712,7 @@ mod tests {
         let s = Storage {
             root: PathBuf::from("/data"),
             tools: None,
+            samples: true,
         };
         let sha = "a".repeat(64);
         assert!(

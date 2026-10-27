@@ -735,3 +735,10 @@ editor-bin-original = Move the original to the recycle bin
 editor-copy-hint = The result is saved as a new post with the same tags, rating and source.
 editor-save = Save as new post
 editor-saving = Saving…
+
+## Smaller copies
+
+post-sample-note = Showing a smaller copy. Zooming in loads the original.
+post-show-original = Show original
+settings-originals = Always open originals in the viewer
+settings-originals-hint = Big images otherwise open as a smaller copy, which loads faster and uses less data.

@@ -80,6 +80,7 @@ Partial indexes cover live posts, so the recycle bin doesn't slow normal browsin
 ```text
 /data/original/ab/cd/<sha256>.<ext>
 /data/thumb/ab/cd/<sha256>.jpg
+/data/sample/ab/cd/<sha256>.jpg
 /data/tmp/            (staging; writes are atomic renames)
 ```
 
@@ -92,6 +93,13 @@ Uploads are sniffed by content, not by name. Accepted formats:
 | MP4, WebM, MKV, MOV | video |
 
 Thumbnails are JPEGs at most 512px on the long side. The `image` crate decodes the common formats. For video, AVIF and JPEG XL the server asks ffmpeg for a frame (10% into a video, at most 5 s) and ffprobe for the size and length (`posts.duration_ms`). Without ffmpeg those posts have no thumbnail and the client shows a placeholder. Images are decoded with their EXIF orientation applied, so thumbnails, sizes and edits match what a browser shows. At each start a background task retries posts that are still missing one. The gallery plays a muted preview of a video while the mouse is over it.
+
+Originals are kept byte for byte. Big still images also get a **sample**, a smaller copy that the viewer and share pages show instead. The rules:
+- The original is a JPEG, PNG, WebP, BMP or TIFF of at least 1 MiB, with no transparency.
+- The copy is a JPEG at quality 85, at most 2560 px on the long side, with the original's colour profile.
+- It is kept only when it is at most 75% of the original's size. Already compact JPEGs have none.
+
+`posts.has_sample` is null until a post has been looked at. A background task at each start makes samples for older posts. `STARBOORU_SAMPLES=false` stops making them. The viewer swaps in the original when you zoom in or tap *Show original*, or always with Settings › *Always open originals*. Downloads and the editor use the original.
 
 Media URLs look like `/media/thumb/<sha>.jpg?exp=…&sig=…`:
 - The signature is an HMAC-SHA256 keyed by `STARBOORU_SECRET`.

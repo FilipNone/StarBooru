@@ -36,6 +36,7 @@ pub(super) struct PostRow {
     height: Option<i32>,
     duration_ms: Option<i64>,
     has_thumb: bool,
+    has_sample: Option<bool>,
     rating: i16,
     source: Option<String>,
     score: i32,
@@ -49,7 +50,7 @@ pub(super) struct PostRow {
 fn post_columns(user_id: i64) -> QueryBuilder<Postgres> {
     let mut qb = QueryBuilder::new(
         "SELECT p.id, p.sha256, p.ext, p.mime, p.kind, p.file_size, p.width, p.height, \
-         p.duration_ms, p.has_thumb, p.rating, p.source, p.score, p.created_at, p.deleted_at, \
+         p.duration_ms, p.has_thumb, p.has_sample, p.rating, p.source, p.score, p.created_at, p.deleted_at, \
          COALESCE((SELECT array_agg(t.name ORDER BY t.name) FROM tags t \
                    WHERE t.id = ANY(p.tag_ids)), '{}'::text[]) AS tags, \
          COALESCE((SELECT v.value FROM post_votes v \
@@ -105,9 +106,21 @@ pub(super) fn media_urls(
     (file_url, thumb_url)
 }
 
+/// Signed URL of a post's sample, if it has one.
+pub(super) fn sample_url(state: &AppState, sha: &str, has_sample: Option<bool>) -> Option<String> {
+    (has_sample == Some(true)).then(|| {
+        state.signer.url(
+            Variant::Sample,
+            &Storage::file_name(Variant::Sample, sha, ""),
+            Utc::now().timestamp(),
+        )
+    })
+}
+
 pub(super) fn to_post(state: &AppState, row: PostRow) -> Post {
     let sha = hex::encode(&row.sha256);
     let (file_url, thumb_url) = media_urls(state, &sha, &row.ext, row.has_thumb);
+    let sample_url = sample_url(state, &sha, row.has_sample);
     Post {
         id: row.id,
         kind: MediaKind::from_db(row.kind).unwrap_or(MediaKind::Image),
@@ -126,6 +139,7 @@ pub(super) fn to_post(state: &AppState, row: PostRow) -> Post {
         deleted: row.deleted_at.is_some(),
         file_url,
         thumb_url,
+        sample_url,
     }
 }
 
@@ -518,8 +532,8 @@ async fn insert_post(
     check_quota(&mut *tx, user.id, file_size).await?;
     let id: i64 = sqlx::query_scalar(
         "INSERT INTO posts (sha256, ext, mime, kind, file_size, width, height, duration_ms, \
-         has_thumb, rating, source, uploader_id, phash, pcolor) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING id",
+         has_thumb, rating, source, uploader_id, phash, pcolor, has_sample) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING id",
     )
     .bind(info.sha256.as_slice())
     .bind(info.ext)
@@ -535,6 +549,7 @@ async fn insert_post(
     .bind(user.id)
     .bind(info.print.map(|p| p.hash_db()))
     .bind(info.print.map(|p| p.color_db()))
+    .bind(info.has_sample)
     .fetch_one(&mut *tx)
     .await
     .map_err(|e| match AppError::from(e) {
@@ -619,6 +634,64 @@ pub async fn backfill_media(state: AppState) {
     }
     if done > 0 {
         tracing::info!("media backfill: updated {done} posts");
+    }
+}
+
+/// At startup: samples for big images not looked at yet (uploaded before
+/// samples existed, or while they were off).
+pub async fn backfill_samples(state: AppState) {
+    if !state.storage.makes_samples() {
+        return;
+    }
+    let mut after = 0i64;
+    let mut made = 0u64;
+    loop {
+        let batch: Result<Vec<(i64, Vec<u8>, String)>, _> = sqlx::query_as(
+            "SELECT id, sha256, ext FROM posts WHERE has_sample IS NULL AND id > $1 \
+             ORDER BY id LIMIT 50",
+        )
+        .bind(after)
+        .fetch_all(&state.db)
+        .await;
+        let batch = match batch {
+            Ok(b) if !b.is_empty() => b,
+            Ok(_) => break,
+            Err(e) => {
+                warn!("sample backfill stopped: {e}");
+                return;
+            }
+        };
+        for (id, sha, ext) in batch {
+            after = id;
+            let sha_hex = hex::encode(sha);
+            let st = state.clone();
+            let made_one =
+                tokio::task::spawn_blocking(move || st.storage.make_sample_for(&sha_hex, &ext))
+                    .await;
+            let has_sample = match made_one {
+                Ok(Ok(made_one)) => made_one,
+                Ok(Err(e)) => {
+                    warn!("sample backfill: post {id}: {e}");
+                    continue;
+                }
+                Err(e) => {
+                    warn!("sample backfill: post {id}: {e}");
+                    continue;
+                }
+            };
+            let updated = sqlx::query("UPDATE posts SET has_sample = $2 WHERE id = $1")
+                .bind(id)
+                .bind(has_sample)
+                .execute(&state.db)
+                .await;
+            match updated {
+                Ok(_) => made += u64::from(has_sample),
+                Err(e) => warn!("sample backfill: post {id}: {e}"),
+            }
+        }
+    }
+    if made > 0 {
+        tracing::info!("sample backfill: made {made} samples");
     }
 }
 
@@ -1245,6 +1318,77 @@ mod tests {
         );
         let thumb = app.get(p["thumb_url"].as_str().unwrap(), &t).await;
         assert_eq!(thumb.status, axum::http::StatusCode::OK);
+        app.finish().await;
+    }
+
+    #[tokio::test]
+    async fn big_images_get_samples() {
+        let Some(app) = testing::app_with(|c| c.samples = false).await else {
+            return;
+        };
+        let t = app.register("admin").await;
+        let big = testing::noise_png(800, 600, 1);
+        let r = app.upload(&t, &big, &[("tags", "noise")]).await.json();
+        let late = r["id"].as_i64().unwrap();
+        assert!(r["sample_url"].is_null());
+        let small = app.upload_png(&t, 1, "small").await;
+
+        // Turned on later: the backfill makes the missing ones.
+        let mut config = app.state.config.clone();
+        config.samples = true;
+        let storage = crate::storage::Storage::open(&config.data_dir)
+            .await
+            .unwrap();
+        let on = crate::state::AppState::new(config, app.state.db.clone(), storage);
+        super::backfill_samples(on.clone()).await;
+        let p = app.get(&format!("/api/v1/posts/{late}"), &t).await.json();
+        let url = p["sample_url"].as_str().unwrap().to_owned();
+        assert!(url.starts_with("/media/sample/"), "{url}");
+        let sample = app.call(Method::GET, &url, None, None).await;
+        assert_eq!(sample.status, StatusCode::OK);
+        assert_eq!(sample.headers["content-type"], "image/jpeg");
+        assert!(sample.body.len() < big.len());
+        let p = app.get(&format!("/api/v1/posts/{small}"), &t).await.json();
+        assert!(p["sample_url"].is_null());
+        let pending: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM posts WHERE has_sample IS NULL")
+                .fetch_one(app.db())
+                .await
+                .unwrap();
+        assert_eq!(pending, 0);
+
+        // With samples on, an upload gets one at once, and so does an edit.
+        let router = crate::routes::router(on);
+        let req = |method: Method, path: String, body: Option<serde_json::Value>| {
+            let mut b = axum::http::Request::builder()
+                .method(method)
+                .uri(path)
+                .header("authorization", format!("Bearer {t}"));
+            let body = match body {
+                Some(v) => {
+                    b = b.header("content-type", "application/json");
+                    axum::body::Body::from(v.to_string())
+                }
+                None => axum::body::Body::empty(),
+            };
+            b.body(body).unwrap()
+        };
+        use tower::ServiceExt;
+        let edited = router
+            .clone()
+            .oneshot(req(
+                Method::POST,
+                format!("/api/v1/posts/{late}/edit"),
+                Some(serde_json::json!({ "rotate": 90 })),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(edited.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(edited.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let edited: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(edited["sample_url"].is_string(), "{edited}");
         app.finish().await;
     }
 

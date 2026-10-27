@@ -14,7 +14,7 @@ mod shares;
 mod tags;
 mod trash;
 
-pub use posts::{backfill_hashes, backfill_media};
+pub use posts::{backfill_hashes, backfill_media, backfill_samples};
 pub use trash::auto_purge;
 
 use std::any::Any;

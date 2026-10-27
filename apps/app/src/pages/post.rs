@@ -78,6 +78,14 @@ pub fn PostView(id: i64, q: String) -> Element {
         spawn(async move { handle(client.post(id).await) });
     };
     let mut zoom = use_signal(Zoom::default);
+    // Set once the original is wanted instead of the sample: zooming in
+    // asks for the detail only the original has.
+    let mut original = use_signal(|| false);
+    use_effect(move || {
+        if zoom().is_zoomed() && !*original.peek() {
+            original.set(true);
+        }
+    });
     let rect = use_signal(|| None::<PixelsRect>);
     let mut full = use_signal(|| false);
     // The props as signals, for the key handler, which outlives a render.
@@ -87,6 +95,7 @@ pub fn PostView(id: i64, q: String) -> Element {
         editing.set(false);
         media_editing.set(false);
         zoom.set(Zoom::default());
+        original.set(false);
         reload(id);
     }));
     use_effect(use_reactive!(|id, q| current.set((id, q))));
@@ -194,6 +203,11 @@ pub fn PostView(id: i64, q: String) -> Element {
     let client = store::client();
     let abs = |u: &str| client.as_ref().map(|c| c.absolute(u)).unwrap_or_default();
     let file_url = abs(&p.file_url);
+    let sample = p
+        .sample_url
+        .as_deref()
+        .filter(|_| !original() && !store::PREFS.read().originals)
+        .map(abs);
     let ext = p.mime.rsplit('/').next().unwrap_or("bin").to_owned();
     let alt = p.tags.join(" ");
     let added = p.created_at.format("%Y-%m-%d %H:%M").to_string();
@@ -213,7 +227,7 @@ pub fn PostView(id: i64, q: String) -> Element {
         div { class: "page post-layout",
             Stage {
                 kind: p.kind,
-                src: file_url.clone(),
+                src: sample.clone().unwrap_or_else(|| file_url.clone()),
                 alt,
                 zoom,
                 full,
@@ -343,6 +357,12 @@ pub fn PostView(id: i64, q: String) -> Element {
                         dt { {t!("post-added")} } dd { "{added}" }
                         if let Some(source) = &p.source {
                             dt { {t!("post-source")} } dd { class: "break", "{source}" }
+                        }
+                    }
+                    if sample.is_some() {
+                        div { class: "sample-note",
+                            p { class: "muted hint", {t!("post-sample-note")} }
+                            button { class: "btn text", onclick: move |_| original.set(true), {t!("post-show-original")} }
                         }
                     }
                 }

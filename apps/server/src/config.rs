@@ -31,6 +31,8 @@ pub struct Config {
     pub instance_name: String,
     /// Posts stay in the recycle bin this many days, then are purged. 0 keeps them.
     pub trash_days: u32,
+    /// Make smaller copies of big images for viewing (`STARBOORU_SAMPLES`, on by default).
+    pub samples: bool,
     /// ffmpeg and ffprobe, for video, AVIF and JPEG XL thumbnails. `None` turns them off.
     pub tools: Option<Tools>,
     /// Which addresses URL import may fetch. `None` turns it off.
@@ -190,6 +192,7 @@ impl Config {
             trust_proxy: flag(get("STARBOORU_TRUST_PROXY")),
             instance_name: get("STARBOORU_NAME").unwrap_or_else(|| "StarBooru".into()),
             trash_days,
+            samples: get("STARBOORU_SAMPLES").is_none_or(|v| flag(Some(v))),
             tools,
             url_import,
             backup_dir,
@@ -212,6 +215,7 @@ impl Config {
             allow_registration: true,
             instance_name: "StarBooru".into(),
             trash_days: 0,
+            samples: true,
             tools: None,
             url_import: Some(Reach::Public),
             trust_proxy: false,
@@ -354,6 +358,14 @@ mod tests {
         assert!(!c.allow_registration);
         assert!(c.web_dir.is_none());
         assert_eq!(c.trash_days, 0);
+        assert!(c.samples);
+        let no_samples = cfg(&[
+            ("DATABASE_URL", "x"),
+            ("STARBOORU_SECRET", SECRET),
+            ("STARBOORU_SAMPLES", "off"),
+        ])
+        .unwrap();
+        assert!(!no_samples.samples);
         let tools = c.tools.unwrap();
         assert_eq!(tools.ffmpeg, std::path::Path::new("ffmpeg"));
         assert_eq!(tools.ffprobe, std::path::Path::new("ffprobe"));

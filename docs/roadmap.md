@@ -40,7 +40,7 @@ _Status as of 2026-10-27. Scope comes from `docs/checklist.md`._
 | login system | ✅ | Accounts, Argon2id, revocable tokens, first user becomes admin. Failed sign-ins are limited per account and address (429 with `Retry-After`). Optional sign-in with an OpenID Connect provider (Authentik, Keycloak, Google…): PKCE, accounts made on first sign-in when registration is open, and provider accounts linked and unlinked in Settings. The desktop app gets the answer through the system browser and a loopback listener. |
 | profile settings | ✅ | Theme, accent and language; password change (signs out other devices); a list of signed-in devices with last activity, sign-out per device and *Sign out everywhere else*. |
 | usage stats / usage limits | ✅ | Each account sees its uploads (posts and bytes) in Settings, with a meter when it has a limit. Admins see every account's usage and set a storage limit per account; uploads past it are refused (`quota_exceeded`). |
-| automatic smart image compression | ⬜ | Originals are kept byte-exact by design. Compressed variants could be added. |
+| automatic smart image compression | ✅ | Originals stay byte-exact. Big opaque images (1 MiB and up) also get a JPEG copy of at most 2560 px, kept only when it saves a quarter or more (a 16 MB PNG became 477 KB). The viewer and share pages show the copy, and switch to the original when you zoom in or tap *Show original*; a setting always opens originals. Older posts get copies at the next start. `STARBOORU_SAMPLES=false` turns it off. |
 | video reproduction offload to client | ✅ | Files are streamed with Range support. There is no server transcoding. |
 | mass edits | ✅ | M2 |
 | administration settings tab / server stats tab | ✅ | Settings › Administration (admins): *Overview* with post, tag, account and storage totals, database size and uploads per day for 30 days; *Accounts* to change roles, disable, reset passwords, set storage limits and delete; *Server* for the name, open registration and recycle-bin days, which apply at once over the environment variables. |
@@ -73,7 +73,7 @@ _Status as of 2026-10-27. Scope comes from `docs/checklist.md`._
 
 | Item | Status | Notes |
 |---|---|---|
-| builds and runs | 🟡 | Same code. The Android build hasn't been run yet (needs the SDK and NDK). |
+| builds and runs | 🟡 | Same code. To be tested. |
 | login | 🟡 | Works in the UI. Session persistence on Android is unverified. |
 | mobile optimised layout | ✅ | Bottom navigation, 3-column grid, stacked viewer |
 | tablet layout, left/right hand modes, ppi optimisation | ⬜ | |

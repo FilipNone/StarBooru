@@ -58,6 +58,9 @@ pub struct SharedPost {
     /// Signed, server-relative URL of the original file.
     pub file_url: String,
     pub thumb_url: Option<String>,
+    /// A smaller copy for viewing, as on `Post`.
+    #[serde(default)]
+    pub sample_url: Option<String>,
 }
 
 /// `GET /shared/{token}`: what a link shows, no account needed.

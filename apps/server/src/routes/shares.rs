@@ -10,7 +10,7 @@ use sqlx::FromRow;
 use starbooru_core::share::{MAX_SHARES, SHARE_TOKEN_CHARS, is_share_token};
 use starbooru_core::{MediaKind, NewShare, Share, SharedPost, SharedView};
 
-use super::posts::media_urls;
+use super::posts::{media_urls, sample_url};
 use crate::auth::AuthUser;
 use crate::error::{AppError, AppResult};
 use crate::settings;
@@ -163,6 +163,7 @@ struct SharedRow {
     sha256: Vec<u8>,
     ext: String,
     has_thumb: bool,
+    has_sample: Option<bool>,
 }
 
 /// Title, posts and expiry of a link just opened.
@@ -186,8 +187,8 @@ pub async fn view(State(state): State<AppState>, Path(token): Path<String>) -> A
     .await?;
     let (title, post_ids, expires_at) = found.ok_or(AppError::NotFound)?;
     let rows: Vec<SharedRow> = sqlx::query_as(
-        "SELECT p.kind, p.mime, p.width, p.height, p.duration_ms, p.sha256, p.ext, p.has_thumb \
-         FROM unnest($1::bigint[]) WITH ORDINALITY AS u(id, n) \
+        "SELECT p.kind, p.mime, p.width, p.height, p.duration_ms, p.sha256, p.ext, p.has_thumb, \
+         p.has_sample FROM unnest($1::bigint[]) WITH ORDINALITY AS u(id, n) \
          JOIN posts p ON p.id = u.id \
          WHERE p.deleted_at IS NULL ORDER BY u.n",
     )
@@ -197,8 +198,8 @@ pub async fn view(State(state): State<AppState>, Path(token): Path<String>) -> A
     let posts = rows
         .into_iter()
         .map(|r| {
-            let (file_url, thumb_url) =
-                media_urls(&state, &hex::encode(&r.sha256), &r.ext, r.has_thumb);
+            let sha = hex::encode(&r.sha256);
+            let (file_url, thumb_url) = media_urls(&state, &sha, &r.ext, r.has_thumb);
             SharedPost {
                 kind: MediaKind::from_db(r.kind).unwrap_or(MediaKind::Image),
                 mime: r.mime,
@@ -207,6 +208,7 @@ pub async fn view(State(state): State<AppState>, Path(token): Path<String>) -> A
                 duration_ms: r.duration_ms,
                 file_url,
                 thumb_url,
+                sample_url: sample_url(&state, &sha, r.has_sample),
             }
         })
         .collect();

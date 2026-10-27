@@ -63,7 +63,8 @@ async fn run() -> Result<(), StartupError> {
 
     let storage = storage::Storage::open(&config.data_dir)
         .await?
-        .with_tools(config.tools.clone());
+        .with_tools(config.tools.clone())
+        .with_samples(config.samples);
     let state = AppState::new(config, db, storage);
     let app = routes::router(state.clone());
     tokio::spawn(routes::auto_purge(state.clone()));
@@ -71,7 +72,8 @@ async fn run() -> Result<(), StartupError> {
     let backfill = state.clone();
     tokio::spawn(async move {
         routes::backfill_media(backfill.clone()).await;
-        routes::backfill_hashes(backfill).await;
+        routes::backfill_hashes(backfill.clone()).await;
+        routes::backfill_samples(backfill).await;
     });
 
     let listener = tokio::net::TcpListener::bind(state.config.bind).await?;

@@ -423,7 +423,7 @@ pub fn SharedPage(token: String) -> Element {
                             if matches!(p.kind, MediaKind::Video) {
                                 video { key: "{i}", src: abs(&p.file_url), controls: true, autoplay: true, playsinline: true }
                             } else {
-                                img { key: "{i}", src: abs(&p.file_url), alt: "" }
+                                img { key: "{i}", src: abs(p.sample_url.as_deref().unwrap_or(&p.file_url)), alt: "" }
                             }
                         }
                         button { class: "lightbox-btn close", aria_label: t!("share-close"),

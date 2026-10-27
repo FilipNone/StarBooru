@@ -136,6 +136,15 @@ pub fn Settings() -> Element {
                         },
                     }
                 }
+                label { class: "check",
+                    input {
+                        r#type: "checkbox",
+                        checked: prefs.originals,
+                        onchange: move |e| PREFS.write().originals = e.checked(),
+                    }
+                    span { {t!("settings-originals")} }
+                }
+                p { class: "muted hint", {t!("settings-originals-hint")} }
             }
 
             section { class: "card",

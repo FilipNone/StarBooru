@@ -735,3 +735,10 @@ editor-bin-original = Sposta l'originale nel cestino
 editor-copy-hint = Il risultato viene salvato come nuovo post con gli stessi tag, classificazione e fonte.
 editor-save = Salva nuovo post
 editor-saving = Salvataggio…
+
+## Smaller copies
+
+post-sample-note = Stai vedendo una copia più leggera. Ingrandendo si carica l’originale.
+post-show-original = Mostra originale
+settings-originals = Apri sempre gli originali nel visualizzatore
+settings-originals-hint = Altrimenti le immagini grandi si aprono come copia più leggera, più veloce e con meno dati.

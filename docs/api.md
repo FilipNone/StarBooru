@@ -133,7 +133,7 @@ A `Backup`'s `url` is a signed path relative to the server, valid for an hour. F
 | POST | `/posts/{id}/edit` | `MediaEdit {rotate?, flip_h?, flip_v?, crop?, trim?, bin_original?}` | `Post`: a new post with the edited file and the original's tags, rating and source. See [Editing media](#editing-media). |
 | PUT | `/posts/{id}/vote` | `{value: -1 \| 0 \| 1}` | `Post` with the new `score` and `my_vote` |
 
-A `Post` carries `file_url` and `thumb_url`. These are signed paths relative to the server, valid for at least 6 hours. Fetch them without the bearer token. `thumb_url` is null when no thumbnail exists. `duration_ms` is the length of a video, or null.
+A `Post` carries `file_url`, `thumb_url` and `sample_url`. These are signed paths relative to the server, valid for at least 6 hours. Fetch them without the bearer token. `thumb_url` is null when no thumbnail exists. `sample_url` is a smaller JPEG copy of a big image, meant for viewing; it is null for most posts, and `file_url` stays the original to download. `duration_ms` is the length of a video, or null.
 
 ### Editing media
 
@@ -218,14 +218,14 @@ A share link shows chosen posts to anyone who has it, without an account. It sho
 | GET | `/shares` | | `Share[] {id, token, title, posts, cover_url, created_at, expires_at, views, last_viewed_at}`, the caller's links, newest first. `posts` counts the posts the link was made with. `cover_url` is the signed thumbnail of the first post still shown, or `null`. `views` counts opens of the public view. Expired links stay listed until removed. |
 | POST | `/shares` | `NewShare {post_ids, title?, days?}` | `Share`. `post_ids` keeps its order, repeats are dropped, 1–500 posts. The title is trimmed, at most 100 characters, and empty means none. `days` is 1–365, or omitted to keep the link until it is removed. 400 if a post doesn't exist or is in the recycle bin, and past 500 links. |
 | DELETE | `/shares/{id}` | | 204; the link stops working at once. 404 if it isn't the caller's. Media URLs already handed out stay valid until their signature expires (up to 12 hours). |
-| GET | `/shared/{token}` | | **No auth.** `SharedView {title, server, expires_at, posts}`, where `posts` are `SharedPost {kind, mime, width, height, duration_ms, file_url, thumb_url}` in the link's order. Posts moved to the recycle bin since are left out. 404 for a malformed, unknown, expired or removed link, or one whose owner is disabled. Answers with `Cache-Control: no-store` and `Referrer-Policy: no-referrer`. |
+| GET | `/shared/{token}` | | **No auth.** `SharedView {title, server, expires_at, posts}`, where `posts` are `SharedPost {kind, mime, width, height, duration_ms, file_url, thumb_url, sample_url}` in the link's order. Posts moved to the recycle bin since are left out. 404 for a malformed, unknown, expired or removed link, or one whose owner is disabled. Answers with `Cache-Control: no-store` and `Referrer-Policy: no-referrer`. |
 
 The page to give out is `/s/{token}` on the server, which the web app serves (`starbooru_core::share::share_path`).
 
 ## Media
 
 ```text
-GET /media/{original|thumb}/{sha256}.{ext}?exp=<unix>&sig=<hex>
+GET /media/{original|thumb|sample}/{sha256}.{ext}?exp=<unix>&sig=<hex>
 ```
 
 Media URLs come from the API, so never build one by hand. Invalid or expired signatures get a 403. Range requests are supported. Responses are cacheable (`private, max-age=21600, immutable`).

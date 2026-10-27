@@ -571,6 +571,8 @@ button.thumb { width: 100%; padding: 0; border: 0; font: inherit; color: inherit
 .meta { display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; margin: 0; font-size: 14px; }
 .meta dt { color: var(--on-surface-2); }
 .meta dd { margin: 0; }
+.sample-note { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+.sample-note .hint { margin: 0; flex: 1 1 180px; font-size: 13px; }
 .edit .field:last-of-type { margin-bottom: 20px; }
 
 @media (max-width: 900px) {

@@ -56,6 +56,8 @@ pub struct Prefs {
     pub last_server: String,
     /// `None` follows the system language.
     pub language: Option<Lang>,
+    /// Show originals in the viewer even when the server has a sample.
+    pub originals: bool,
 }
 
 impl Default for Prefs {
@@ -65,6 +67,7 @@ impl Default for Prefs {
             accent_hue: 285,
             last_server: String::new(),
             language: None,
+            originals: false,
         }
     }
 }
