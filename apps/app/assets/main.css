@@ -346,7 +346,12 @@ input[type="range"] { width: 100%; accent-color: var(--primary); margin-top: 12p
 }
 .gallery .page-head { margin-bottom: 12px; }
 .gallery .page-head .page-title { margin: 0; }
-.gallery .page-head .tag-info { margin-right: auto; margin-left: -8px; }
+.gallery .page-head .tag-info, .gallery .page-head .save-search { margin-left: -8px; }
+.gallery .page-head .tag-info + .save-search { margin-left: -12px; }
+.save-search.on { color: var(--primary); }
+.saved-searches { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 16px; }
+.saved-searches .chip { gap: 6px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.saved-searches .chip svg { flex: none; color: var(--primary); }
 .sort { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; font-size: 14px; }
 .sort select {
   min-height: 40px; padding: 0 36px 0 14px; border: 1px solid var(--outline); border-radius: 999px;

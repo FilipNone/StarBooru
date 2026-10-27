@@ -2,6 +2,7 @@
 
 mod auth;
 mod posts;
+mod searches;
 mod tags;
 mod trash;
 
@@ -54,6 +55,8 @@ pub fn router(state: AppState) -> Router {
         .route("/posts/{id}/purge", post(posts::purge))
         .route("/trash/empty", post(trash::empty))
         .route("/posts/{id}/vote", put(posts::vote))
+        .route("/searches", get(searches::list).post(searches::create))
+        .route("/searches/{id}", axum::routing::delete(searches::delete))
         .route("/tags", get(tags::list))
         .route("/tags/{name}", get(tags::detail).patch(tags::update))
         .route("/tags/{name}/aliases", post(tags::add_alias))

@@ -5,10 +5,12 @@
 
 pub mod model;
 pub mod query;
+pub mod saved;
 pub mod tag;
 
 pub use model::*;
 pub use query::{Order, SearchQuery, SortKey, parse_query, with_order};
+pub use saved::clean_saved_search;
 pub use tag::{normalize_tag, parse_tag_list};
 
 /// Path prefix of the versioned JSON API.

@@ -1,5 +1,6 @@
 use dioxus::prelude::*;
-use starbooru_core::{MediaKind, Order, Post, parse_query, with_order};
+use starbooru_core::saved::MAX_SEARCH_NAME_CHARS;
+use starbooru_core::{MediaKind, Order, Post, SavedSearch, parse_query, with_order};
 
 use super::{ErrorBanner, Spinner};
 use crate::Route;
@@ -77,6 +78,18 @@ pub fn Gallery(q: String) -> Element {
         load_more();
     }));
 
+    // The user's saved searches; `None` until loaded.
+    let mut saved = use_signal(|| None::<Vec<SavedSearch>>);
+    use_hook(move || {
+        if let Some(client) = store::client() {
+            spawn(async move {
+                if let Ok(list) = client.saved_searches().await {
+                    saved.set(Some(list));
+                }
+            });
+        }
+    });
+
     let retry = move |()| {
         error.set(None);
         has_more.set(true);
@@ -101,7 +114,13 @@ pub fn Gallery(q: String) -> Element {
                         Ico { icon: Icon::Label }
                     }
                 }
+                if !q.trim().is_empty() {
+                    SaveToggle { q: q.clone(), saved }
+                }
                 SortMenu { q: q.clone() }
+            }
+            if q.trim().is_empty() {
+                SavedList { saved }
             }
             if let Some(message) = error() {
                 ErrorBanner { message, onretry: retry }
@@ -137,6 +156,79 @@ pub fn Gallery(q: String) -> Element {
                     } else {
                         button { class: "btn tonal", onclick: move |_| load_more(), "Load more" }
                     }
+                }
+            }
+        }
+    }
+}
+
+/// Star in the header: saves the current search, or forgets it.
+#[component]
+fn SaveToggle(q: String, saved: Signal<Option<Vec<SavedSearch>>>) -> Element {
+    let mut saved = saved;
+    let mut busy = use_signal(|| false);
+    let query = q.split_whitespace().collect::<Vec<_>>().join(" ");
+    let existing = saved
+        .read()
+        .as_ref()
+        .and_then(|list| list.iter().find(|s| s.query == query).map(|s| s.id));
+    let label = if existing.is_some() {
+        "Forget this search"
+    } else {
+        "Save this search"
+    };
+    let toggle = move |_| {
+        let Some(client) = store::client() else {
+            return;
+        };
+        let query = query.clone();
+        busy.set(true);
+        spawn(async move {
+            let result = match existing {
+                Some(id) => client.delete_search(id).await.map(|()| None),
+                None => {
+                    let name: String = query.chars().take(MAX_SEARCH_NAME_CHARS).collect();
+                    client.save_search(&name, &query).await.map(Some)
+                }
+            };
+            if let Ok(added) = result
+                && let Some(list) = saved.write().as_mut()
+            {
+                list.retain(|s| Some(s.id) != existing);
+                if let Some(s) = added {
+                    list.push(s);
+                    list.sort_by_key(|s| s.name.to_lowercase());
+                }
+            }
+            busy.set(false);
+        });
+    };
+    rsx! {
+        button {
+            class: if existing.is_some() { "icon-btn save-search on" } else { "icon-btn save-search" },
+            title: label,
+            aria_label: label,
+            aria_pressed: existing.is_some(),
+            disabled: busy() || saved.read().is_none(),
+            onclick: toggle,
+            Ico { icon: if existing.is_some() { Icon::Star } else { Icon::StarOutline } }
+        }
+    }
+}
+
+/// The saved searches as chips, on the unfiltered gallery.
+#[component]
+fn SavedList(saved: Signal<Option<Vec<SavedSearch>>>) -> Element {
+    let list = saved.read();
+    let Some(list) = list.as_ref().filter(|l| !l.is_empty()) else {
+        return rsx! {};
+    };
+    rsx! {
+        nav { class: "saved-searches", aria_label: "Saved searches",
+            for s in list.iter() {
+                Link { key: "{s.id}", class: "chip", title: "{s.query}", to: Route::Gallery { q: s.query.clone() },
+                    Ico { icon: Icon::Star, size: 16 }
+                    "{s.name}"
                 }
             }
         }

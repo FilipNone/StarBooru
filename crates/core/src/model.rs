@@ -237,6 +237,22 @@ pub struct ImportRequest {
     pub source: Option<String>,
 }
 
+/// A search a user kept, listed on their gallery page.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SavedSearch {
+    pub id: i64,
+    pub name: String,
+    pub query: String,
+    pub created_at: DateTime<Utc>,
+}
+
+/// `POST /searches`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SaveSearchRequest {
+    pub name: String,
+    pub query: String,
+}
+
 /// Partial update: fields left `None` stay unchanged.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PostUpdate {

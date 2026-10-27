@@ -49,6 +49,7 @@ PostgreSQL schema: `apps/server/migrations/`.
 | `posts` | One per file: `sha256` (unique, so duplicates are refused), format, size, dimensions, rating, source, score, `tag_ids BIGINT[]`, `deleted_at` (soft delete) |
 | `post_votes` | One vote per user and post, −1 or +1. `posts.score` is their sum. |
 | `tag_aliases` | `alias → tag_id`. Aliases are resolved when tagging, searching and in autocomplete. |
+| `saved_searches` | Per user: a name (unique per user, case-insensitively) and a query string |
 | `tag_implications` | `tag_id → implied_id`. Expanded transitively (a recursive CTE) when tags are set, so implied tags are stored on posts. Cycles are refused. Edits take an advisory lock, since they may rewrite many posts. |
 
 ### Search

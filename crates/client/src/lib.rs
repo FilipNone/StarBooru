@@ -7,9 +7,10 @@ use reqwest::{Method, RequestBuilder, StatusCode, header};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use starbooru_core::{
-    API_PREFIX, AliasRequest, ApiError, AuthResponse, Credentials, ImplicationRequest,
-    ImportRequest, Neighbors, Post, PostPage, PostUpdate, PurgeResult, Rating, ServerInfo, Tag,
-    TagDetail, TagOrder, TagUpdate, User, VoteRequest,
+    API_PREFIX, AliasRequest, ApiError, AuthResponse, Credentials,
+    ImplicationRequest, ImportRequest, Neighbors, Post, PostPage, PostUpdate, PurgeResult, Rating,
+    SaveSearchRequest, SavedSearch, ServerInfo, Tag, TagDetail, TagOrder, TagUpdate, User,
+    VoteRequest,
 };
 use thiserror::Error;
 use url::Url;
@@ -217,6 +218,23 @@ impl Client {
     /// Asks the server to download `request.url` and add it as a post.
     pub async fn import_url(&self, request: &ImportRequest) -> Result<Post> {
         self.json(Method::POST, "/posts/import", request).await
+    }
+
+    /// The signed-in user's saved searches, by name.
+    pub async fn saved_searches(&self) -> Result<Vec<SavedSearch>> {
+        Self::send(self.request(Method::GET, "/searches")?).await
+    }
+
+    pub async fn save_search(&self, name: &str, query: &str) -> Result<SavedSearch> {
+        let body = SaveSearchRequest {
+            name: name.to_owned(),
+            query: query.to_owned(),
+        };
+        self.json(Method::POST, "/searches", &body).await
+    }
+
+    pub async fn delete_search(&self, id: i64) -> Result<()> {
+        Self::send_empty(self.request(Method::DELETE, &format!("/searches/{id}"))?).await
     }
 
     /// Tag autocomplete: tags starting with `prefix`, most used first.

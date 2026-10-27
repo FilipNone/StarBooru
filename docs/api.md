@@ -12,7 +12,7 @@ All endpoints are under `/api/v1`. Bodies are JSON unless noted. The Rust types 
 | 401 | missing or expired token |
 | 403 | not allowed |
 | 404 | not found |
-| 409 | conflict (`duplicate`, `username_taken`, `deleted`, `not_deleted`) |
+| 409 | conflict (`duplicate`, `username_taken`, `deleted`, `not_deleted`, `implication_cycle`, `name_taken`) |
 | 413 | upload too large |
 | 415 | unsupported file type |
 | 429 | rate limited; the client honours `Retry-After` |
@@ -93,6 +93,16 @@ Browse the bin with `GET /posts?q=status:deleted`. `STARBOORU_TRASH_DAYS` purges
 | DELETE | `/tags/{name}/implications/{implied}` | | `TagDetail`. Admin only. Posts keep the tags they already got. |
 
 Tags are resolved the same way everywhere: an alias in a post's tags or in a search means its tag, and implied tags are added whenever tags are set on a post. Implied tags are stored on the post, so they show up in its tag list and in searches. Path segments are percent-encoded.
+
+## Saved searches
+
+Each user's own list; other users never see it.
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| GET | `/searches` | | `SavedSearch[] {id, name, query, created_at}`, by name |
+| POST | `/searches` | `SaveSearchRequest {name, query}` | `SavedSearch`. Whitespace is collapsed. The name is 1–64 characters; the query must parse and is at most 1000 characters. 409 `name_taken` if the user already has that name (case-insensitive); 400 past 200 saved searches. |
+| DELETE | `/searches/{id}` | | 204. 404 if it isn't the caller's. |
 
 ## Media
 

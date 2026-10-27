@@ -34,7 +34,7 @@ _Status as of 2026-10-27. Scope comes from `docs/checklist.md`._
 | simple image editor / simple video editor | ⬜ | |
 | video preview | ✅ | Thumbnails for video, AVIF and JPEG XL through ffmpeg (bundled in the image), length badge, muted preview on mouse hover, plays in the viewer. Older posts get thumbnails at the next start. |
 | media importer / upload tab | ✅ | Multi-file drag and drop; folder import (only images and videos, optionally tagged with the folder name); import from URLs (downloaded by the server, public addresses only by default); shared tags and rating plus tags per file. |
-| saved search | ⬜ | M2 |
+| saved search | ✅ | Star a search in the gallery header to save it, or tap it again to forget it. Saved searches show as chips on the unfiltered gallery. Per user, at most 200. |
 | automatic tagging, AI features, OCR | ⬜ | M5 |
 | explore tab with trending | ⬜ | M2 |
 | login system | 🟡 | Accounts, Argon2id, revocable tokens, first user becomes admin. OAuth: M3. |
