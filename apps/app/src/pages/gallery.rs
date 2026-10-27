@@ -12,6 +12,7 @@ use super::{ErrorBanner, Spinner};
 use crate::Route;
 use crate::cache;
 use crate::icons::{Ico, Icon};
+use crate::power;
 use crate::store;
 use crate::util::{escape_attr, format_duration, rating_label, split_tag_edit};
 
@@ -579,7 +580,7 @@ pub(super) fn Thumb(
             } else {
                 div { class: "thumb-placeholder", Ico { icon: Icon::Play, size: 40 } }
             }
-            if hovered() && let Some(src) = preview_src {
+            if hovered() && !power::active() && let Some(src) = preview_src {
                 // Parsed HTML, because only a parsed `muted` attribute
                 // mutes the video, and browsers autoplay muted videos only.
                 div {

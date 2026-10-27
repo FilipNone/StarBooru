@@ -870,6 +870,13 @@ html.sb-hero .stage img { view-transition-name: sb-hero; animation: none; }
   .thumb:hover, .thumb:hover img, .chip:hover, .dropzone.over { transform: none; }
   .thumb .preview { display: none; }
 }
+/* Battery saver: the same, except spinners keep turning (they say something
+   is happening, and stop when it's done). */
+.app[data-saver="on"] *:not(.spinner), .app[data-saver="on"] *::before, .app[data-saver="on"] *::after {
+  animation-duration: 1ms !important; animation-iteration-count: 1 !important;
+  transition-duration: 1ms !important;
+}
+.app[data-saver="on"] :is(.thumb:hover, .thumb:hover img, .chip:hover) { transform: none; }
 
 /* Administration › Backups */
 .backup-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }

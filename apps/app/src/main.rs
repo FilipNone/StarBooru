@@ -9,6 +9,7 @@ mod download;
 mod icons;
 mod oidc;
 mod pages;
+mod power;
 mod store;
 mod util;
 mod zoom;
@@ -85,6 +86,7 @@ fn launch_desktop() {
 #[component]
 fn App() -> Element {
     cache::register();
+    power::watch();
     // Persist whenever the session or preferences change.
     use_effect(|| {
         let _session = SESSION.read();
@@ -112,6 +114,7 @@ fn App() -> Element {
             lang,
             "data-theme": prefs.theme.as_str(),
             "data-hand": prefs.hand.as_str(),
+            "data-saver": if power::active() { "on" } else { "off" },
             style: "--seed-hue: {prefs.accent_hue}",
             Router::<Route> {}
         }

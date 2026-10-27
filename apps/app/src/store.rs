@@ -47,6 +47,39 @@ impl Theme {
     }
 }
 
+/// The battery saver setting (see `power.rs`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Saver {
+    Always,
+    Never,
+    /// On while the battery is low or the device saves data. Also what an
+    /// unknown value (from a newer version) reads as.
+    #[default]
+    #[serde(other)]
+    Auto,
+}
+
+impl Saver {
+    pub const ALL: [Saver; 3] = [Saver::Auto, Saver::Always, Saver::Never];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Saver::Always => "always",
+            Saver::Never => "never",
+            Saver::Auto => "auto",
+        }
+    }
+
+    pub fn label(self) -> String {
+        match self {
+            Saver::Always => t!("saver-always"),
+            Saver::Never => t!("saver-never"),
+            Saver::Auto => t!("saver-auto"),
+        }
+    }
+}
+
 /// The hand the one-handed controls are for: the tablet navigation rail,
 /// the viewer's panel and its tools go on that side.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -95,6 +128,7 @@ pub struct Prefs {
     /// Media cache limit in MiB on desktop and Android; 0 is off.
     pub cache_mb: u32,
     pub hand: Hand,
+    pub battery_saver: Saver,
 }
 
 impl Default for Prefs {
@@ -107,6 +141,7 @@ impl Default for Prefs {
             originals: false,
             cache_mb: crate::cache::DEFAULT_LIMIT_MB,
             hand: Hand::Either,
+            battery_saver: Saver::Auto,
         }
     }
 }
@@ -269,6 +304,7 @@ mod tests {
         let prefs: Prefs = serde_json::from_str(r#"{"theme":"dark","accent_hue":120}"#).unwrap();
         assert_eq!(prefs.theme, Theme::Dark);
         assert_eq!(prefs.hand, Hand::Either);
+        assert_eq!(prefs.battery_saver, Saver::Auto);
         let prefs: Prefs = serde_json::from_str(r#"{"hand":"left"}"#).unwrap();
         assert_eq!(prefs.hand, Hand::Left);
         // An unknown hand from a newer version falls back rather than failing.

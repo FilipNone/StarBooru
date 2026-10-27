@@ -9,6 +9,7 @@ use starbooru_core::{MediaKind, NewShare, Share, SharedView};
 
 use super::{ErrorBanner, Spinner};
 use crate::icons::{Ico, Icon};
+use crate::power;
 use crate::store;
 use crate::util::{format_duration, short_date, time_ago};
 
@@ -421,7 +422,7 @@ pub fn SharedPage(token: String) -> Element {
                         },
                         div { class: "lightbox-media", onclick: move |e| e.stop_propagation(),
                             if matches!(p.kind, MediaKind::Video) {
-                                video { key: "{i}", src: abs(&p.file_url), controls: true, autoplay: true, playsinline: true }
+                                video { key: "{i}", src: abs(&p.file_url), controls: true, autoplay: !power::active(), playsinline: true }
                             } else {
                                 img { key: "{i}", src: abs(p.sample_url.as_deref().unwrap_or(&p.file_url)), alt: "" }
                             }

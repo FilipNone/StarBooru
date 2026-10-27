@@ -767,3 +767,12 @@ settings-hand-hint = Puts the side navigation on tablets, and the viewer's panel
 hand-either = Either
 hand-left = Left
 hand-right = Right
+
+## Battery saver
+
+settings-saver = Battery saver
+settings-saver-hint = While it's on, videos don't start by themselves, the next post isn't loaded ahead, and animations are cut short. Automatic turns it on when the battery is at 20% or less and not charging, or when the device is saving data.
+settings-saver-now = On now: the battery is low or the device is saving data.
+saver-auto = Automatic
+saver-always = Always
+saver-never = Never

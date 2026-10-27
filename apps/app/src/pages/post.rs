@@ -14,6 +14,7 @@ use crate::Route;
 use crate::cache;
 use crate::download::DownloadLink;
 use crate::icons::{Ico, Icon};
+use crate::power;
 use crate::store;
 use crate::util::{format_duration, human_size, rating_label};
 use crate::zoom::{STEP, Zoom};
@@ -121,6 +122,7 @@ pub fn PostView(id: i64, q: String) -> Element {
         if let Some(natural) = natural
             && !sample_is_sharp(natural, (r.width(), r.height()), dpr)
             && !*original.peek()
+            && !power::active()
         {
             original.set(true);
         }
@@ -155,6 +157,9 @@ pub fn PostView(id: i64, q: String) -> Element {
         ahead
             .write()
             .retain(|k, _| *k == here || Some(*k) == n.prev || Some(*k) == n.next);
+        if power::active() {
+            return;
+        }
         let Some(client) = store::client() else {
             return;
         };
@@ -831,7 +836,7 @@ fn Stage(
             },
             match kind {
                 MediaKind::Video => rsx! {
-                    video { key: "{id}", class: enter, src: "{src}", controls: true, autoplay: true, r#loop: true, playsinline: true,
+                    video { key: "{id}", class: enter, src: "{src}", controls: true, autoplay: !power::active(), r#loop: true, playsinline: true,
                         onmounted: move |_| { document::eval(HERO_DONE); },
                     }
                 },

@@ -10,7 +10,8 @@ use crate::cache;
 use crate::i18n::Lang;
 use crate::icons::{Ico, Icon};
 use crate::oidc::{self, Done};
-use crate::store::{self, Hand, PREFS, SESSION, Theme};
+use crate::power;
+use crate::store::{self, Hand, PREFS, SESSION, Saver, Theme};
 use crate::util::{human_size, time_ago};
 
 const MIN_PASSWORD_CHARS: usize = 8;
@@ -152,6 +153,25 @@ pub fn Settings() -> Element {
                         }
                     }
                     p { class: "muted hint", {t!("settings-hand-hint")} }
+                }
+                div { class: "field",
+                    span { {t!("settings-saver")} }
+                    div { class: "segmented", role: "radiogroup", aria_label: t!("settings-saver"),
+                        for saver in Saver::ALL {
+                            button {
+                                key: "{saver.as_str()}",
+                                role: "radio",
+                                aria_checked: if prefs.battery_saver == saver { "true" } else { "false" },
+                                class: if prefs.battery_saver == saver { "seg on" } else { "seg" },
+                                onclick: move |_| PREFS.write().battery_saver = saver,
+                                {saver.label()}
+                            }
+                        }
+                    }
+                    p { class: "muted hint", {t!("settings-saver-hint")} }
+                    if prefs.battery_saver == Saver::Auto && power::device_low() {
+                        p { class: "hint saver-now", {t!("settings-saver-now")} }
+                    }
                 }
                 label { class: "check",
                     input {

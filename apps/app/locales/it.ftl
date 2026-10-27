@@ -767,3 +767,12 @@ settings-hand-hint = Mette la navigazione laterale sui tablet, e il pannello e g
 hand-either = Entrambe
 hand-left = Sinistra
 hand-right = Destra
+
+## Battery saver
+
+settings-saver = Risparmio batteria
+settings-saver-hint = Quando è attivo, i video non partono da soli, il post successivo non viene caricato in anticipo e le animazioni sono ridotte. Automatico lo attiva quando la batteria è al 20% o meno e non è in carica, o quando il dispositivo risparmia dati.
+settings-saver-now = Attivo ora: la batteria è scarica o il dispositivo sta risparmiando dati.
+saver-auto = Automatico
+saver-always = Sempre
+saver-never = Mai
