@@ -238,6 +238,20 @@ input[type="range"] { width: 100%; accent-color: var(--primary); margin-top: 12p
 
 /* ---------- shell ---------- */
 
+/* A notice above everything at the bottom, over the phone's bottom bar. */
+.snackbar-slot {
+  position: fixed; left: 0; right: 0; bottom: 24px; z-index: 30;
+  display: flex; justify-content: center; padding: 0 16px; pointer-events: none;
+}
+.snackbar {
+  display: flex; align-items: center; gap: 8px; max-width: 560px;
+  padding: 6px 6px 6px 16px; border-radius: var(--radius-m);
+  background: var(--on-surface); color: var(--surface); box-shadow: var(--shadow-2);
+  font-size: 14px; pointer-events: auto; animation: fade-up var(--med) var(--ease-spring);
+}
+.snackbar .icon-btn { color: inherit; }
+.spinner.small { width: 20px; height: 20px; border-width: 3px; }
+
 .topbar {
   position: sticky; top: 0; z-index: 10;
   display: flex; align-items: center; gap: 16px;
@@ -415,6 +429,7 @@ button.thumb { width: 100%; padding: 0; border: 0; font: inherit; color: inherit
 .bulk-error { flex-basis: 100%; margin: 0; padding: 0 8px; color: var(--danger); font-size: 14px; }
 @media (max-width: 760px) {
   .bulk-bar { bottom: calc(88px + env(safe-area-inset-bottom)); width: calc(100% - 16px); padding: 8px 8px 8px 14px; }
+  .snackbar-slot { bottom: calc(96px + env(safe-area-inset-bottom)); }
   .bulk-tags { flex-basis: 100%; order: 1; }
   .bulk-rating { order: 2; flex: 3 1 0; min-width: 0; }
   .bulk-bar .btn { order: 3; flex: 1 1 auto; padding: 0 12px; }

@@ -6,6 +6,7 @@ use starbooru_core::admin::{MAX_BACKUP_DAYS, MAX_BACKUP_KEEP};
 use starbooru_core::{Backup, BackupSchedule, Backups};
 
 use super::{ErrorBanner, Spinner};
+use crate::download::DownloadLink;
 use crate::icons::{Ico, Icon};
 use crate::store;
 use crate::util::{human_size, short_date};
@@ -85,8 +86,6 @@ pub fn BackupsTab() -> Element {
             busy.set(false);
         });
     };
-    let client = store::client();
-    let link = move |url: &str| client.as_ref().map(|c| c.absolute(url)).unwrap_or_default();
 
     rsx! {
         section { class: "card",
@@ -118,14 +117,7 @@ pub fn BackupsTab() -> Element {
                                         }
                                     }
                                     div { class: "backup-actions",
-                                        a {
-                                            class: "icon-btn",
-                                            href: link(&b.url),
-                                            download: "{b.name}",
-                                            title: t!("backups-download"),
-                                            aria_label: t!("backups-download"),
-                                            Ico { icon: Icon::Download }
-                                        }
+                                        DownloadLink { path: b.url.clone(), name: b.name.clone(), label: t!("backups-download") }
                                         BackupDelete { name: b.name.clone(), disabled: busy(), ondelete: remove }
                                     }
                                 }

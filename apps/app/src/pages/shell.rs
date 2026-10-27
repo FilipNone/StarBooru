@@ -30,6 +30,61 @@ pub fn Shell() -> Element {
         nav { class: "nav-bottom glass", aria_label: t!("nav-main"),
             NavItems { route }
         }
+        Snackbar {}
+    }
+}
+
+/// The message the snackbar shows, numbered so a new one restarts its timer.
+static NOTICE: GlobalSignal<Option<(u64, String)>> = Signal::global(|| None);
+
+/// Shows a short message at the bottom of the screen for a few seconds,
+/// for things that finish after the click (a download, say).
+#[cfg_attr(
+    not(feature = "desktop"),
+    allow(dead_code, reason = "only desktop downloads notify so far")
+)]
+pub fn notify(message: String) {
+    let n = NOTICE.peek().as_ref().map_or(0, |(n, _)| n.wrapping_add(1));
+    *NOTICE.write() = Some((n, message));
+}
+
+/// How long a notice stays, in milliseconds.
+const NOTICE_MS: u32 = 6000;
+
+#[component]
+fn Snackbar() -> Element {
+    use_effect(|| {
+        let Some((n, _)) = *NOTICE.read() else {
+            return;
+        };
+        spawn(async move {
+            // A timer that works the same in the browser and the webviews.
+            let _ = document::eval(&format!(
+                "await new Promise((r) => setTimeout(r, {NOTICE_MS})); return true;"
+            ))
+            .join::<bool>()
+            .await;
+            if NOTICE.peek().as_ref().is_some_and(|(m, _)| *m == n) {
+                *NOTICE.write() = None;
+            }
+        });
+    });
+    let notice = NOTICE.read().clone();
+    rsx! {
+        div { class: "snackbar-slot", role: "status", aria_live: "polite",
+            if let Some((n, message)) = notice {
+                div { key: "{n}", class: "snackbar",
+                    span { class: "break", "{message}" }
+                    button {
+                        class: "icon-btn",
+                        aria_label: t!("notice-close"),
+                        title: t!("notice-close"),
+                        onclick: move |_| *NOTICE.write() = None,
+                        Ico { icon: Icon::Close }
+                    }
+                }
+            }
+        }
     }
 }
 

@@ -40,6 +40,9 @@ pub enum ClientError {
     /// A download was bigger than the caller allowed.
     #[error("the file is larger than {limit} bytes")]
     TooLarge { limit: u64 },
+    /// Writing a download to disk failed.
+    #[error("cannot save the file: {0}")]
+    Io(#[from] std::io::Error),
 }
 
 impl ClientError {
@@ -148,7 +151,7 @@ impl Client {
         }
         let too_large = ClientError::TooLarge { limit: max_bytes };
         #[allow(unused_mut, reason = "read in chunks natively only")]
-        let mut resp = send_patiently(self.http.get(self.absolute(path))).await?;
+        let mut resp = self.signed(path).await?;
         if resp.content_length().is_some_and(|n| n > max_bytes) {
             return Err(too_large);
         }
@@ -171,6 +174,43 @@ impl Client {
             return Err(too_large);
         }
         Ok(body)
+    }
+
+    /// Saves a signed media or backup path (`/media/…`, `/backups/…`) as
+    /// `dest`, streaming it through `<dest>.part`. Returns the size.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub async fn download_to(&self, path: &str, dest: &std::path::Path) -> Result<u64> {
+        use tokio::io::AsyncWriteExt;
+        if !path.starts_with("/media/") && !path.starts_with("/backups/") {
+            return Err(ClientError::InvalidUrl(format!("{path}: not a download")));
+        }
+        let mut resp = self.signed(path).await?;
+        let mut part = dest.as_os_str().to_owned();
+        part.push(".part");
+        let part = std::path::PathBuf::from(part);
+        let written = async {
+            let mut file = tokio::fs::File::create(&part).await?;
+            let mut size = 0u64;
+            while let Some(chunk) = resp.chunk().await? {
+                file.write_all(&chunk).await?;
+                size = size.saturating_add(chunk.len() as u64);
+            }
+            file.flush().await?;
+            file.sync_all().await?;
+            tokio::fs::rename(&part, dest).await?;
+            Ok(size)
+        }
+        .await;
+        if written.is_err() {
+            let _ = tokio::fs::remove_file(&part).await;
+        }
+        written
+    }
+
+    /// GETs a signed path. The signature is the permission, so the token
+    /// is not sent.
+    async fn signed(&self, path: &str) -> Result<reqwest::Response> {
+        send_patiently(self.http.get(self.absolute(path))).await
     }
 
     fn request(&self, method: Method, path: &str) -> Result<RequestBuilder> {
@@ -802,6 +842,42 @@ mod tests {
         // Only media paths, so it can't be pointed at the API.
         let err = client.media_bytes("/api/v1/posts", 5).await.unwrap_err();
         assert!(matches!(err, ClientError::InvalidUrl(_)));
+    }
+
+    #[tokio::test]
+    async fn downloads_to_a_file() {
+        let dir = std::env::temp_dir().join(format!("sb-client-dl-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dest = dir.join("a.dump");
+
+        let (url, _server) = canned(vec![media_response("backup", 6)]).await;
+        let client = Client::new(&url).unwrap();
+        let size = client
+            .download_to("/backups/a.dump?exp=1&sig=2", &dest)
+            .await
+            .unwrap();
+        assert_eq!(size, 6);
+        assert_eq!(std::fs::read(&dest).unwrap(), b"backup");
+        assert!(!dir.join("a.dump.part").exists());
+
+        // A failed download leaves neither the file nor its part behind.
+        let (url, _server) = canned(vec![LIMITED_LONG.into()]).await;
+        let other = dir.join("b.dump");
+        let err = Client::new(&url)
+            .unwrap()
+            .download_to("/backups/b.dump", &other)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ClientError::RateLimited { .. }));
+        assert!(!other.exists());
+
+        // Only signed downloads, never the API.
+        let err = client
+            .download_to("/api/v1/posts", &other)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ClientError::InvalidUrl(_)));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

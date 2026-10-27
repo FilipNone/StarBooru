@@ -751,3 +751,10 @@ cache-used = Immagini salvate: { $size }
 cache-limit = Tieni fino a
 cache-off = Niente (disattivato)
 cache-clear = Svuota
+
+## Downloads (desktop)
+
+notice-close = Chiudi
+download-saved = Salvato in { $path }
+download-failed = Download non riuscito: { $reason }
+download-no-folder = nessuna cartella Download trovata

@@ -5,6 +5,7 @@
 #[macro_use]
 mod i18n;
 mod cache;
+mod download;
 mod icons;
 mod oidc;
 mod pages;

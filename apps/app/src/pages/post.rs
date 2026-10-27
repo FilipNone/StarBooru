@@ -10,6 +10,7 @@ use super::share::ShareSheet;
 use super::{ErrorBanner, Spinner};
 use crate::Route;
 use crate::cache;
+use crate::download::DownloadLink;
 use crate::icons::{Ico, Icon};
 use crate::store;
 use crate::util::{format_duration, human_size, rating_label};
@@ -321,9 +322,7 @@ pub fn PostView(id: i64, q: String) -> Element {
                         }
                     }
                     div { class: "row-actions",
-                        a { class: "icon-btn", href: "{file_url}", download: "{p.sha256}.{ext}", aria_label: t!("post-download"), title: t!("post-download"),
-                            Ico { icon: Icon::Download }
-                        }
+                        DownloadLink { path: p.file_url.clone(), name: format!("{}.{ext}", p.sha256), label: t!("post-download") }
                         if !p.deleted {
                             button { class: "icon-btn", aria_label: t!("share-button"), title: t!("share-button"), onclick: move |_| sharing.set(true),
                                 Ico { icon: Icon::Share }

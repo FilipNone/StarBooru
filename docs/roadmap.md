@@ -62,7 +62,7 @@ _Status as of 2026-10-27. Scope comes from `docs/checklist.md`._
 | api rate limit aware | ✅ | On `429` the client waits as `Retry-After` asks (up to 30 s; 1 s then 2 s without it) and retries twice before surfacing `RateLimited`. Replayable requests only; streamed uploads are sent once. |
 | caching | ✅ | Thumbnails and the images the viewer shows are kept on disk by their SHA-256, so they open at once and survive the 6-hourly change of signed URLs. Least recently used files go past a limit set in Settings (off, 256 MB to 5 GB; 512 MB by default), which also shows the size and can clear it. Videos and big originals (over 64 MiB) stream from the server. |
 | drag and drop media | ✅ | |
-| download and upload media | 🟡 | Upload works. Download uses the webview's download handling and is untested on every OS. |
+| download and upload media | ✅ | Upload as on the web. *Download* (a post's file, or a backup in Administration) is saved by the app itself into the Downloads folder, streamed to disk without overwriting a file of the same name, and a notice says where it went. Webviews handle `<a download>` differently per OS, macOS's not at all, so the link is no longer relied on. |
 | updates working in-app | ⬜ | M4 |
 | sync | ⬜ | M4 |
 | all user side features present | ✅ | Same code as the web app |

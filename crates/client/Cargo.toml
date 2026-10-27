@@ -16,7 +16,7 @@ url = "2"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "http2", "charset"] }
-tokio = { version = "1", features = ["time"] }
+tokio = { version = "1", features = ["time", "fs", "io-util"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 gloo-timers = { version = "0.3", features = ["futures"] }

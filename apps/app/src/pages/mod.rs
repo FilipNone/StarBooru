@@ -27,7 +27,8 @@ pub use legal::{LegalLinks, Privacy, Terms};
 pub use post::PostView;
 pub use settings::Settings;
 pub use share::SharedPage;
-pub use shell::Shell;
+#[cfg_attr(not(feature = "desktop"), allow(unused_imports))]
+pub use shell::{Shell, notify};
 pub use tags::{TagPage, Tags};
 pub use trash::Trash;
 pub use upload::Upload;
