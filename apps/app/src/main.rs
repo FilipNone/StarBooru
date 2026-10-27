@@ -111,6 +111,7 @@ fn App() -> Element {
             class: "app",
             lang,
             "data-theme": prefs.theme.as_str(),
+            "data-hand": prefs.hand.as_str(),
             style: "--seed-hue: {prefs.accent_hue}",
             Router::<Route> {}
         }

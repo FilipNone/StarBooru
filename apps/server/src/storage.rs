@@ -16,7 +16,7 @@ use image::{
     DynamicImage, ExtendedColorType, ImageDecoder, ImageEncoder, ImageReader, Limits, Rgb, RgbImage,
 };
 use sha2::{Digest, Sha256};
-use starbooru_core::MediaKind;
+use starbooru_core::{MediaKind, SAMPLE_SIZE};
 
 use crate::error::{AppError, AppResult};
 use crate::probe::Tools;
@@ -25,8 +25,6 @@ use crate::similar::Fingerprint;
 pub const THUMB_SIZE: u32 = 512;
 const THUMB_EXT: &str = "jpg";
 const THUMB_QUALITY: u8 = 85;
-/// Samples fit in this square.
-pub const SAMPLE_SIZE: u32 = 2560;
 const SAMPLE_EXT: &str = "jpg";
 const SAMPLE_QUALITY: u8 = 85;
 /// Originals smaller than this are shown as they are.

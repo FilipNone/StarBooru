@@ -47,6 +47,40 @@ impl Theme {
     }
 }
 
+/// The hand the one-handed controls are for: the tablet navigation rail,
+/// the viewer's panel and its tools go on that side.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Hand {
+    Left,
+    Right,
+    /// The usual layout: rail on the left, panel and tools on the right.
+    /// Also what an unknown value (from a newer version) reads as.
+    #[default]
+    #[serde(other)]
+    Either,
+}
+
+impl Hand {
+    pub const ALL: [Hand; 3] = [Hand::Either, Hand::Left, Hand::Right];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Hand::Either => "either",
+            Hand::Left => "left",
+            Hand::Right => "right",
+        }
+    }
+
+    pub fn label(self) -> String {
+        match self {
+            Hand::Either => t!("hand-either"),
+            Hand::Left => t!("hand-left"),
+            Hand::Right => t!("hand-right"),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Prefs {
@@ -60,6 +94,7 @@ pub struct Prefs {
     pub originals: bool,
     /// Media cache limit in MiB on desktop and Android; 0 is off.
     pub cache_mb: u32,
+    pub hand: Hand,
 }
 
 impl Default for Prefs {
@@ -71,6 +106,7 @@ impl Default for Prefs {
             language: None,
             originals: false,
             cache_mb: crate::cache::DEFAULT_LIMIT_MB,
+            hand: Hand::Either,
         }
     }
 }
@@ -221,5 +257,22 @@ mod backend {
             .filter(|s| !s.is_empty())
             .or_else(|| option_env!("STARBOORU_SERVER").map(str::to_owned))
             .unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn older_prefs_still_load() {
+        let prefs: Prefs = serde_json::from_str(r#"{"theme":"dark","accent_hue":120}"#).unwrap();
+        assert_eq!(prefs.theme, Theme::Dark);
+        assert_eq!(prefs.hand, Hand::Either);
+        let prefs: Prefs = serde_json::from_str(r#"{"hand":"left"}"#).unwrap();
+        assert_eq!(prefs.hand, Hand::Left);
+        // An unknown hand from a newer version falls back rather than failing.
+        let prefs: Prefs = serde_json::from_str(r#"{"hand":"both","theme":"light"}"#).unwrap();
+        assert_eq!((prefs.hand, prefs.theme), (Hand::Either, Theme::Light));
     }
 }

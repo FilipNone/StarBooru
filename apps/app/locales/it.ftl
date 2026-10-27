@@ -742,7 +742,7 @@ editor-saving = Salvataggio…
 post-sample-note = Stai vedendo una copia più leggera. Ingrandendo si carica l’originale.
 post-show-original = Mostra originale
 settings-originals = Apri sempre gli originali nel visualizzatore
-settings-originals-hint = Altrimenti le immagini grandi si aprono come copia più leggera, più veloce e con meno dati.
+settings-originals-hint = Altrimenti le immagini grandi si aprono come copia più leggera, più veloce e con meno dati. L’originale si apre comunque quando ingrandisci, o quando lo schermo ha più pixel della copia.
 
 ## Media cache (desktop and Android)
 
@@ -759,3 +759,11 @@ notice-close = Chiudi
 download-saved = Salvato in { $path }
 download-failed = Download non riuscito: { $reason }
 download-no-folder = nessuna cartella Download trovata
+
+## Hand (tablet rail, viewer panel and tools)
+
+settings-hand = Mano
+settings-hand-hint = Mette la navigazione laterale sui tablet, e il pannello e gli strumenti di zoom del visualizzatore, dal lato della mano che usi.
+hand-either = Entrambe
+hand-left = Sinistra
+hand-right = Destra

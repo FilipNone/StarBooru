@@ -35,3 +35,6 @@ pub const API_PREFIX: &str = "/api/v1";
 pub const MAX_PAGE_LIMIT: u32 = 200;
 /// Page size used when the client does not ask for one.
 pub const DEFAULT_PAGE_LIMIT: u32 = 60;
+/// Samples, the smaller copies the server makes of big images for viewing,
+/// fit in this square (pixels).
+pub const SAMPLE_SIZE: u32 = 2560;

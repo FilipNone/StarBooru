@@ -3,7 +3,9 @@ use std::collections::HashMap;
 use dioxus::html::geometry::{ClientPoint, PixelsRect};
 use dioxus::prelude::*;
 use starbooru_client::{Client, ClientError};
-use starbooru_core::{EditKind, MediaKind, Neighbors, Post, PostUpdate, Rating, edit_kind};
+use starbooru_core::{
+    EditKind, MediaKind, Neighbors, Post, PostUpdate, Rating, SAMPLE_SIZE, edit_kind,
+};
 
 use super::editor::EditorSheet;
 use super::share::ShareSheet;
@@ -98,6 +100,31 @@ pub fn PostView(id: i64, q: String) -> Element {
     });
     let rect = use_signal(|| None::<PixelsRect>);
     let mut full = use_signal(|| false);
+    // Device pixels per CSS pixel. When the stage shows more device pixels
+    // than the sample has (fullscreen on a big or dense screen), the
+    // original is shown instead.
+    let dpr = use_resource(|| async {
+        document::eval("return window.devicePixelRatio || 1")
+            .join::<f64>()
+            .await
+            .ok()
+    });
+    use_effect(move || {
+        let (Some(r), Some(dpr)) = (rect(), (*dpr.read()).flatten()) else {
+            return;
+        };
+        let natural = post.read().as_ref().and_then(|p| {
+            (p.kind != MediaKind::Video && p.sample_url.is_some())
+                .then_some(p.width.zip(p.height))
+                .flatten()
+        });
+        if let Some(natural) = natural
+            && !sample_is_sharp(natural, (r.width(), r.height()), dpr)
+            && !*original.peek()
+        {
+            original.set(true);
+        }
+    });
     // The props as signals, for the key handler, which outlives a render.
     let mut current = use_signal(|| (id, q.clone()));
     // Neighbours fetched ahead, so previous/next shows at once.
@@ -565,6 +592,22 @@ fn shown_url(p: &Post, original: bool) -> &str {
     }
 }
 
+/// Whether the sample, which fits in `SAMPLE_SIZE`², has every pixel the
+/// screen can show of an image of `natural` size fitted into a stage of
+/// `stage` CSS pixels, at `dpr` device pixels per CSS pixel. The image is
+/// never enlarged past its natural CSS size, and the original can't show
+/// more than its own pixels, so a sample of a small image always is.
+fn sample_is_sharp(natural: (i32, i32), stage: (f64, f64), dpr: f64) -> bool {
+    let (w, h) = (f64::from(natural.0), f64::from(natural.1));
+    if w <= 0.0 || h <= 0.0 || stage.0 <= 0.0 || stage.1 <= 0.0 {
+        return true;
+    }
+    // Shares of the original's pixels: shown on screen, and in the sample.
+    let shown = ((stage.0 / w).min(stage.1 / h).min(1.0) * dpr).min(1.0);
+    let sample = (f64::from(SAMPLE_SIZE) / w.max(h)).min(1.0);
+    sample >= shown
+}
+
 /// The stage's `src`. Images come through the media cache, except
 /// originals too big to keep; videos stream from the server.
 fn stage_url(client: &Client, p: &Post, original: bool) -> String {
@@ -851,6 +894,25 @@ mod tests {
         assert_eq!(fit_style(None), "");
         assert_eq!(fit_style(Some((0, 10))), "");
         assert_eq!(fit_style(Some((10, -1))), "");
+    }
+
+    #[test]
+    fn swaps_in_the_original_only_when_the_screen_has_more_pixels() {
+        let photo = (6000, 4000);
+        // A laptop window, and a phone held upright: the sample is enough.
+        assert!(sample_is_sharp(photo, (900.0, 740.0), 1.0));
+        assert!(sample_is_sharp(photo, (390.0, 520.0), 3.0));
+        // Fullscreen on a 4K screen, or a dense laptop's: more than 2560 wide.
+        assert!(!sample_is_sharp(photo, (3840.0, 2160.0), 1.0));
+        assert!(!sample_is_sharp(photo, (1512.0, 982.0), 2.0));
+        // Small enough that the sample keeps every pixel.
+        assert!(sample_is_sharp((2400, 1600), (3840.0, 2160.0), 2.0));
+        // Shown no bigger than itself: 3000 px shown at most 3000 device px.
+        assert!(!sample_is_sharp((3000, 1000), (3000.0, 2000.0), 1.0));
+        assert!(sample_is_sharp((3000, 1000), (1200.0, 2000.0), 2.0));
+        // Not measured yet, or no size.
+        assert!(sample_is_sharp(photo, (0.0, 0.0), 2.0));
+        assert!(sample_is_sharp((0, 0), (900.0, 700.0), 1.0));
     }
 
     #[test]

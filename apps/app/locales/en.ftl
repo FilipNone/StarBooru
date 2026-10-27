@@ -742,7 +742,7 @@ editor-saving = Saving…
 post-sample-note = Showing a smaller copy. Zooming in loads the original.
 post-show-original = Show original
 settings-originals = Always open originals in the viewer
-settings-originals-hint = Big images otherwise open as a smaller copy, which loads faster and uses less data.
+settings-originals-hint = Big images otherwise open as a smaller copy, which loads faster and uses less data. The original still opens when you zoom in, or when the screen has more pixels than the copy.
 
 ## Media cache (desktop and Android)
 
@@ -759,3 +759,11 @@ notice-close = Close
 download-saved = Saved to { $path }
 download-failed = Download failed: { $reason }
 download-no-folder = no Downloads folder found
+
+## Hand (tablet rail, viewer panel and tools)
+
+settings-hand = Hand
+settings-hand-hint = Puts the side navigation on tablets, and the viewer's panel and zoom tools, on the side of the hand you use.
+hand-either = Either
+hand-left = Left
+hand-right = Right

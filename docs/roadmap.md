@@ -76,7 +76,7 @@ _Status as of 2026-10-27. Scope comes from `docs/checklist.md`._
 | builds and runs | 🟡 | Same code. To be tested. |
 | login | 🟡 | Works in the UI. Session persistence on Android is unverified. |
 | mobile optimised layout | ✅ | Bottom navigation, 3-column grid, stacked viewer |
-| tablet layout, left/right hand modes, ppi optimisation | ⬜ | |
+| tablet layout, left/right hand modes, ppi optimisation | ✅ | Between phone and desktop widths (761–1100 px, tablets) the navigation is a rail at the side with its items centred, within reach of a thumb. A *Hand* setting (either, left, right) puts the rail, the viewer's panel and its zoom tools on that side. The viewer shows the smaller copy of a big image only while it has every pixel the screen can show: on a dense or big screen (fullscreen on 4K, a 3× phone) it loads the original. Same layout on the web and desktop. |
 | dynamic material you colors | ⬜ | M4 (needs a JNI bridge to read the wallpaper palette) |
 | battery optimizations | ⬜ | |
 | everything else | | Same as desktop |

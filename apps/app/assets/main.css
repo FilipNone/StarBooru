@@ -306,15 +306,6 @@ input[type="range"] { width: 100%; accent-color: var(--primary); margin-top: 12p
 
 .nav-bottom { display: none; }
 
-/* Between phone and wide: icons only, labels kept for screen readers. */
-@media (max-width: 1100px) {
-  .nav-top .nav-item { padding: 4px; }
-  .nav-top .nav-label {
-    position: absolute; width: 1px; height: 1px; overflow: hidden;
-    clip: rect(0 0 0 0); white-space: nowrap;
-  }
-}
-
 .content { padding: 20px 16px 48px; }
 .page { max-width: 1600px; margin: 0 auto; animation: fade-up var(--med) var(--ease); }
 .page.narrow { max-width: 720px; }
@@ -338,6 +329,30 @@ input[type="range"] { width: 100%; accent-color: var(--primary); margin-top: 12p
   .nav-bottom .nav-pill { width: 56px; }
   .content { padding: 12px 8px 112px; }
   .page-title { font-size: 22px; }
+}
+
+/* Tablets and other in-between widths: the navigation is a rail at the
+   side, its items centred within reach of a thumb. `data-hand` picks the
+   side; `--rail-l`/`--rail-r` keep fixed things clear of it. */
+.app { --rail-l: 0px; --rail-r: 0px; }
+@media (min-width: 761px) and (max-width: 1100px) {
+  .app { --rail-l: 88px; }
+  .app[data-hand="right"] { --rail-l: 0px; --rail-r: 88px; }
+  .nav-top { display: none; }
+  .nav-bottom {
+    position: fixed; top: 0; bottom: 0; left: 0; z-index: 9; width: 88px;
+    display: flex; flex-direction: column; justify-content: center; gap: 12px;
+    padding: calc(80px + env(safe-area-inset-top)) 0 max(16px, env(safe-area-inset-bottom));
+    border-right: 1px solid oklch(from var(--outline) l c h / 0.4);
+  }
+  .app[data-hand="right"] .nav-bottom {
+    left: auto; right: 0; border-right: 0;
+    border-left: 1px solid oklch(from var(--outline) l c h / 0.4);
+  }
+  .nav-bottom .nav-item { flex-direction: column; gap: 4px; padding: 4px 0; font-size: 12px; }
+  .nav-bottom .nav-pill { width: 56px; }
+  .content { padding-left: calc(16px + var(--rail-l)); padding-right: calc(16px + var(--rail-r)); }
+  .bulk-bar, .snackbar-slot { left: var(--rail-l); right: var(--rail-r); }
 }
 
 /* ---------- gallery ---------- */
@@ -412,7 +427,7 @@ button.thumb { width: 100%; padding: 0; border: 0; font: inherit; color: inherit
 }
 .bulk-bar {
   position: fixed; z-index: 11; left: 0; right: 0; bottom: max(16px, env(safe-area-inset-bottom));
-  margin: 0 auto; width: min(960px, calc(100% - 32px));
+  margin: 0 auto; width: min(960px, calc(100% - 32px - var(--rail-l) - var(--rail-r)));
   display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
   padding: 10px 10px 10px 18px; border-radius: var(--radius-l);
   border: 1px solid oklch(from var(--outline) l c h / 0.4); box-shadow: var(--shadow-2);
@@ -606,6 +621,13 @@ button.thumb { width: 100%; padding: 0; border: 0; font: inherit; color: inherit
   .stage { position: relative; top: auto; min-height: 200px; border-radius: var(--radius-m); }
   .stage { --fit-h: 62dvh; }
 }
+
+/* Left hand: the viewer's panel and zoom tools on the left. */
+@media (min-width: 901px) {
+  .app[data-hand="left"] .post-layout { grid-template-columns: 360px minmax(0, 1fr); }
+  .app[data-hand="left"] .post-layout > aside { order: -1; }
+}
+.app[data-hand="left"] .stage-tools { right: auto; left: 12px; }
 
 /* ---------- recycle bin ---------- */
 

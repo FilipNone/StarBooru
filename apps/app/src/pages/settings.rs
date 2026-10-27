@@ -10,7 +10,7 @@ use crate::cache;
 use crate::i18n::Lang;
 use crate::icons::{Ico, Icon};
 use crate::oidc::{self, Done};
-use crate::store::{self, PREFS, SESSION, Theme};
+use crate::store::{self, Hand, PREFS, SESSION, Theme};
 use crate::util::{human_size, time_ago};
 
 const MIN_PASSWORD_CHARS: usize = 8;
@@ -136,6 +136,22 @@ pub fn Settings() -> Element {
                             }
                         },
                     }
+                }
+                div { class: "field",
+                    span { {t!("settings-hand")} }
+                    div { class: "segmented", role: "radiogroup", aria_label: t!("settings-hand"),
+                        for hand in Hand::ALL {
+                            button {
+                                key: "{hand.as_str()}",
+                                role: "radio",
+                                aria_checked: if prefs.hand == hand { "true" } else { "false" },
+                                class: if prefs.hand == hand { "seg on" } else { "seg" },
+                                onclick: move |_| PREFS.write().hand = hand,
+                                {hand.label()}
+                            }
+                        }
+                    }
+                    p { class: "muted hint", {t!("settings-hand-hint")} }
                 }
                 label { class: "check",
                     input {
