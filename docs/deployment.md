@@ -13,11 +13,7 @@ StarBooru ships as one image that contains the server and the web app, plus a Po
 3. **Domain.** In the *Domains* tab, add your domain for service **`starbooru`**, port **`8080`**, with HTTPS (Let's Encrypt). Dokploy adds the Traefik labels and network. Don't publish host ports.
 4. **Deploy.** The first build compiles everything and takes several minutes. Later deploys reuse Docker's layer cache where they can.
 5. **Create the admin account.** Open `https://your-domain` and choose *Create account*. The first account becomes admin. Registration then closes unless `STARBOORU_ALLOW_REGISTRATION=true`.
-6. **Backups.** In *Volume Backups*, back up both named volumes:
-   - `pgdata` (the database: tags, scores, users);
-   - `media` (the files).
-
-   You need both to restore. For a consistent database copy you can also run `pg_dump` from the `db` container on a schedule.
+6. **Backups.** StarBooru backs the database up itself (see [Backups](#backups)) into the `media` volume. In *Volume Backups*, back up the `media` volume off the server: it then holds the files and the database backups. Backing up `pgdata` as well does no harm, but a copy of a running database's files may not restore cleanly; the `pg_dump` archives always do.
 
 Desktop and Android users sign in with the same URL (`https://your-domain`).
 
@@ -29,9 +25,34 @@ Desktop and Android users sign in with the same URL (`https://your-domain`).
 
 The image ships ffmpeg (most of its roughly 750 MB). The server uses it for thumbnails, size and length of videos, AVIF and JPEG XL. Without it, those posts show a placeholder. Each start retries posts that still lack a thumbnail, so installing ffmpeg later fills them in.
 
+## Backups
+
+The server writes `pg_dump` archives (custom format) of the database to `STARBOORU_DATA_DIR/backups`:
+
+- **Automatically,** every `STARBOORU_BACKUP_DAYS` days (default 1), keeping the newest `STARBOORU_BACKUP_KEEP` (default 7). The first check runs five minutes after start-up, then hourly.
+- **By hand,** from Settings › Administration › Backups. Backups made by hand are kept until an admin deletes them.
+
+Admins download and delete backups on the same page and change the schedule there. Archives hold every account's password hash, so only admins signed in to the app can reach them (API keys can't).
+
+A backup holds the database only. The media files are immutable and named by their hash, so copying the data folder (or the `media` volume) is all they need.
+
+The image ships the PostgreSQL 17 client. `pg_dump` must be at least as new as the database server, so update the image too if you move the `db` service to a newer PostgreSQL. Elsewhere, install the client or point `STARBOORU_PG_DUMP` at it.
+
+### Restoring
+
+1. Stop the `starbooru` service. Leave `db` running.
+2. Copy the archive into the `db` container and load it over the current database:
+   ```sh
+   docker cp starbooru-20261027-031500.dump <db-container>:/tmp/restore.dump
+   docker exec <db-container> pg_restore --clean --if-exists --no-owner \
+       -U starbooru -d starbooru /tmp/restore.dump
+   ```
+3. Put the media files back if they were lost, into the `media` volume, as they were.
+4. Start `starbooru` again. Migrations newer than the backup run at start-up.
+
 ## Configuration
 
-Admins can change the name, open registration and the recycle-bin days in the app (Settings › Administration › Server). Those changes apply at once and override the variables below.
+Admins can change the name, open registration, the recycle-bin days and the backup schedule in the app (Settings › Administration). Those changes apply at once and override the variables below.
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -41,6 +62,10 @@ Admins can change the name, open registration and the recycle-bin days in the ap
 | `STARBOORU_ALLOW_REGISTRATION` | `false` | Allow sign-ups after the first (admin) account |
 | `STARBOORU_MAX_UPLOAD_MB` | `512` | Largest upload, 1 to 16384 |
 | `STARBOORU_TRASH_DAYS` | `0` | Purge recycle-bin posts (and their files) after this many days; `0` keeps them until emptied by hand |
+| `STARBOORU_BACKUP_DAYS` | `1` | Days between automatic database backups, 0 to 365; `0` turns them off |
+| `STARBOORU_BACKUP_KEEP` | `7` | Automatic backups kept, 1 to 100 |
+| `STARBOORU_BACKUP_DIR` | `STARBOORU_DATA_DIR/backups` | Where backups are written |
+| `STARBOORU_PG_DUMP` | `pg_dump` | pg_dump (installed in the image); `off` turns backups off |
 | `STARBOORU_FFMPEG` | `ffmpeg` | ffmpeg for video, AVIF and JPEG XL thumbnails (installed in the image); `off` disables it |
 | `STARBOORU_FFPROBE` | `ffprobe` | ffprobe, for video size and length |
 | `STARBOORU_URL_IMPORT` | `on` | Import from URL: `on` (public addresses only), `private` (also private-network addresses, e.g. a NAS; anyone with an account can then make the server fetch from your LAN), `off` |

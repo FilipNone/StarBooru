@@ -5,6 +5,7 @@ use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use tracing::warn;
 
+use crate::backup::Backups;
 use crate::config::Config;
 use crate::fetch::Fetcher;
 use crate::media::Signer;
@@ -24,12 +25,14 @@ pub struct Inner {
     pub fetcher: Option<Fetcher>,
     /// Sign-in and sign-up limits.
     pub guards: Guards,
+    pub backups: Backups,
     pub started_at: DateTime<Utc>,
 }
 
 impl AppState {
     pub fn new(config: Config, db: PgPool, storage: Storage) -> Self {
         let signer = Signer::new(&config.secret);
+        let backups = Backups::new(&config.secret);
         let fetcher = config
             .url_import
             .and_then(|reach| match Fetcher::new(reach) {
@@ -46,6 +49,7 @@ impl AppState {
             signer,
             fetcher,
             guards: Guards::default(),
+            backups,
             started_at: Utc::now(),
         }))
     }

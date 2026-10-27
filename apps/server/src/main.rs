@@ -1,6 +1,7 @@
 //! StarBooru server: JSON API, media storage and web app hosting.
 
 mod auth;
+mod backup;
 mod config;
 mod error;
 mod fetch;
@@ -62,6 +63,7 @@ async fn run() -> Result<(), StartupError> {
     let state = AppState::new(config, db, storage);
     let app = routes::router(state.clone());
     tokio::spawn(routes::auto_purge(state.clone()));
+    tokio::spawn(backup::auto_backup(state.clone()));
     let backfill = state.clone();
     tokio::spawn(async move {
         routes::backfill_media(backfill.clone()).await;

@@ -12,8 +12,8 @@ pub mod saved;
 pub mod tag;
 
 pub use admin::{
-    AdminUser, DayCount, PasswordReset, ServerSettings, ServerStats, Usage, UserUpdate,
-    clean_settings,
+    AdminUser, Backup, BackupSchedule, Backups, DayCount, PasswordReset, ServerSettings,
+    ServerStats, Usage, UserUpdate, clean_settings,
 };
 pub use agent::describe_user_agent;
 pub use keys::clean_api_key;

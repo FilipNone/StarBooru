@@ -2,7 +2,7 @@
 //! environment variable until it is changed, and again once it is set back
 //! to the same value.
 
-use starbooru_core::ServerSettings;
+use starbooru_core::{BackupSchedule, ServerSettings};
 
 use crate::error::AppResult;
 use crate::state::AppState;
@@ -41,6 +41,40 @@ pub async fn save(state: &AppState, settings: &ServerSettings) -> AppResult<()> 
             .then_some(settings.allow_registration),
     )
     .bind((settings.trash_days != config.trash_days).then_some(trash_days))
+    .execute(&state.db)
+    .await?;
+    Ok(())
+}
+
+/// The automatic backup schedule in force.
+pub async fn backup_schedule(state: &AppState) -> AppResult<BackupSchedule> {
+    let row: Option<(Option<i32>, Option<i32>)> =
+        sqlx::query_as("SELECT backup_days, backup_keep FROM server_settings")
+            .fetch_optional(&state.db)
+            .await?;
+    let (days, keep) = row.unwrap_or_default();
+    let config = &state.config;
+    Ok(BackupSchedule {
+        every_days: days
+            .and_then(|d| u32::try_from(d).ok())
+            .unwrap_or(config.backup_days),
+        keep: keep
+            .and_then(|k| u32::try_from(k).ok())
+            .unwrap_or(config.backup_keep),
+    })
+}
+
+/// Saves `schedule` (already checked), like [`save`].
+pub async fn save_backup_schedule(state: &AppState, schedule: BackupSchedule) -> AppResult<()> {
+    let config = &state.config;
+    let days = i32::try_from(schedule.every_days).unwrap_or(i32::MAX);
+    let keep = i32::try_from(schedule.keep).unwrap_or(i32::MAX);
+    sqlx::query(
+        "INSERT INTO server_settings (id, backup_days, backup_keep) VALUES (true, $1, $2) \
+         ON CONFLICT (id) DO UPDATE SET backup_days = $1, backup_keep = $2, updated_at = now()",
+    )
+    .bind((schedule.every_days != config.backup_days).then_some(days))
+    .bind((schedule.keep != config.backup_keep).then_some(keep))
     .execute(&state.db)
     .await?;
     Ok(())

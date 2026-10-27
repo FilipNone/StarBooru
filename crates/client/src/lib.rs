@@ -7,12 +7,12 @@ use reqwest::{Method, RequestBuilder, StatusCode, header};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use starbooru_core::{
-    API_PREFIX, AdminUser, AliasRequest, ApiError, ApiKey, AuthResponse, BulkEdit, BulkResult,
-    CreatedApiKey, Credentials, DismissDuplicates, Duplicates, Explore, ImplicationRequest,
-    ImportRequest, Neighbors, NewApiKey, PasswordChange, PasswordReset, Post, PostPage, PostUpdate,
-    PurgeResult, Rating, ResolveDuplicates, RevokeResult, SaveSearchRequest, SavedSearch,
-    ServerInfo, ServerSettings, ServerStats, SessionInfo, Tag, TagDetail, TagOrder, TagUpdate,
-    Usage, User, UserUpdate, VoteRequest,
+    API_PREFIX, AdminUser, AliasRequest, ApiError, ApiKey, AuthResponse, Backup, BackupSchedule,
+    Backups, BulkEdit, BulkResult, CreatedApiKey, Credentials, DismissDuplicates, Duplicates,
+    Explore, ImplicationRequest, ImportRequest, Neighbors, NewApiKey, PasswordChange,
+    PasswordReset, Post, PostPage, PostUpdate, PurgeResult, Rating, ResolveDuplicates,
+    RevokeResult, SaveSearchRequest, SavedSearch, ServerInfo, ServerSettings, ServerStats,
+    SessionInfo, Tag, TagDetail, TagOrder, TagUpdate, Usage, User, UserUpdate, VoteRequest,
 };
 use std::time::Duration;
 use thiserror::Error;
@@ -261,6 +261,27 @@ impl Client {
 
     pub async fn delete_user(&self, id: i64) -> Result<()> {
         Self::send_empty(self.request(Method::DELETE, &format!("/admin/users/{id}"))?).await
+    }
+
+    /// The database backups, with signed download links (see [`Self::absolute`]).
+    pub async fn backups(&self) -> Result<Backups> {
+        Self::send(self.request(Method::GET, "/admin/backups")?).await
+    }
+
+    /// Answers once the backup is written, which takes a while on a large
+    /// collection.
+    pub async fn create_backup(&self) -> Result<Backup> {
+        Self::send(self.request(Method::POST, "/admin/backups")?).await
+    }
+
+    pub async fn set_backup_schedule(&self, schedule: &BackupSchedule) -> Result<BackupSchedule> {
+        self.json(Method::PUT, "/admin/backups/schedule", schedule)
+            .await
+    }
+
+    pub async fn delete_backup(&self, name: &str) -> Result<()> {
+        let path = format!("/admin/backups/{}", segment(name));
+        Self::send_empty(self.request(Method::DELETE, &path)?).await
     }
 
     pub async fn search_posts(&self, query: &str, page: u32, limit: u32) -> Result<PostPage> {

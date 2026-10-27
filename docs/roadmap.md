@@ -14,7 +14,7 @@ _Status as of 2026-10-27. Scope comes from `docs/checklist.md`._
    - Clients: one Dioxus app for web, desktop and Android.
    - Docker image and a Dokploy-ready compose file.
 2. **M2, daily driver.** Video thumbnails, a recycle bin page, mass edit, saved searches, an explore/trending page, a duplicate finder, keyboard navigation, i18n scaffolding.
-3. **M3, admin and safety.** OAuth and database backup from the UI (login rate limiting, API keys, admin settings, server stats, and usage stats and limits are done).
+3. **M3, admin and safety.** OAuth (login rate limiting, API keys, admin settings, server stats, usage stats and limits, and database backups are done).
 4. **M4, native polish.** Caching and offline use, a keyring token store, Android dynamic colour, in-app updates, multiple booru backends, sync.
 5. **M5, AI.** Embeddings with pgvector for related media and similar-image search, automatic tagging, OCR, translation, upscaling and background removal (with a bring-your-own API key).
 
@@ -44,7 +44,7 @@ _Status as of 2026-10-27. Scope comes from `docs/checklist.md`._
 | video reproduction offload to client | ✅ | Files are streamed with Range support. There is no server transcoding. |
 | mass edits | ✅ | M2 |
 | administration settings tab / server stats tab | ✅ | Settings › Administration (admins): *Overview* with post, tag, account and storage totals, database size and uploads per day for 30 days; *Accounts* to change roles, disable, reset passwords, set storage limits and delete; *Server* for the name, open registration and recycle-bin days, which apply at once over the environment variables. |
-| database backup | 🟡 | Dokploy Volume Backups (documented). No in-app backup. |
+| database backup | ✅ | `pg_dump` archives on a schedule (daily, keep 7 by default) or by hand from Administration › Backups, with download, delete and the schedule there. Restore is a documented `pg_restore` step. |
 | recycle bin to recover files | ✅ | Soft delete and restore, a recycle bin page, permanent delete per post, *Empty recycle bin* (admin), optional automatic purge (`STARBOORU_TRASH_DAYS`) |
 | dark / light theme, custom main colour | ✅ | System, light and dark themes. Accent from swatches or a hue slider. |
 | share system | ⬜ | |

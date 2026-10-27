@@ -26,7 +26,7 @@ fn count(n: i64) -> u64 {
 }
 
 /// An admin, signed in with a session.
-fn require_admin_session(user: &AuthUser) -> AppResult<()> {
+pub(super) fn require_admin_session(user: &AuthUser) -> AppResult<()> {
     user.require_admin()?;
     user.session_id().map(|_| ())
 }

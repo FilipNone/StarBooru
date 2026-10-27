@@ -79,6 +79,19 @@ Admins only; others get 403. API keys may read these but not change anything.
 
 An upload or URL import that would take the uploader past `quota_bytes` answers 403 `quota_exceeded`.
 
+### Backups
+
+Database backups (`pg_dump` archives, custom format). They hold every account's password hash, so these need an admin signed in with a session: API keys get 403 even for `GET`.
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| GET | `/admin/backups` | | `Backups {available, running, schedule, items}`. `available` is false when `pg_dump` is missing or turned off. `schedule` is `BackupSchedule {every_days, keep}`. `items` is `Backup[] {name, bytes, created_at, automatic, url}`, newest first; `automatic` marks the schedule's backups. |
+| POST | `/admin/backups` | | The new `Backup`, once written (this can take a while). 403 when backups are unavailable, 409 `backup_running` while another one is being made. |
+| PUT | `/admin/backups/schedule` | `BackupSchedule` | The saved schedule. `every_days` is 0–365 (0 turns automatic backups off); `keep` is 1–100. Each starts from its variable (`STARBOORU_BACKUP_DAYS`, `STARBOORU_BACKUP_KEEP`). Automatic backups beyond `keep` are removed at once; ones made by hand stay. |
+| DELETE | `/admin/backups/{name}` | | 204; 404 for an unknown name. |
+
+A `Backup`'s `url` is a signed path relative to the server, valid for an hour. Fetch it without the bearer token; it answers with the file as an attachment.
+
 ## Posts
 
 | Method | Path | Body | Returns |

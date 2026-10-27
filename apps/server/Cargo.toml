@@ -15,7 +15,7 @@ thiserror.workspace = true
 tracing.workspace = true
 
 axum = { version = "0.8", features = ["multipart", "macros"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "fs", "io-util", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "fs", "io-util", "time", "process", "sync"] }
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.7", features = ["cors", "fs", "trace", "limit", "catch-panic", "compression-gzip", "compression-br", "set-header"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
@@ -30,6 +30,7 @@ infer = "0.19"
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "http2"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 url = "2"
+percent-encoding = "2"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp", "tiff", "rayon"] }
 
 [dev-dependencies]

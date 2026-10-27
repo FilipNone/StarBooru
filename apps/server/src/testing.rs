@@ -71,6 +71,7 @@ pub async fn app_with(tweak: impl FnOnce(&mut Config)) -> Option<TestApp> {
 
     let dir = tempfile::tempdir().unwrap();
     let mut config = Config::for_tests(dir.path());
+    config.database_url = url.clone();
     tweak(&mut config);
     let storage = Storage::open(&config.data_dir)
         .await

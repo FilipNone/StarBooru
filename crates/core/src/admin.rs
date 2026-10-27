@@ -11,6 +11,8 @@ pub const MAX_INSTANCE_NAME_CHARS: usize = 64;
 pub const MAX_TRASH_DAYS: u32 = 3650;
 /// Days of uploads in [`ServerStats::uploads_by_day`].
 pub const STATS_DAYS: u32 = 30;
+pub const MAX_BACKUP_DAYS: u32 = 365;
+pub const MAX_BACKUP_KEEP: u32 = 100;
 
 /// `GET` and `PUT /admin/settings`. Each value starts from its environment
 /// variable until an admin changes it here.
@@ -35,6 +37,10 @@ pub enum SettingsError {
     ControlChar,
     #[error("the recycle bin keeps posts for 0 to {MAX_TRASH_DAYS} days")]
     BadTrashDays,
+    #[error("automatic backups run every 0 to {MAX_BACKUP_DAYS} days")]
+    BadBackupDays,
+    #[error("keep 1 to {MAX_BACKUP_KEEP} automatic backups")]
+    BadBackupKeep,
 }
 
 /// Trims and checks settings before they are saved.
@@ -171,6 +177,54 @@ impl Usage {
     }
 }
 
+/// `GET /admin/backups`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Backups {
+    /// `pg_dump` is installed and turned on, so backups can be made.
+    pub available: bool,
+    /// A backup is being made now.
+    pub running: bool,
+    pub schedule: BackupSchedule,
+    /// Newest first.
+    pub items: Vec<Backup>,
+}
+
+/// `PUT /admin/backups/schedule`. Each value starts from its environment
+/// variable until an admin changes it here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BackupSchedule {
+    /// Days between automatic backups; 0 turns them off
+    /// (`STARBOORU_BACKUP_DAYS`).
+    pub every_days: u32,
+    /// Automatic backups kept; older ones are removed
+    /// (`STARBOORU_BACKUP_KEEP`). Backups made by hand are kept until removed.
+    pub keep: u32,
+}
+
+impl BackupSchedule {
+    pub fn check(&self) -> Result<(), SettingsError> {
+        if self.every_days > MAX_BACKUP_DAYS {
+            return Err(SettingsError::BadBackupDays);
+        }
+        if self.keep == 0 || self.keep > MAX_BACKUP_KEEP {
+            return Err(SettingsError::BadBackupKeep);
+        }
+        Ok(())
+    }
+}
+
+/// One database backup.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Backup {
+    pub name: String,
+    pub bytes: u64,
+    pub created_at: DateTime<Utc>,
+    /// Made by the schedule rather than by hand.
+    pub automatic: bool,
+    /// A short-lived signed download link (relative to the server).
+    pub url: String,
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -237,6 +291,22 @@ mod tests {
             json!({ "quota_bytes": null })
         );
         assert_eq!(parse(serde_json::to_value(&round).unwrap()), round);
+    }
+
+    #[test]
+    fn checks_backup_schedule() {
+        let schedule = |every_days, keep| BackupSchedule { every_days, keep };
+        assert_eq!(schedule(0, 1).check(), Ok(()));
+        assert_eq!(schedule(MAX_BACKUP_DAYS, MAX_BACKUP_KEEP).check(), Ok(()));
+        assert_eq!(
+            schedule(MAX_BACKUP_DAYS + 1, 7).check(),
+            Err(SettingsError::BadBackupDays)
+        );
+        assert_eq!(schedule(1, 0).check(), Err(SettingsError::BadBackupKeep));
+        assert_eq!(
+            schedule(1, MAX_BACKUP_KEEP + 1).check(),
+            Err(SettingsError::BadBackupKeep)
+        );
     }
 
     #[test]

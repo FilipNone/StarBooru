@@ -1,11 +1,12 @@
 //! Administration (admins only): server stats, accounts with their usage
-//! and storage limits, and the server settings.
+//! and storage limits, database backups and the server settings.
 
 use chrono::Utc;
 use dioxus::prelude::*;
 use starbooru_core::admin::MAX_INSTANCE_NAME_CHARS;
 use starbooru_core::{AdminUser, Role, ServerSettings, ServerStats, UserUpdate};
 
+use super::admin_backups::BackupsTab;
 use super::{ErrorBanner, Spinner};
 use crate::icons::{Ico, Icon};
 use crate::store::{self, SESSION};
@@ -20,16 +21,18 @@ const MAX_QUOTA_GB: f64 = 1_000_000.0;
 enum Tab {
     Overview,
     Accounts,
+    Backups,
     Server,
 }
 
 impl Tab {
-    const ALL: [Tab; 3] = [Tab::Overview, Tab::Accounts, Tab::Server];
+    const ALL: [Tab; 4] = [Tab::Overview, Tab::Accounts, Tab::Backups, Tab::Server];
 
     fn label(self) -> String {
         match self {
             Tab::Overview => t!("admin-tab-overview"),
             Tab::Accounts => t!("admin-tab-accounts"),
+            Tab::Backups => t!("admin-tab-backups"),
             Tab::Server => t!("admin-tab-server"),
         }
     }
@@ -99,6 +102,7 @@ pub fn Admin() -> Element {
                 match tab() {
                     Tab::Overview => rsx! { Overview {} },
                     Tab::Accounts => rsx! { Accounts {} },
+                    Tab::Backups => rsx! { BackupsTab {} },
                     Tab::Server => rsx! { ServerCard {} },
                 }
             }

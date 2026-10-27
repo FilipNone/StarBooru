@@ -2,6 +2,7 @@
 
 mod admin;
 mod auth;
+mod backups;
 mod duplicates;
 mod explore;
 mod keys;
@@ -62,6 +63,12 @@ pub fn router(state: AppState) -> Router {
             axum::routing::patch(admin::update_user).delete(admin::delete_user),
         )
         .route("/admin/users/{id}/password", post(admin::reset_password))
+        .route("/admin/backups", get(backups::list).post(backups::create))
+        .route("/admin/backups/schedule", put(backups::set_schedule))
+        .route(
+            "/admin/backups/{name}",
+            axum::routing::delete(backups::delete),
+        )
         .route("/keys", get(keys::list).post(keys::create))
         .route("/keys/{id}", axum::routing::delete(keys::delete))
         .route(
@@ -122,6 +129,7 @@ pub fn router(state: AppState) -> Router {
     let mut app = Router::new()
         .nest(starbooru_core::API_PREFIX, api)
         .route("/media/{variant}/{file}", get(crate::media::serve))
+        .route("/backups/{name}", get(backups::download))
         .route("/healthz", get(health));
 
     if let Some(dir) = &state.config.web_dir {

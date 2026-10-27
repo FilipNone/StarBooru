@@ -615,3 +615,25 @@ admin-saved = Salvato
 settings-admin-note = Statistiche, account e impostazioni del server
 settings-storage = Caricamenti
 usage-of = { $used } su { $quota }
+
+## Backups
+
+admin-tab-backups = Backup
+backups-title = Backup del database
+backups-lead = Un backup contiene il database: post, tag, account e impostazioni. I file multimediali restano nella cartella dei dati, quindi copia anche quella.
+backups-unavailable = Questo server non può fare backup: manca il client PostgreSQL (pg_dump). Installalo, oppure indica il percorso con STARBOORU_PG_DUMP.
+backups-now = Fai un backup ora
+backups-running = Backup in corso…
+backups-none = Ancora nessun backup.
+backups-automatic = Automatico
+backups-download = Scarica
+backups-delete = Elimina backup
+backups-delete-named = Elimina il backup { $name }
+backups-schedule-title = Backup automatici
+backups-every = Ogni (giorni)
+backups-every-hint = 0 disattiva i backup automatici.
+backups-keep = Da tenere
+backups-keep-hint = I backup automatici più vecchi vengono rimossi. Quelli fatti a mano restano finché non li elimini.
+backups-restore-title = Ripristino
+backups-restore = Ferma StarBooru, poi carica il backup nel suo database con pg_restore:
+backups-restore-note = Poi riavvia StarBooru. La guida al deployment ha tutti i passaggi.
