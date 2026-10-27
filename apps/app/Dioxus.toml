@@ -1,0 +1,11 @@
+[application]
+name = "starbooru"
+
+[web.app]
+title = "StarBooru"
+
+[bundle]
+identifier = "eu.filipnone.starbooru"
+publisher = "StarBooru"
+short_description = "Self-hosted personal booru"
+category = "Graphics"

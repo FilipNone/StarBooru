@@ -1,0 +1,45 @@
+# StarBooru for Dokploy (or plain `docker compose`).
+#
+# Dokploy: create a Compose service from this repository, set the variables
+# below in its Environment tab, then add a domain for service `starbooru`,
+# port 8080. Dokploy adds the Traefik labels and network itself.
+# Locally: copy .env.example to .env and run
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml up --build
+
+services:
+  starbooru:
+    build: .
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://starbooru:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@db:5432/starbooru
+      STARBOORU_SECRET: ${STARBOORU_SECRET:?set STARBOORU_SECRET to 32+ random characters}
+      STARBOORU_NAME: ${STARBOORU_NAME:-StarBooru}
+      STARBOORU_ALLOW_REGISTRATION: ${STARBOORU_ALLOW_REGISTRATION:-false}
+      STARBOORU_MAX_UPLOAD_MB: ${STARBOORU_MAX_UPLOAD_MB:-512}
+    volumes:
+      - media:/data
+    expose:
+      - "8080"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: starbooru
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: starbooru
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U starbooru -d starbooru"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+# Named volumes, so Dokploy's Volume Backups can back them up.
+volumes:
+  media:
+  pgdata:

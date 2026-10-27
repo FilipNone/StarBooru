@@ -1,0 +1,36 @@
+[package]
+name = "starbooru-server"
+description = "StarBooru self-hosted server: JSON API, media storage, web app hosting"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+starbooru-core.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+axum = { version = "0.8", features = ["multipart", "macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "fs", "io-util", "time"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.7", features = ["cors", "fs", "trace", "limit", "catch-panic", "compression-gzip", "compression-br", "set-header"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "chrono", "macros", "migrate"] }
+
+argon2 = "0.6"
+hmac = "0.13"
+sha2 = "0.11"
+hex = "0.4"
+rand = "0.10"
+infer = "0.19"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp", "tiff", "rayon"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

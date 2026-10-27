@@ -1,0 +1,67 @@
+{
+  "name": "starbooru-runner",
+  "displayName": "StarBooru Runner",
+  "description": "Play buttons for the StarBooru server, web, desktop and Android apps, and the Docker stack.",
+  "version": "0.1.0",
+  "publisher": "starbooru",
+  "license": "AGPL-3.0-or-later",
+  "private": true,
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Other"],
+  "main": "./extension.js",
+  "activationEvents": ["workspaceContains:apps/app/Dioxus.toml"],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        { "id": "starbooru", "title": "StarBooru", "icon": "media/star.svg" }
+      ]
+    },
+    "views": {
+      "starbooru": [
+        { "id": "starbooru.targets", "name": "Run", "icon": "media/star.svg" }
+      ]
+    },
+    "commands": [
+      { "command": "starbooru.start", "title": "Start", "category": "StarBooru", "icon": "$(play)" },
+      { "command": "starbooru.stop", "title": "Stop", "category": "StarBooru", "icon": "$(debug-stop)" },
+      { "command": "starbooru.restart", "title": "Restart", "category": "StarBooru", "icon": "$(debug-restart)" },
+      { "command": "starbooru.open", "title": "Open", "category": "StarBooru", "icon": "$(link-external)" },
+      { "command": "starbooru.showTerminal", "title": "Show Output", "category": "StarBooru", "icon": "$(terminal)" },
+      { "command": "starbooru.stopAll", "title": "Stop Everything", "category": "StarBooru", "icon": "$(stop-circle)" },
+      { "command": "starbooru.refresh", "title": "Refresh", "category": "StarBooru", "icon": "$(refresh)" }
+    ],
+    "menus": {
+      "view/title": [
+        { "command": "starbooru.stopAll", "when": "view == starbooru.targets", "group": "navigation@1" },
+        { "command": "starbooru.refresh", "when": "view == starbooru.targets", "group": "navigation@2" }
+      ],
+      "view/item/context": [
+        { "command": "starbooru.start", "when": "view == starbooru.targets && viewItem =~ /stopped/", "group": "inline@1" },
+        { "command": "starbooru.open", "when": "view == starbooru.targets && viewItem =~ /running.*openable/", "group": "inline@1" },
+        { "command": "starbooru.restart", "when": "view == starbooru.targets && viewItem =~ /running/", "group": "inline@2" },
+        { "command": "starbooru.stop", "when": "view == starbooru.targets && viewItem =~ /running|starting/", "group": "inline@3" },
+        { "command": "starbooru.showTerminal", "when": "view == starbooru.targets && viewItem =~ /terminal/", "group": "1_run@1" },
+        { "command": "starbooru.start", "when": "view == starbooru.targets && viewItem =~ /stopped/", "group": "1_run@2" },
+        { "command": "starbooru.stop", "when": "view == starbooru.targets && viewItem =~ /running|starting/", "group": "1_run@3" }
+      ],
+      "commandPalette": [
+        { "command": "starbooru.showTerminal", "when": "false" },
+        { "command": "starbooru.refresh", "when": "false" }
+      ]
+    },
+    "configuration": {
+      "title": "StarBooru Runner",
+      "properties": {
+        "starbooru.dxPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the Dioxus CLI. Empty: look on PATH, then ~/.cargo/bin/dx."
+        },
+        "starbooru.serverPort": { "type": "number", "default": 8080, "description": "Port of the dev server." },
+        "starbooru.webPort": { "type": "number", "default": 8081, "description": "Port of the hot-reloading web app (dx serve)." },
+        "starbooru.dockerPort": { "type": "number", "default": 8090, "description": "Host port of the local Docker stack." },
+        "starbooru.databasePort": { "type": "number", "default": 55432, "description": "Host port of the dev PostgreSQL container." }
+      }
+    }
+  }
+}

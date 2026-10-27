@@ -1,0 +1,29 @@
+[package]
+name = "starbooru-app"
+description = "StarBooru client: web, desktop (Windows/Linux/macOS) and Android from one Dioxus codebase"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+starbooru-core.workspace = true
+starbooru-client.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+dioxus = { version = "0.7", features = ["router"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-sys = { version = "0.3", features = ["Window", "Storage", "Location"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+directories = "6"
+
+[features]
+default = []
+web = ["dioxus/web"]
+desktop = ["dioxus/desktop"]
+mobile = ["dioxus/mobile"]
+
+[lints]
+workspace = true

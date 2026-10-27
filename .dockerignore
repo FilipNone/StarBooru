@@ -1,0 +1,15 @@
+target
+data
+log
+docs
+.git
+.env
+.env.*
+!.env.example
+apps/app/dist
+**/*.png
+**/*.jpg
+!apps/app/assets/**
+.vscode
+.idea
+.DS_Store

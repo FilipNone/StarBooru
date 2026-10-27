@@ -1,0 +1,499 @@
+use axum::Json;
+use axum::extract::multipart::MultipartError;
+use axum::extract::{Multipart, Path, Query, State};
+use axum::http::StatusCode;
+use chrono::{DateTime, Utc};
+use serde::Deserialize;
+use sqlx::{FromRow, Postgres, QueryBuilder, Transaction};
+use starbooru_core::query::Order;
+use starbooru_core::tag::normalize_tags;
+use starbooru_core::{
+    DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT, MediaKind, Post, PostPage, PostUpdate, Rating, VoteRequest,
+    parse_query, parse_tag_list,
+};
+
+use crate::auth::AuthUser;
+use crate::error::{AppError, AppResult};
+use crate::state::AppState;
+use crate::storage::{Storage, Variant};
+
+const MAX_PAGE: u32 = 10_000;
+const MAX_SOURCE_CHARS: usize = 2048;
+
+#[derive(FromRow)]
+struct PostRow {
+    id: i64,
+    sha256: Vec<u8>,
+    ext: String,
+    mime: String,
+    kind: i16,
+    file_size: i64,
+    width: Option<i32>,
+    height: Option<i32>,
+    has_thumb: bool,
+    rating: i16,
+    source: Option<String>,
+    score: i32,
+    created_at: DateTime<Utc>,
+    deleted_at: Option<DateTime<Utc>>,
+    tags: Vec<String>,
+    my_vote: i16,
+}
+
+/// `SELECT <post columns> FROM posts p` with the caller's vote resolved.
+fn select_posts(user_id: i64) -> QueryBuilder<Postgres> {
+    let mut qb = QueryBuilder::new(
+        "SELECT p.id, p.sha256, p.ext, p.mime, p.kind, p.file_size, p.width, p.height, \
+         p.has_thumb, p.rating, p.source, p.score, p.created_at, p.deleted_at, \
+         COALESCE((SELECT array_agg(t.name ORDER BY t.name) FROM tags t \
+                   WHERE t.id = ANY(p.tag_ids)), '{}'::text[]) AS tags, \
+         COALESCE((SELECT v.value FROM post_votes v \
+                   WHERE v.post_id = p.id AND v.user_id = ",
+    );
+    qb.push_bind(user_id);
+    qb.push("), 0::smallint) AS my_vote FROM posts p");
+    qb
+}
+
+fn to_post(state: &AppState, row: PostRow) -> Post {
+    let sha = hex::encode(&row.sha256);
+    let now = Utc::now().timestamp();
+    let file_url = state.signer.url(
+        Variant::Original,
+        &Storage::file_name(Variant::Original, &sha, &row.ext),
+        now,
+    );
+    let thumb_url = row.has_thumb.then(|| {
+        state.signer.url(
+            Variant::Thumb,
+            &Storage::file_name(Variant::Thumb, &sha, &row.ext),
+            now,
+        )
+    });
+    Post {
+        id: row.id,
+        kind: MediaKind::from_db(row.kind).unwrap_or(MediaKind::Image),
+        mime: row.mime,
+        file_size: row.file_size,
+        width: row.width,
+        height: row.height,
+        sha256: sha,
+        rating: Rating::from_db(row.rating).unwrap_or_default(),
+        score: row.score,
+        my_vote: row.my_vote,
+        source: row.source,
+        tags: row.tags,
+        created_at: row.created_at,
+        deleted: row.deleted_at.is_some(),
+        file_url,
+        thumb_url,
+    }
+}
+
+async fn load_row(state: &AppState, user_id: i64, id: i64) -> AppResult<PostRow> {
+    let mut qb = select_posts(user_id);
+    qb.push(" WHERE p.id = ").push_bind(id);
+    qb.build_query_as::<PostRow>()
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or(AppError::NotFound)
+}
+
+async fn load(state: &AppState, user_id: i64, id: i64) -> AppResult<Post> {
+    Ok(to_post(state, load_row(state, user_id, id).await?))
+}
+
+async fn tag_ids(state: &AppState, names: &[String]) -> AppResult<Vec<i64>> {
+    if names.is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(
+        sqlx::query_scalar("SELECT id FROM tags WHERE name = ANY($1)")
+            .bind(names)
+            .fetch_all(&state.db)
+            .await?,
+    )
+}
+
+#[derive(Deserialize)]
+pub struct SearchParams {
+    #[serde(default)]
+    q: String,
+    page: Option<u32>,
+    limit: Option<u32>,
+}
+
+/// `GET /posts?q=&page=&limit=`. Query language: `starbooru_core::query`.
+pub async fn search(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Query(params): Query<SearchParams>,
+) -> AppResult<Json<PostPage>> {
+    let page = params.page.unwrap_or(1).clamp(1, MAX_PAGE);
+    let limit = params
+        .limit
+        .unwrap_or(DEFAULT_PAGE_LIMIT)
+        .clamp(1, MAX_PAGE_LIMIT);
+    let query = parse_query(&params.q)?;
+    let empty = || {
+        Json(PostPage {
+            posts: Vec::new(),
+            page,
+            limit,
+            has_more: false,
+        })
+    };
+
+    let include = tag_ids(&state, &query.include).await?;
+    if include.len() < query.include.len() {
+        return Ok(empty()); // a required tag does not exist
+    }
+    let exclude = tag_ids(&state, &query.exclude).await?;
+
+    let mut qb = select_posts(user.id);
+    qb.push(if query.deleted {
+        " WHERE p.deleted_at IS NOT NULL"
+    } else {
+        " WHERE p.deleted_at IS NULL"
+    });
+    if !include.is_empty() {
+        qb.push(" AND p.tag_ids @> ").push_bind(include);
+    }
+    if !exclude.is_empty() {
+        qb.push(" AND NOT (p.tag_ids && ")
+            .push_bind(exclude)
+            .push(")");
+    }
+    if !query.ratings.is_empty() {
+        let r: Vec<i16> = query.ratings.iter().map(|r| r.to_db()).collect();
+        qb.push(" AND p.rating = ANY(").push_bind(r).push(")");
+    }
+    if !query.exclude_ratings.is_empty() {
+        let r: Vec<i16> = query.exclude_ratings.iter().map(|r| r.to_db()).collect();
+        qb.push(" AND NOT (p.rating = ANY(").push_bind(r).push("))");
+    }
+    if let Some(kind) = query.kind {
+        qb.push(" AND p.kind = ").push_bind(kind.to_db());
+    }
+    qb.push(match query.order {
+        Order::Newest => " ORDER BY p.id DESC",
+        Order::Oldest => " ORDER BY p.id ASC",
+        Order::Score => " ORDER BY p.score DESC, p.id DESC",
+        Order::Random => " ORDER BY random()",
+    });
+    let offset = i64::from(page - 1) * i64::from(limit);
+    qb.push(" LIMIT ")
+        .push_bind(i64::from(limit) + 1)
+        .push(" OFFSET ")
+        .push_bind(offset);
+
+    let mut rows = qb.build_query_as::<PostRow>().fetch_all(&state.db).await?;
+    let has_more = rows.len() > limit as usize;
+    rows.truncate(limit as usize);
+    Ok(Json(PostPage {
+        posts: rows.into_iter().map(|r| to_post(&state, r)).collect(),
+        page,
+        limit,
+        has_more,
+    }))
+}
+
+pub async fn get_one(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<i64>,
+) -> AppResult<Json<Post>> {
+    Ok(Json(load(&state, user.id, id).await?))
+}
+
+fn multipart_error(e: MultipartError) -> AppError {
+    if e.status() == StatusCode::PAYLOAD_TOO_LARGE {
+        AppError::PayloadTooLarge
+    } else {
+        AppError::BadRequest(e.body_text())
+    }
+}
+
+/// `POST /posts` (multipart): `file`, optional `tags`, `rating`, `source`.
+pub async fn upload(
+    State(state): State<AppState>,
+    user: AuthUser,
+    mut form: Multipart,
+) -> AppResult<Json<Post>> {
+    let mut file = None;
+    let mut tags = Vec::new();
+    let mut rating = Rating::default();
+    let mut source = None;
+    while let Some(field) = form.next_field().await.map_err(multipart_error)? {
+        match field.name().unwrap_or_default() {
+            "file" => file = Some(field.bytes().await.map_err(multipart_error)?),
+            "tags" => tags = parse_tag_list(&field.text().await.map_err(multipart_error)?)?,
+            "rating" => {
+                let text = field.text().await.map_err(multipart_error)?;
+                rating = Rating::parse(text.trim())
+                    .ok_or_else(|| AppError::BadRequest(format!("unknown rating `{text}`")))?;
+            }
+            "source" => source = clean_source(field.text().await.map_err(multipart_error)?)?,
+            _ => {} // ignore unknown fields for forward compatibility
+        }
+    }
+    let bytes = file.ok_or_else(|| AppError::BadRequest("missing `file` field".into()))?;
+    let file_size = i64::try_from(bytes.len()).map_err(AppError::internal)?;
+
+    let worker = state.clone();
+    let info = tokio::task::spawn_blocking(move || worker.storage.ingest(&bytes)).await??;
+
+    let existing: Option<i64> = sqlx::query_scalar("SELECT id FROM posts WHERE sha256 = $1")
+        .bind(info.sha256.as_slice())
+        .fetch_optional(&state.db)
+        .await?;
+    if let Some(id) = existing {
+        return Err(duplicate(id));
+    }
+
+    let mut tx = state.db.begin().await?;
+    let id: i64 = sqlx::query_scalar(
+        "INSERT INTO posts (sha256, ext, mime, kind, file_size, width, height, has_thumb, \
+         rating, source, uploader_id) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id",
+    )
+    .bind(info.sha256.as_slice())
+    .bind(info.ext)
+    .bind(info.mime)
+    .bind(info.kind.to_db())
+    .bind(file_size)
+    .bind(info.width)
+    .bind(info.height)
+    .bind(info.has_thumb)
+    .bind(rating.to_db())
+    .bind(source)
+    .bind(user.id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| match AppError::from(e) {
+        AppError::Conflict { .. } => duplicate(0),
+        other => other,
+    })?;
+    set_tags(&mut tx, id, &tags).await?;
+    tx.commit().await?;
+    Ok(Json(load(&state, user.id, id).await?))
+}
+
+fn duplicate(id: i64) -> AppError {
+    AppError::Conflict {
+        code: "duplicate",
+        message: if id > 0 {
+            format!("this file is already post #{id}")
+        } else {
+            "this file was already uploaded".into()
+        },
+    }
+}
+
+fn clean_source(raw: String) -> AppResult<Option<String>> {
+    let s = raw.trim();
+    if s.is_empty() {
+        return Ok(None);
+    }
+    if s.chars().count() > MAX_SOURCE_CHARS {
+        return Err(AppError::BadRequest("source is too long".into()));
+    }
+    Ok(Some(s.to_owned()))
+}
+
+/// Replaces a live post's tags, creating missing tags and keeping
+/// `tags.post_count` in step.
+async fn set_tags(
+    tx: &mut Transaction<'_, Postgres>,
+    post_id: i64,
+    names: &[String],
+) -> AppResult<()> {
+    sqlx::query("INSERT INTO tags (name) SELECT unnest($1::text[]) ON CONFLICT (name) DO NOTHING")
+        .bind(names)
+        .execute(&mut **tx)
+        .await?;
+    let new_ids: Vec<i64> = sqlx::query_scalar("SELECT id FROM tags WHERE name = ANY($1)")
+        .bind(names)
+        .fetch_all(&mut **tx)
+        .await?;
+    let old_ids: Vec<i64> = sqlx::query_scalar(
+        "SELECT tag_ids FROM posts WHERE id = $1 AND deleted_at IS NULL FOR UPDATE",
+    )
+    .bind(post_id)
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or(AppError::NotFound)?;
+
+    let added: Vec<i64> = new_ids
+        .iter()
+        .filter(|id| !old_ids.contains(id))
+        .copied()
+        .collect();
+    let removed: Vec<i64> = old_ids
+        .iter()
+        .filter(|id| !new_ids.contains(id))
+        .copied()
+        .collect();
+    sqlx::query("UPDATE posts SET tag_ids = $2, updated_at = now() WHERE id = $1")
+        .bind(post_id)
+        .bind(&new_ids)
+        .execute(&mut **tx)
+        .await?;
+    adjust_counts(tx, &added, 1).await?;
+    adjust_counts(tx, &removed, -1).await
+}
+
+async fn adjust_counts(
+    tx: &mut Transaction<'_, Postgres>,
+    ids: &[i64],
+    delta: i32,
+) -> AppResult<()> {
+    if !ids.is_empty() {
+        sqlx::query("UPDATE tags SET post_count = GREATEST(post_count + $2, 0) WHERE id = ANY($1)")
+            .bind(ids)
+            .bind(delta)
+            .execute(&mut **tx)
+            .await?;
+    }
+    Ok(())
+}
+
+pub async fn update(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<i64>,
+    Json(update): Json<PostUpdate>,
+) -> AppResult<Json<Post>> {
+    let mut tx = state.db.begin().await?;
+    let live: Option<bool> =
+        sqlx::query_scalar("SELECT deleted_at IS NULL FROM posts WHERE id = $1 FOR UPDATE")
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    match live {
+        None => return Err(AppError::NotFound),
+        Some(false) => {
+            return Err(AppError::Conflict {
+                code: "deleted",
+                message: "restore the post before editing it".into(),
+            });
+        }
+        Some(true) => {}
+    }
+    if let Some(tags) = &update.tags {
+        let tags = normalize_tags(tags.iter().map(String::as_str))?;
+        set_tags(&mut tx, id, &tags).await?;
+    }
+    if let Some(rating) = update.rating {
+        sqlx::query("UPDATE posts SET rating = $2, updated_at = now() WHERE id = $1")
+            .bind(id)
+            .bind(rating.to_db())
+            .execute(&mut *tx)
+            .await?;
+    }
+    if let Some(source) = update.source {
+        sqlx::query("UPDATE posts SET source = $2, updated_at = now() WHERE id = $1")
+            .bind(id)
+            .bind(clean_source(source)?)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    Ok(Json(load(&state, user.id, id).await?))
+}
+
+/// Soft delete: moves the post to the recycle bin.
+pub async fn delete(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<i64>,
+) -> AppResult<StatusCode> {
+    set_deleted(&state, &user, id, true).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn restore(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<i64>,
+) -> AppResult<Json<Post>> {
+    set_deleted(&state, &user, id, false).await?;
+    Ok(Json(load(&state, user.id, id).await?))
+}
+
+async fn set_deleted(state: &AppState, user: &AuthUser, id: i64, delete: bool) -> AppResult<()> {
+    let mut tx = state.db.begin().await?;
+    let (uploader, deleted, tag_ids): (Option<i64>, bool, Vec<i64>) = sqlx::query_as(
+        "SELECT uploader_id, deleted_at IS NOT NULL, tag_ids FROM posts WHERE id = $1 FOR UPDATE",
+    )
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or(AppError::NotFound)?;
+    if !user.can_moderate(uploader) {
+        return Err(AppError::Forbidden);
+    }
+    if deleted == delete {
+        return Ok(()); // already in the requested state
+    }
+    sqlx::query(
+        "UPDATE posts SET deleted_at = CASE WHEN $2 THEN now() ELSE NULL END, \
+         updated_at = now() WHERE id = $1",
+    )
+    .bind(id)
+    .bind(delete)
+    .execute(&mut *tx)
+    .await?;
+    adjust_counts(&mut tx, &tag_ids, if delete { -1 } else { 1 }).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+pub async fn vote(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<i64>,
+    Json(req): Json<VoteRequest>,
+) -> AppResult<Json<Post>> {
+    if !(-1..=1).contains(&req.value) {
+        return Err(AppError::BadRequest("vote must be -1, 0 or 1".into()));
+    }
+    let mut tx = state.db.begin().await?;
+    let exists: Option<i64> =
+        sqlx::query_scalar("SELECT id FROM posts WHERE id = $1 AND deleted_at IS NULL FOR UPDATE")
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    exists.ok_or(AppError::NotFound)?;
+    let old: i16 =
+        sqlx::query_scalar("SELECT value FROM post_votes WHERE post_id = $1 AND user_id = $2")
+            .bind(id)
+            .bind(user.id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .unwrap_or(0);
+    if req.value == 0 {
+        sqlx::query("DELETE FROM post_votes WHERE post_id = $1 AND user_id = $2")
+            .bind(id)
+            .bind(user.id)
+            .execute(&mut *tx)
+            .await?;
+    } else {
+        sqlx::query(
+            "INSERT INTO post_votes (post_id, user_id, value) VALUES ($1, $2, $3) \
+             ON CONFLICT (post_id, user_id) DO UPDATE SET value = EXCLUDED.value",
+        )
+        .bind(id)
+        .bind(user.id)
+        .bind(req.value)
+        .execute(&mut *tx)
+        .await?;
+    }
+    sqlx::query("UPDATE posts SET score = score + $2 WHERE id = $1")
+        .bind(id)
+        .bind(i32::from(req.value) - i32::from(old))
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(Json(load(&state, user.id, id).await?))
+}
