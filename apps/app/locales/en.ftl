@@ -302,7 +302,7 @@ privacy-3 = The person or organisation that runs this server (the operator) deci
 privacy-4 = What the server stores
 privacy-5 = Your account: username, role and a salted Argon2id hash of your password. The password itself is never stored. If you sign in through the operator’s identity provider, the server keeps that provider’s id for you and the username or email it reports, to recognise you next time.
 privacy-6 = Your sessions: a hash of each sign-in token, the kind of device it came from (for example “StarBooru app on Linux” or “Firefox on Android”), when it was created and last used, and when it expires. API keys you create are kept the same way: a hash of the key, its name, and when it was last used.
-privacy-7 = What you add: uploaded files with their size, dimensions, checksum and a visual fingerprint for the duplicate finder, plus tags, ratings, sources, votes and saved searches.
+privacy-7 = What you add: uploaded files with their size, dimensions, checksum and a visual fingerprint for the duplicate finder, plus tags, ratings, sources, votes and saved searches. For each share link you make: the posts in it, its title, when it expires, and how many times and when it was last opened (not by whom).
 privacy-8 = To slow down password guessing, the server counts failed sign-ins per account and per network address, and sign-ups per address. These counts are kept in memory for at most an hour and never written to disk.
 privacy-9 = What stays on your device
 privacy-10 = The app remembers the server address, your sign-in token and your preferences, such as the theme. Signing out removes the token.
@@ -311,7 +311,7 @@ privacy-12 = No analytics, advertising or tracking, and no third-party services 
 privacy-13 = The server only contacts other sites when you import from a URL, and the operator’s identity provider when you sign in through it. Imports carry a generic user agent and none of your details.
 privacy-14 = File contents, passwords and tokens are never written to the server's logs.
 privacy-15 = Who can see your posts
-privacy-16 = Everyone with an account on this server can see the posts on it. Media links handed to the app are signed and expire, so a copied link stops working within 12 hours.
+privacy-16 = Everyone with an account on this server can see the posts on it. Media links handed to the app are signed and expire, so a copied link stops working within 12 hours. If you make a share link, anyone who has it can see the posts in it, without their tags, until it expires or you remove it.
 privacy-17 = Keeping and deleting
 privacy-18 = Deleted posts go to the recycle bin. They are erased when an administrator empties it, or automatically after the period the operator sets.
 privacy-19 = Sessions end when you sign out, when they expire, or when you sign out other devices in Settings. Changing your password signs out every other device.
@@ -663,3 +663,49 @@ signin-unlink = Unlink
 signin-unlink-named = Unlink { $name }
 password-none = This account has no password yet. Set one to sign in without the provider too.
 password-set = Set password
+
+## Share links
+
+share-button = Share
+share-title =
+    { $count ->
+        [one] Share this post
+       *[other] Share { $count } posts
+    }
+share-lead = Anyone with the link can see these posts without an account. Tags, votes and details about you stay hidden.
+share-name = Title (optional)
+share-name-placeholder = e.g. Holiday photos
+share-lifetime = Link works for
+share-until-removed = Until removed
+share-create = Create link
+share-ready = Link ready. Anyone who has it can open it.
+share-link = Share link
+share-copy = Copy link
+share-done = Done
+share-close = Close
+share-posts =
+    { $count ->
+        [one] 1 post
+       *[other] { $count } posts
+    }
+shares-title = Shared links
+shares-lead = Links you made with Share. Removing one stops it working; a file someone already opened can keep loading for a few hours.
+shares-none = No links yet. Use Share on a post, or select posts in the gallery.
+shares-untitled = Untitled link
+shares-made = Made { $when }
+shares-views =
+    { $count ->
+        [0] Never opened
+        [one] Opened once
+       *[other] Opened { $count } times
+    }
+shares-delete = Remove link
+shares-delete-named = Remove the link { $name }
+shared-missing-title = This link doesn't work
+shared-missing-body = It may have expired, or the person who shared it removed it.
+shared-from = Shared from { $server }
+shared-until = available until { $date }
+shared-empty = Nothing here any more.
+shared-open = Item { $n }
+shared-previous = Previous
+shared-next = Next

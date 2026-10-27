@@ -60,21 +60,32 @@ pub(super) fn select_posts(user_id: i64) -> QueryBuilder<Postgres> {
     qb
 }
 
-pub(super) fn to_post(state: &AppState, row: PostRow) -> Post {
-    let sha = hex::encode(&row.sha256);
+/// Signed URLs of a post's original and, if it has one, its thumbnail.
+pub(super) fn media_urls(
+    state: &AppState,
+    sha: &str,
+    ext: &str,
+    has_thumb: bool,
+) -> (String, Option<String>) {
     let now = Utc::now().timestamp();
     let file_url = state.signer.url(
         Variant::Original,
-        &Storage::file_name(Variant::Original, &sha, &row.ext),
+        &Storage::file_name(Variant::Original, sha, ext),
         now,
     );
-    let thumb_url = row.has_thumb.then(|| {
+    let thumb_url = has_thumb.then(|| {
         state.signer.url(
             Variant::Thumb,
-            &Storage::file_name(Variant::Thumb, &sha, &row.ext),
+            &Storage::file_name(Variant::Thumb, sha, ext),
             now,
         )
     });
+    (file_url, thumb_url)
+}
+
+pub(super) fn to_post(state: &AppState, row: PostRow) -> Post {
+    let sha = hex::encode(&row.sha256);
+    let (file_url, thumb_url) = media_urls(state, &sha, &row.ext, row.has_thumb);
     Post {
         id: row.id,
         kind: MediaKind::from_db(row.kind).unwrap_or(MediaKind::Image),

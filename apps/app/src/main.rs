@@ -15,8 +15,8 @@ use dioxus::prelude::*;
 
 use crate::oidc::OidcReturn;
 use crate::pages::{
-    Admin, Duplicates, Explore, Gallery, Help, NotFound, PostView, Privacy, Settings, Shell,
-    TagPage, Tags, Terms, Trash, Upload,
+    Admin, Duplicates, Explore, Gallery, Help, NotFound, PostView, Privacy, Settings, SharedPage,
+    Shell, TagPage, Tags, Terms, Trash, Upload,
 };
 use crate::store::{PREFS, SESSION};
 
@@ -51,6 +51,8 @@ pub enum Route {
     #[end_layout]
     #[route("/oidc?:oidc_code&:oidc_error")]
     OidcReturn { oidc_code: String, oidc_error: String },
+    #[route("/s/:token")]
+    SharedPage { token: String },
     #[route("/privacy")]
     Privacy {},
     #[route("/terms")]

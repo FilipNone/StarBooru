@@ -199,6 +199,19 @@ Each user's own list; other users never see it.
 | POST | `/searches` | `SaveSearchRequest {name, query}` | `SavedSearch`. Whitespace is collapsed. The name is 1–64 characters; the query must parse and is at most 1000 characters. 409 `name_taken` if the user already has that name (case-insensitive); 400 past 200 saved searches. |
 | DELETE | `/searches/{id}` | | 204. 404 if it isn't the caller's. |
 
+## Share links
+
+A share link shows chosen posts to anyone who has it, without an account. It shows only the media: no tags, votes, ids or account details. Any signed-in user can share any post they can see.
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| GET | `/shares` | | `Share[] {id, token, title, posts, cover_url, created_at, expires_at, views, last_viewed_at}`, the caller's links, newest first. `posts` counts the posts the link was made with. `cover_url` is the signed thumbnail of the first post still shown, or `null`. `views` counts opens of the public view. Expired links stay listed until removed. |
+| POST | `/shares` | `NewShare {post_ids, title?, days?}` | `Share`. `post_ids` keeps its order, repeats are dropped, 1–500 posts. The title is trimmed, at most 100 characters, and empty means none. `days` is 1–365, or omitted to keep the link until it is removed. 400 if a post doesn't exist or is in the recycle bin, and past 500 links. |
+| DELETE | `/shares/{id}` | | 204; the link stops working at once. 404 if it isn't the caller's. Media URLs already handed out stay valid until their signature expires (up to 12 hours). |
+| GET | `/shared/{token}` | | **No auth.** `SharedView {title, server, expires_at, posts}`, where `posts` are `SharedPost {kind, mime, width, height, duration_ms, file_url, thumb_url}` in the link's order. Posts moved to the recycle bin since are left out. 404 for a malformed, unknown, expired or removed link, or one whose owner is disabled. Answers with `Cache-Control: no-store` and `Referrer-Policy: no-referrer`. |
+
+The page to give out is `/s/{token}` on the server, which the web app serves (`starbooru_core::share::share_path`).
+
 ## Media
 
 ```text

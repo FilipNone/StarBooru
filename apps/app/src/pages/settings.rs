@@ -3,6 +3,7 @@ use dioxus::prelude::*;
 use starbooru_core::{Identity, Role, SessionInfo, SignInMethods, Usage};
 
 use super::api_keys::ApiKeysCard;
+use super::share::SharesCard;
 use super::{ErrorBanner, Spinner};
 use crate::Route;
 use crate::i18n::Lang;
@@ -221,6 +222,7 @@ pub fn Settings() -> Element {
                 }
                 PasswordCard { has_password, onchanged: move |()| sessions_version += 1 }
                 SessionsCard { version: sessions_version() }
+                SharesCard {}
                 ApiKeysCard {}
             }
         }

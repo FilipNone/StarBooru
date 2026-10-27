@@ -9,6 +9,7 @@ mod keys;
 mod oidc;
 mod posts;
 mod searches;
+mod shares;
 mod tags;
 mod trash;
 
@@ -98,6 +99,9 @@ pub fn router(state: AppState) -> Router {
         .route("/posts/{id}/purge", post(posts::purge))
         .route("/trash/empty", post(trash::empty))
         .route("/posts/{id}/vote", put(posts::vote))
+        .route("/shares", get(shares::list).post(shares::create))
+        .route("/shares/{id}", axum::routing::delete(shares::delete))
+        .route("/shared/{token}", get(shares::view))
         .route("/searches", get(searches::list).post(searches::create))
         .route("/searches/{id}", axum::routing::delete(searches::delete))
         .route("/explore", get(explore::explore))

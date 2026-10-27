@@ -9,11 +9,11 @@ use serde::de::DeserializeOwned;
 use starbooru_core::{
     API_PREFIX, AdminUser, AliasRequest, ApiError, ApiKey, AuthResponse, Backup, BackupSchedule,
     Backups, BulkEdit, BulkResult, CreatedApiKey, Credentials, DismissDuplicates, Duplicates,
-    Explore, Identity, ImplicationRequest, ImportRequest, Neighbors, NewApiKey, OidcBegin,
-    OidcFinish, OidcStart, PasswordChange, PasswordReset, Post, PostPage, PostUpdate, PurgeResult,
-    Rating, ResolveDuplicates, RevokeResult, SaveSearchRequest, SavedSearch, ServerInfo,
-    ServerSettings, ServerStats, SessionInfo, SignInMethods, Tag, TagDetail, TagOrder, TagUpdate,
-    Usage, User, UserUpdate, VoteRequest,
+    Explore, Identity, ImplicationRequest, ImportRequest, Neighbors, NewApiKey, NewShare,
+    OidcBegin, OidcFinish, OidcStart, PasswordChange, PasswordReset, Post, PostPage, PostUpdate,
+    PurgeResult, Rating, ResolveDuplicates, RevokeResult, SaveSearchRequest, SavedSearch,
+    ServerInfo, ServerSettings, ServerStats, SessionInfo, Share, SharedView, SignInMethods, Tag,
+    TagDetail, TagOrder, TagUpdate, Usage, User, UserUpdate, VoteRequest,
 };
 use std::time::Duration;
 use thiserror::Error;
@@ -256,6 +256,25 @@ impl Client {
 
     pub async fn delete_api_key(&self, id: i64) -> Result<()> {
         Self::send_empty(self.request(Method::DELETE, &format!("/keys/{id}"))?).await
+    }
+
+    /// The caller's share links, newest first.
+    pub async fn shares(&self) -> Result<Vec<Share>> {
+        Self::send(self.request(Method::GET, "/shares")?).await
+    }
+
+    pub async fn create_share(&self, share: &NewShare) -> Result<Share> {
+        self.json(Method::POST, "/shares", share).await
+    }
+
+    /// Stops the link working at once.
+    pub async fn delete_share(&self, id: i64) -> Result<()> {
+        Self::send_empty(self.request(Method::DELETE, &format!("/shares/{id}"))?).await
+    }
+
+    /// What a share link shows; needs no account.
+    pub async fn shared(&self, token: &str) -> Result<SharedView> {
+        Self::send(self.request(Method::GET, &format!("/shared/{}", segment(token)))?).await
     }
 
     pub async fn me(&self) -> Result<User> {

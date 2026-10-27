@@ -6,6 +6,7 @@ use starbooru_core::{
     BulkEdit, MAX_BULK_POSTS, MediaKind, Order, Post, Rating, SavedSearch, parse_query, with_order,
 };
 
+use super::share::ShareSheet;
 use super::{ErrorBanner, Spinner};
 use crate::Route;
 use crate::icons::{Ico, Icon};
@@ -271,6 +272,7 @@ fn BulkBar(
     let mut rating = use_signal(|| None::<Rating>);
     let mut busy = use_signal(|| false);
     let mut confirm_delete = use_signal(|| false);
+    let mut sharing = use_signal(|| false);
     let mut error = use_signal(|| None::<String>);
     let count = selected.read().len();
     let (add, remove) = split_tag_edit(&tags());
@@ -389,6 +391,16 @@ fn BulkBar(
             }
             button {
                 r#type: "button",
+                class: "btn tonal",
+                disabled: busy() || count == 0,
+                aria_label: t!("share-button"),
+                title: t!("share-button"),
+                onclick: move |_| sharing.set(true),
+                Ico { icon: Icon::Share }
+                span { class: "bulk-label", {t!("share-button")} }
+            }
+            button {
+                r#type: "button",
                 class: if confirm_delete() { "btn danger" } else { "btn tonal" },
                 disabled: busy() || count == 0,
                 onclick: delete,
@@ -405,7 +417,24 @@ fn BulkBar(
                 p { class: "bulk-error", role: "alert", "{message}" }
             }
         }
+        if sharing() {
+            ShareSheet {
+                post_ids: in_gallery_order(&loaded, &selected.read()),
+                onclose: move |()| sharing.set(false),
+            }
+        }
     }
+}
+
+/// The selected ids as the gallery shows them, so a link keeps that order.
+fn in_gallery_order(loaded: &[i64], selected: &BTreeSet<i64>) -> Vec<i64> {
+    let mut ids: Vec<i64> = loaded
+        .iter()
+        .copied()
+        .filter(|id| selected.contains(id))
+        .collect();
+    ids.extend(selected.iter().filter(|id| !loaded.contains(id)));
+    ids
 }
 
 /// Star in the header: saves the current search, or forgets it.
@@ -589,5 +618,17 @@ pub(super) fn Thumb(
             to: Route::PostView { id: post.id, q },
             {media}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shares_in_gallery_order() {
+        let selected = BTreeSet::from([2, 5, 9, 40]);
+        assert_eq!(in_gallery_order(&[9, 7, 5, 2], &selected), [9, 5, 2, 40]);
+        assert!(in_gallery_order(&[1], &BTreeSet::new()).is_empty());
     }
 }

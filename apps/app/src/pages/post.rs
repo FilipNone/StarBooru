@@ -5,6 +5,7 @@ use dioxus::prelude::*;
 use starbooru_client::ClientError;
 use starbooru_core::{MediaKind, Neighbors, Post, PostUpdate, Rating};
 
+use super::share::ShareSheet;
 use super::{ErrorBanner, Spinner};
 use crate::Route;
 use crate::icons::{Ico, Icon};
@@ -55,6 +56,7 @@ pub fn PostView(id: i64, q: String) -> Element {
     let mut error = use_signal(|| None::<String>);
     let mut busy = use_signal(|| false);
     let mut editing = use_signal(|| false);
+    let mut sharing = use_signal(|| false);
     let mut tag_text = use_signal(String::new);
     let mut rating = use_signal(Rating::default);
 
@@ -241,6 +243,9 @@ pub fn PostView(id: i64, q: String) -> Element {
                             Ico { icon: Icon::Download }
                         }
                         if !p.deleted {
+                            button { class: "icon-btn", aria_label: t!("share-button"), title: t!("share-button"), onclick: move |_| sharing.set(true),
+                                Ico { icon: Icon::Share }
+                            }
                             button { class: "icon-btn", aria_label: t!("post-edit"), title: t!("post-edit-tags"), onclick: move |_| start_edit(),
                                 Ico { icon: Icon::Edit }
                             }
@@ -250,6 +255,9 @@ pub fn PostView(id: i64, q: String) -> Element {
                             }
                         }
                     }
+                }
+                if sharing() {
+                    ShareSheet { post_ids: vec![id], onclose: move |()| sharing.set(false) }
                 }
                 if editing() {
                     form {

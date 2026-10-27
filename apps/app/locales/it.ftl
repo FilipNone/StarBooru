@@ -302,7 +302,7 @@ privacy-3 = La persona o l'organizzazione che gestisce questo server (il gestore
 privacy-4 = Cosa salva il server
 privacy-5 = Il tuo account: nome utente, ruolo e un hash Argon2id con sale della tua password. La password in sé non viene mai salvata. Se accedi tramite il provider di identità del gestore, il server conserva l'identificativo che quel provider ti assegna e il nome utente o l'email che riporta, per riconoscerti la volta successiva.
 privacy-6 = Le tue sessioni: un hash di ogni token di accesso, il tipo di dispositivo da cui proviene (ad esempio “StarBooru app on Linux” o “Firefox on Android”), quando è stata creata e usata l'ultima volta, e quando scade. Le chiavi API che crei sono conservate allo stesso modo: un hash della chiave, il suo nome e quando è stata usata l'ultima volta.
-privacy-7 = Ciò che aggiungi: i file caricati con dimensione, risoluzione, checksum e un'impronta visiva per la ricerca dei duplicati, oltre a tag, classificazioni, fonti, voti e ricerche salvate.
+privacy-7 = Ciò che aggiungi: i file caricati con dimensione, risoluzione, checksum e un'impronta visiva per la ricerca dei duplicati, oltre a tag, classificazioni, fonti, voti e ricerche salvate. Per ogni link di condivisione che crei: i post che contiene, il titolo, la scadenza, e quante volte e quando è stato aperto l'ultima volta (non da chi).
 privacy-8 = Per rallentare i tentativi di indovinare le password, il server conta gli accessi falliti per account e per indirizzo di rete, e le registrazioni per indirizzo. Questi conteggi restano in memoria al massimo un'ora e non vengono mai scritti su disco.
 privacy-9 = Cosa resta sul tuo dispositivo
 privacy-10 = L'app ricorda l'indirizzo del server, il tuo token di accesso e le tue preferenze, come il tema. Uscendo il token viene rimosso.
@@ -311,7 +311,7 @@ privacy-12 = Niente statistiche d'uso, pubblicità o tracciamento, e nessun serv
 privacy-13 = Il server contatta altri siti solo quando importi da un URL, e il provider di identità del gestore quando accedi tramite esso. Le importazioni usano un user agent generico e nessuno dei tuoi dati.
 privacy-14 = Il contenuto dei file, le password e i token non vengono mai scritti nei log del server.
 privacy-15 = Chi può vedere i tuoi post
-privacy-16 = Chiunque abbia un account su questo server può vedere i post che contiene. I link ai file forniti all'app sono firmati e scadono, quindi un link copiato smette di funzionare entro 12 ore.
+privacy-16 = Chiunque abbia un account su questo server può vedere i post che contiene. I link ai file forniti all'app sono firmati e scadono, quindi un link copiato smette di funzionare entro 12 ore. Se crei un link di condivisione, chiunque lo abbia può vedere i post che contiene, senza i loro tag, finché non scade o non lo rimuovi.
 privacy-17 = Conservazione ed eliminazione
 privacy-18 = I post eliminati finiscono nel cestino. Vengono cancellati quando un amministratore lo svuota, o automaticamente dopo il periodo stabilito dal gestore.
 privacy-19 = Le sessioni terminano quando esci, quando scadono o quando disconnetti gli altri dispositivi dalle Impostazioni. Cambiare la password disconnette tutti gli altri dispositivi.
@@ -663,3 +663,49 @@ signin-unlink = Scollega
 signin-unlink-named = Scollega { $name }
 password-none = Questo account non ha ancora una password. Impostane una per accedere anche senza il provider.
 password-set = Imposta password
+
+## Share links
+
+share-button = Condividi
+share-title =
+    { $count ->
+        [one] Condividi questo post
+       *[other] Condividi { $count } post
+    }
+share-lead = Chi ha il link può vedere questi post senza un account. Tag, voti e i tuoi dati restano nascosti.
+share-name = Titolo (facoltativo)
+share-name-placeholder = es. Foto delle vacanze
+share-lifetime = Il link funziona per
+share-until-removed = Finché non lo rimuovi
+share-create = Crea link
+share-ready = Link pronto. Chiunque lo abbia può aprirlo.
+share-link = Link di condivisione
+share-copy = Copia link
+share-done = Fatto
+share-close = Chiudi
+share-posts =
+    { $count ->
+        [one] 1 post
+       *[other] { $count } post
+    }
+shares-title = Link condivisi
+shares-lead = I link creati con Condividi. Rimuoverne uno lo disattiva; un file già aperto da qualcuno può continuare a caricarsi per qualche ora.
+shares-none = Ancora nessun link. Usa Condividi su un post, o seleziona dei post nella galleria.
+shares-untitled = Link senza titolo
+shares-made = Creato { $when }
+shares-views =
+    { $count ->
+        [0] Mai aperto
+        [one] Aperto una volta
+       *[other] Aperto { $count } volte
+    }
+shares-delete = Rimuovi link
+shares-delete-named = Rimuovi il link { $name }
+shared-missing-title = Questo link non funziona
+shared-missing-body = Potrebbe essere scaduto, o chi l'ha condiviso l'ha rimosso.
+shared-from = Condiviso da { $server }
+shared-until = disponibile fino al { $date }
+shared-empty = Qui non c'è più niente.
+shared-open = Elemento { $n }
+shared-previous = Precedente
+shared-next = Successivo
