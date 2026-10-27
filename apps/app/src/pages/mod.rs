@@ -1,3 +1,4 @@
+mod admin;
 mod api_keys;
 mod duplicates;
 mod explore;
@@ -14,6 +15,7 @@ mod upload;
 
 use dioxus::prelude::*;
 
+pub use admin::Admin;
 pub use duplicates::Duplicates;
 pub use explore::Explore;
 pub use gallery::Gallery;

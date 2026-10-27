@@ -170,8 +170,9 @@ h1, h2 { line-height: 1.2; margin: 0; }
 .icon-btn:disabled { opacity: 0.45; cursor: default; }
 
 .field { display: grid; gap: 6px; margin-bottom: 16px; }
-.field > span { font-size: 14px; font-weight: 600; color: var(--on-surface-2); }
-.field input:not([type="range"]), .field textarea {
+.field > span, .field > label:not(.check) { font-size: 14px; font-weight: 600; color: var(--on-surface-2); }
+.field > .field-hint { font-size: 13px; font-weight: 400; }
+.field input:not([type="range"], [type="checkbox"]), .field textarea {
   width: 100%; padding: 12px 14px; border: 1px solid var(--outline); border-radius: var(--radius-s);
   background: var(--surface); color: var(--on-surface); font: inherit;
   transition: border-color var(--fast) var(--ease), box-shadow var(--fast) var(--ease);
@@ -311,6 +312,8 @@ input[type="range"] { width: 100%; accent-color: var(--primary); margin-top: 12p
   .nav-top { display: none; }
   .segmented { align-self: stretch; }
   .seg { min-width: 0; padding: 0 6px; font-size: 13px; white-space: normal; line-height: 1.2; }
+  .admin-tabs { display: flex; }
+  .admin-tabs .seg { flex: 1 1 0; }
   .nav-bottom {
     position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
     display: flex; justify-content: space-around;
@@ -442,6 +445,40 @@ button.thumb { width: 100%; padding: 0; border: 0; font: inherit; color: inherit
 }
 .key-form { margin-top: 4px; padding-top: 16px; border-top: 1px solid oklch(from var(--outline) l c h / 0.4); }
 .key-options { display: flex; flex-wrap: wrap; align-items: start; gap: 0 24px; }
+.inline-input { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.inline-input input { flex: 1; width: 0; min-width: 0; }
+.inline-input .btn { flex: none; }
+.usage { display: grid; gap: 6px; }
+.meter { display: block; height: 6px; max-width: 240px; border-radius: 999px; background: var(--surface-3); overflow: hidden; }
+.meter span { display: block; height: 100%; border-radius: inherit; background: var(--primary); transition: width var(--slow) var(--ease); }
+.meter.full span { background: var(--danger); }
+
+/* ---------- administration ---------- */
+
+.admin-tabs { margin-bottom: 16px; }
+.stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.stat {
+  display: grid; gap: 2px; padding: 16px 18px; border-radius: var(--radius-m);
+  background: var(--surface); box-shadow: var(--shadow-1); animation: fade-up var(--med) var(--ease) both;
+}
+.stat-value { font-size: 24px; font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.stat-label { font-size: 13px; color: var(--on-surface-2); }
+.bars { display: flex; align-items: flex-end; gap: 3px; height: 120px; padding-top: 4px; }
+.bar {
+  flex: 1 1 0; min-width: 0; min-height: 3px; border-radius: 4px 4px 2px 2px; background: var(--primary);
+  transform-origin: bottom; animation: grow var(--slow) var(--ease-spring) both;
+}
+.bar.empty { background: var(--surface-3); }
+.bars-axis { display: flex; justify-content: space-between; margin-top: 6px; font-size: 12px; font-variant-numeric: tabular-nums; }
+.account { flex-wrap: wrap; }
+.account-tools {
+  flex-basis: 100%; display: grid; gap: 4px; padding: 16px; border-radius: var(--radius-m);
+  background: var(--surface-2); animation: fade-up var(--med) var(--ease);
+}
+.account-tools .field { margin-bottom: 12px; }
+.account-tools .banner { margin-bottom: 8px; }
+.account-tools > .field-hint { margin: 0; font-size: 13px; }
+.saved-note { display: inline-flex; align-items: center; gap: 4px; font-size: 14px; color: var(--ok); }
 
 /* ---------- explore ---------- */
 
@@ -747,6 +784,7 @@ kbd { box-shadow: inset 0 -1px 0 var(--outline); white-space: nowrap; }
 @keyframes zoom-in { from { opacity: 0; transform: scale(0.97); } }
 @keyframes pop { 0% { transform: scale(0.6); } 100% { transform: scale(1); } }
 @keyframes pulse { 50% { opacity: 0.6; } }
+@keyframes grow { from { transform: scaleY(0); } }
 @keyframes drift { to { transform: translate(4%, -3%) rotate(8deg); } }
 
 @media (prefers-reduced-motion: reduce) {

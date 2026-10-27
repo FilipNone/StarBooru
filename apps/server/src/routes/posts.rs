@@ -417,6 +417,8 @@ async fn create_post(
     tags: &[String],
 ) -> AppResult<Post> {
     let file_size = i64::try_from(bytes.len()).map_err(AppError::internal)?;
+    // Early, so a file over the limit isn't processed; checked again below.
+    check_quota(&state.db, user.id, file_size).await?;
 
     let worker = state.clone();
     let info = tokio::task::spawn_blocking(move || worker.storage.ingest(&bytes)).await??;
@@ -435,6 +437,23 @@ async fn create_post(
             discard_orphan(state, &info).await;
             Err(e)
         }
+    }
+}
+
+/// Refuses a file that would take the uploader past their storage limit.
+/// Locks the account row, so one account's uploads can't race past it.
+async fn check_quota(db: impl sqlx::PgExecutor<'_>, user_id: i64, adding: i64) -> AppResult<()> {
+    let (quota, used): (Option<i64>, i64) = sqlx::query_as(
+        "SELECT quota_bytes, CASE WHEN quota_bytes IS NULL THEN 0 ELSE \
+             (SELECT coalesce(sum(file_size), 0)::bigint FROM posts WHERE uploader_id = $1) END \
+         FROM users WHERE id = $1 FOR UPDATE",
+    )
+    .bind(user_id)
+    .fetch_one(db)
+    .await?;
+    match quota {
+        Some(q) if used.saturating_add(adding) > q => Err(AppError::QuotaExceeded),
+        _ => Ok(()),
     }
 }
 
@@ -462,6 +481,7 @@ async fn insert_post(
     tags: &[String],
 ) -> AppResult<i64> {
     let mut tx = state.db.begin().await?;
+    check_quota(&mut *tx, user.id, file_size).await?;
     let id: i64 = sqlx::query_scalar(
         "INSERT INTO posts (sha256, ext, mime, kind, file_size, width, height, duration_ms, \
          has_thumb, rating, source, uploader_id, phash, pcolor) \

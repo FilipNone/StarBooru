@@ -5,7 +5,7 @@ use axum::extract::{Path, Query, State};
 use serde::Deserialize;
 use sqlx::{PgExecutor, Postgres, Transaction};
 use starbooru_core::{
-    AliasRequest, ImplicationRequest, Role, Tag, TagCategory, TagDetail, TagOrder, TagUpdate,
+    AliasRequest, ImplicationRequest, Tag, TagCategory, TagDetail, TagOrder, TagUpdate,
     normalize_tag,
 };
 
@@ -268,14 +268,6 @@ pub async fn update(
     Ok(Json(to_tag(row)))
 }
 
-fn require_admin(user: &AuthUser) -> AppResult<()> {
-    if user.role == Role::Admin {
-        Ok(())
-    } else {
-        Err(AppError::Forbidden)
-    }
-}
-
 async fn lock_tag_graph(tx: &mut Transaction<'_, Postgres>) -> AppResult<()> {
     sqlx::query("SELECT pg_advisory_xact_lock($1)")
         .bind(TAG_GRAPH_LOCK)
@@ -292,7 +284,7 @@ pub async fn add_alias(
     Path(name): Path<String>,
     Json(req): Json<AliasRequest>,
 ) -> AppResult<Json<TagDetail>> {
-    require_admin(&user)?;
+    user.require_admin()?;
     let alias = normalize_tag(&req.alias)?;
     let mut tx = state.db.begin().await?;
     lock_tag_graph(&mut tx).await?;
@@ -359,7 +351,7 @@ pub async fn remove_alias(
     user: AuthUser,
     Path((name, alias)): Path<(String, String)>,
 ) -> AppResult<Json<TagDetail>> {
-    require_admin(&user)?;
+    user.require_admin()?;
     let tag = find(&state.db, &name).await?;
     let alias = normalize_tag(&alias)?;
     let removed = sqlx::query("DELETE FROM tag_aliases WHERE alias = $1 AND tag_id = $2")
@@ -382,7 +374,7 @@ pub async fn add_implication(
     Path(name): Path<String>,
     Json(req): Json<ImplicationRequest>,
 ) -> AppResult<Json<TagDetail>> {
-    require_admin(&user)?;
+    user.require_admin()?;
     let mut tx = state.db.begin().await?;
     lock_tag_graph(&mut tx).await?;
     let tag = find_or_create(&mut tx, &name).await?;
@@ -416,7 +408,7 @@ pub async fn remove_implication(
     user: AuthUser,
     Path((name, implied)): Path<(String, String)>,
 ) -> AppResult<Json<TagDetail>> {
-    require_admin(&user)?;
+    user.require_admin()?;
     let tag = find(&state.db, &name).await?;
     let implied = find(&state.db, &implied).await?;
     let removed = sqlx::query("DELETE FROM tag_implications WHERE tag_id = $1 AND implied_id = $2")

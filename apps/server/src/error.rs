@@ -21,6 +21,8 @@ pub enum AppError {
     NotFound,
     #[error("{message}")]
     Conflict { code: &'static str, message: String },
+    #[error("this file would take you past your storage limit")]
+    QuotaExceeded,
     #[error("upload is larger than the server limit")]
     PayloadTooLarge,
     #[error("{0}")]
@@ -47,6 +49,7 @@ impl AppError {
             AppError::BadRequest(_) => (StatusCode::BAD_REQUEST, "bad_request"),
             AppError::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized"),
             AppError::Forbidden | AppError::Denied(_) => (StatusCode::FORBIDDEN, "forbidden"),
+            AppError::QuotaExceeded => (StatusCode::FORBIDDEN, "quota_exceeded"),
             AppError::NotFound => (StatusCode::NOT_FOUND, "not_found"),
             AppError::Conflict { code, .. } => (StatusCode::CONFLICT, code),
             AppError::PayloadTooLarge => (StatusCode::PAYLOAD_TOO_LARGE, "too_large"),

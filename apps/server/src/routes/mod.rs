@@ -1,5 +1,6 @@
 //! HTTP routing. API reference: `docs/api.md`.
 
+mod admin;
 mod auth;
 mod duplicates;
 mod explore;
@@ -40,6 +41,7 @@ pub fn router(state: AppState) -> Router {
         .route("/auth/login", post(auth::login))
         .route("/auth/logout", post(auth::logout))
         .route("/auth/me", get(auth::me))
+        .route("/auth/usage", get(auth::usage))
         .route("/auth/password", put(auth::change_password))
         .route(
             "/auth/sessions",
@@ -49,6 +51,17 @@ pub fn router(state: AppState) -> Router {
             "/auth/sessions/{id}",
             axum::routing::delete(auth::revoke_session),
         )
+        .route("/admin/stats", get(admin::stats))
+        .route(
+            "/admin/settings",
+            get(admin::get_settings).put(admin::put_settings),
+        )
+        .route("/admin/users", get(admin::users))
+        .route(
+            "/admin/users/{id}",
+            axum::routing::patch(admin::update_user).delete(admin::delete_user),
+        )
+        .route("/admin/users/{id}/password", post(admin::reset_password))
         .route("/keys", get(keys::list).post(keys::create))
         .route("/keys/{id}", axum::routing::delete(keys::delete))
         .route(
@@ -138,11 +151,12 @@ async fn info(State(state): State<AppState>) -> AppResult<Json<ServerInfo>> {
     let has_users: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM users)")
         .fetch_one(&state.db)
         .await?;
+    let settings = crate::settings::current(&state).await?;
     Ok(Json(ServerInfo {
-        name: state.config.instance_name.clone(),
+        name: settings.name,
         version: env!("CARGO_PKG_VERSION").to_owned(),
         has_users,
-        registration_open: !has_users || state.config.allow_registration,
+        registration_open: !has_users || settings.allow_registration,
         max_upload_bytes: state.config.max_upload_bytes as u64,
         url_import: state.fetcher.is_some(),
     }))

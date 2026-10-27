@@ -11,6 +11,7 @@ use tracing::{info, warn};
 use super::posts::{Purge, purge_posts};
 use crate::auth::AuthUser;
 use crate::error::{AppError, AppResult};
+use crate::settings;
 use crate::state::AppState;
 
 #[derive(Deserialize)]
@@ -37,15 +38,20 @@ async fn purge_older_than(state: &AppState, days: u32) -> AppResult<u64> {
     purge_posts(state, Purge::OlderThanDays(days)).await
 }
 
-/// Background task: hourly, purges posts older than `STARBOORU_TRASH_DAYS`.
+/// Background task: hourly, purges posts older than the recycle bin's
+/// limit (`STARBOORU_TRASH_DAYS`, or as changed in the admin settings).
 pub async fn auto_purge(state: AppState) {
-    let days = state.config.trash_days;
-    if days == 0 {
-        return;
-    }
     let mut tick = tokio::time::interval(Duration::from_secs(3600));
     loop {
         tick.tick().await;
+        let days = match settings::current(&state).await {
+            Ok(s) if s.trash_days > 0 => s.trash_days,
+            Ok(_) => continue,
+            Err(e) => {
+                warn!("recycle bin purge skipped: {e}");
+                continue;
+            }
+        };
         match purge_older_than(&state, days).await {
             Ok(0) => {}
             Ok(n) => info!("recycle bin: purged {n} posts older than {days} days"),

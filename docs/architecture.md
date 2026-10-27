@@ -28,8 +28,9 @@ The desktop and Android apps are the same Dioxus code as the web app. Each one a
 | Module | What it does |
 |---|---|
 | `config.rs` | Environment variables (see `deployment.md`) |
-| `routes/` | One file per resource: `auth`, `posts`, `tags`, `trash`, `duplicates`, and more. `mod.rs` builds the router and its layers (CORS, compression, tracing, panic catcher, SPA fallback). |
+| `routes/` | One file per resource: `auth`, `posts`, `tags`, `trash`, `duplicates`, `admin`, and more. `mod.rs` builds the router and its layers (CORS, compression, tracing, panic catcher, SPA fallback). |
 | `auth.rs` | Bearer-token extractor for sessions (`sb_…`) and API keys (`sbk_…`); a read-only key is refused anything but `GET`/`HEAD`, and `AuthUser::session_id()` refuses keys on the account endpoints. Argon2id password hashing (on the blocking pool). |
+| `settings.rs` | The server settings in force: the `server_settings` row over the environment variables. Read per request, so admin changes apply at once. |
 | `throttle.rs` | Sign-in limits: failed attempts per account and per client address (IPv6 by /64) in fixed windows, in memory and capped at 10,000 keys each. The address is the socket peer, or the last `X-Forwarded-For` entry with `STARBOORU_TRUST_PROXY`. |
 | `storage.rs` | Format sniffing, content-addressed storage, thumbnails |
 | `similar.rs` | Duplicate finder fingerprints: a 64-bit difference hash (9×8 brightness grid) plus the average colour, and grouping by Hamming distance through a 4×16-bit multi-index, so it never compares every pair. Fine high-frequency patterns blur to flat at 9×8 and can match when their colours do. |
@@ -45,7 +46,8 @@ PostgreSQL schema: `apps/server/migrations/`.
 
 | Table | Contents |
 |---|---|
-| `users` | Usernames are case-insensitively unique. Roles are `admin` and `user`; the first account becomes admin. |
+| `users` | Usernames are case-insensitively unique. Roles are `admin` and `user`; the first account becomes admin. `disabled_at` blocks sign-in and every token; `quota_bytes` caps the bytes of originals the account may upload (checked under a row lock at insert). |
+| `server_settings` | One row of admin overrides (name, open registration, recycle-bin days); NULL follows the environment variable |
 | `sessions` | The SHA-256 of each bearer token (`sb_<64 hex>`) and its expiry, 90 days. The plain token is never stored. Also an `id` for the settings page, `last_used_at` (refreshed at most every 5 minutes) and `client`, a short description like "Firefox on Linux" (`starbooru_core::agent`); the raw User-Agent is not kept. Native apps send `StarBooru-app/<version> (<os>)`. |
 | `tags` | Normalised name, category (general / artist / character / copyright / meta) and a `post_count` kept in step inside the same transaction as post edits |
 | `posts` | One per file: `sha256` (unique, so duplicates are refused), format, size, dimensions, rating, source, score, `tag_ids BIGINT[]`, `deleted_at` (soft delete), and `phash`/`pcolor`, the duplicate finder's fingerprint of the thumbnail |

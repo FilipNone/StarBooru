@@ -31,6 +31,8 @@ The image ships ffmpeg (most of its roughly 750 MB). The server uses it for thum
 
 ## Configuration
 
+Admins can change the name, open registration and the recycle-bin days in the app (Settings › Administration › Server). Those changes apply at once and override the variables below.
+
 | Variable | Default | Meaning |
 |---|---|---|
 | `DATABASE_URL` | required | PostgreSQL URL (the compose file builds it from `POSTGRES_PASSWORD`) |

@@ -10,7 +10,7 @@ All endpoints are under `/api/v1`. Bodies are JSON unless noted. The Rust types 
 |---|---|
 | 400 | bad input |
 | 401 | missing or expired token |
-| 403 | not allowed |
+| 403 | not allowed (`forbidden`, or `quota_exceeded` for an upload past the account's storage limit) |
 | 404 | not found |
 | 409 | conflict (`duplicate`, `username_taken`, `deleted`, `not_deleted`, `implication_cycle`, `name_taken`) |
 | 413 | upload too large |
@@ -26,6 +26,8 @@ All endpoints are under `/api/v1`. Bodies are JSON unless noted. The Rust types 
 | GET | `/info` | `ServerInfo`: `name`, `version`, `has_users`, `registration_open`, `max_upload_bytes`, `url_import` (whether `POST /posts/import` is on) |
 | GET | `/healthz` (not under `/api/v1`) | `ok` when the database answers |
 
+`name` and `registration_open` follow the admin settings (see [Administration](#administration)).
+
 ## Accounts
 
 | Method | Path | Body | Returns |
@@ -34,6 +36,7 @@ All endpoints are under `/api/v1`. Bodies are JSON unless noted. The Rust types 
 | POST | `/auth/login` | `{username, password}` | `AuthResponse`. 401 for a wrong username or password. 429 `rate_limited` with `Retry-After` once an account has 10 failures in 15 minutes (the right password waits too) or an address has 50. A successful sign-in resets the account's count. |
 | POST | `/auth/logout` | | 204; revokes this token |
 | GET | `/auth/me` | | `User` |
+| GET | `/auth/usage` | | `Usage {posts, bytes, quota_bytes}`: what the account uploaded (recycle bin included) and its storage limit (`null` for none) |
 | PUT | `/auth/password` | `PasswordChange {current, new}` | 204. Signs out every other session of the account. 400 if `current` is wrong or `new` breaks the password rules. 429 after 10 wrong `current` passwords in 15 minutes. |
 | GET | `/auth/sessions` | | `SessionInfo[] {id, client, created_at, last_used_at, expires_at, current}`: the account's live sessions, this one first. `client` is a short description such as "Firefox on Linux", derived from the User-Agent at sign-in (the header itself is not stored). `last_used_at` is updated at most every 5 minutes. |
 | DELETE | `/auth/sessions/{id}` | | 204; signs that session out. 404 if it isn't one of yours. |
@@ -44,6 +47,7 @@ Account rules:
 - Passwords are 8 characters or more.
 - Tokens last 90 days.
 - With an API key, the `/auth/logout`, `/auth/password` and `/auth/sessions` endpoints return 403 `forbidden`.
+- A disabled account gets 403 `forbidden` at sign-in (after the right password), and its sessions and keys answer 401.
 
 ## API keys
 
@@ -58,6 +62,22 @@ Managing keys needs a sign-in session. Changing the password keeps the account's
 | GET | `/keys` | | `ApiKey[] {id, name, prefix, read_only, created_at, last_used_at, expires_at}`, newest first. `prefix` is the first 12 characters of the token. `last_used_at` is `null` until first use and is updated at most every 5 minutes. `expires_at` is `null` for keys that don't expire. Expired keys stay listed until removed. |
 | POST | `/keys` | `NewApiKey {name, read_only?, expires_days?}` | `CreatedApiKey {key, token}`. The token is shown only here; the server keeps only its SHA-256. The name is 1–64 characters with whitespace collapsed. `expires_days` is 1–3650, or omitted for never. 400 past 50 keys. |
 | DELETE | `/keys/{id}` | | 204; the key stops working at once. 404 if it isn't the caller's. |
+
+## Administration
+
+Admins only; others get 403. API keys may read these but not change anything.
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| GET | `/admin/stats` | | `ServerStats`: `version`, `started_at`, `users`, `disabled_users`, live `images`/`animations`/`videos`, `bin_posts`, `tags`, `media_bytes` (originals, bin included), `bin_bytes`, `database_bytes`, `uploads_by_day` (`[{day, posts}]`, the last 30 UTC days oldest first), `max_upload_bytes`, `video_thumbnails`, `url_import` |
+| GET | `/admin/settings` | | `ServerSettings {name, allow_registration, trash_days}`, the values in force |
+| PUT | `/admin/settings` | `ServerSettings` | The saved settings. They apply at once. Each starts from its environment variable (`STARBOORU_NAME`, `STARBOORU_ALLOW_REGISTRATION`, `STARBOORU_TRASH_DAYS`), and a value equal to the variable's keeps following it. `name` is 1–64 characters with whitespace collapsed; `trash_days` is 0–3650. |
+| GET | `/admin/users` | | `AdminUser[] {id, username, role, created_at, disabled, posts, bytes, quota_bytes, last_active}`, oldest first. `posts` and `bytes` count uploads, recycle bin included. `last_active` is the latest use of any session or key. |
+| PATCH | `/admin/users/{id}` | `UserUpdate {role?, disabled?, quota_bytes?}` | The updated `AdminUser`. Missing fields stay as they are; `"quota_bytes": null` removes the limit. Disabling signs the account out everywhere. 400 for your own account (so an admin always remains), 404 for an unknown id. |
+| POST | `/admin/users/{id}/password` | `PasswordReset {new}` | 204. Signs the account out everywhere; its API keys keep working. 400 for your own account (use `PUT /auth/password`). |
+| DELETE | `/admin/users/{id}` | | 204. Removes the account with its sessions, keys, votes (taken off the scores) and saved searches. Its posts stay, without an uploader. 400 for your own account. |
+
+An upload or URL import that would take the uploader past `quota_bytes` answers 403 `quota_exceeded`.
 
 ## Posts
 

@@ -7,11 +7,12 @@ use reqwest::{Method, RequestBuilder, StatusCode, header};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use starbooru_core::{
-    API_PREFIX, AliasRequest, ApiError, ApiKey, AuthResponse, BulkEdit, BulkResult, CreatedApiKey,
-    Credentials, DismissDuplicates, Duplicates, Explore, ImplicationRequest, ImportRequest,
-    Neighbors, NewApiKey, PasswordChange, Post, PostPage, PostUpdate, PurgeResult, Rating,
-    ResolveDuplicates, RevokeResult, SaveSearchRequest, SavedSearch, ServerInfo, SessionInfo, Tag,
-    TagDetail, TagOrder, TagUpdate, User, VoteRequest,
+    API_PREFIX, AdminUser, AliasRequest, ApiError, ApiKey, AuthResponse, BulkEdit, BulkResult,
+    CreatedApiKey, Credentials, DismissDuplicates, Duplicates, Explore, ImplicationRequest,
+    ImportRequest, Neighbors, NewApiKey, PasswordChange, PasswordReset, Post, PostPage, PostUpdate,
+    PurgeResult, Rating, ResolveDuplicates, RevokeResult, SaveSearchRequest, SavedSearch,
+    ServerInfo, ServerSettings, ServerStats, SessionInfo, Tag, TagDetail, TagOrder, TagUpdate,
+    Usage, User, UserUpdate, VoteRequest,
 };
 use std::time::Duration;
 use thiserror::Error;
@@ -219,6 +220,47 @@ impl Client {
 
     pub async fn me(&self) -> Result<User> {
         Self::send(self.request(Method::GET, "/auth/me")?).await
+    }
+
+    /// What the signed-in account has uploaded, against its storage limit.
+    pub async fn usage(&self) -> Result<Usage> {
+        Self::send(self.request(Method::GET, "/auth/usage")?).await
+    }
+
+    pub async fn admin_stats(&self) -> Result<ServerStats> {
+        Self::send(self.request(Method::GET, "/admin/stats")?).await
+    }
+
+    pub async fn admin_settings(&self) -> Result<ServerSettings> {
+        Self::send(self.request(Method::GET, "/admin/settings")?).await
+    }
+
+    pub async fn set_admin_settings(&self, settings: &ServerSettings) -> Result<ServerSettings> {
+        self.json(Method::PUT, "/admin/settings", settings).await
+    }
+
+    pub async fn admin_users(&self) -> Result<Vec<AdminUser>> {
+        Self::send(self.request(Method::GET, "/admin/users")?).await
+    }
+
+    pub async fn update_user(&self, id: i64, update: &UserUpdate) -> Result<AdminUser> {
+        self.json(Method::PATCH, &format!("/admin/users/{id}"), update)
+            .await
+    }
+
+    /// Signs that account out everywhere.
+    pub async fn reset_user_password(&self, id: i64, new: &str) -> Result<()> {
+        let body = PasswordReset {
+            new: new.to_owned(),
+        };
+        let req = self
+            .request(Method::POST, &format!("/admin/users/{id}/password"))?
+            .json(&body);
+        Self::send_empty(req).await
+    }
+
+    pub async fn delete_user(&self, id: i64) -> Result<()> {
+        Self::send_empty(self.request(Method::DELETE, &format!("/admin/users/{id}"))?).await
     }
 
     pub async fn search_posts(&self, query: &str, page: u32, limit: u32) -> Result<PostPage> {

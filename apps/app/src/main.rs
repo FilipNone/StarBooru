@@ -13,8 +13,8 @@ mod zoom;
 use dioxus::prelude::*;
 
 use crate::pages::{
-    Duplicates, Explore, Gallery, Help, NotFound, PostView, Privacy, Settings, Shell, TagPage,
-    Tags, Terms, Trash, Upload,
+    Admin, Duplicates, Explore, Gallery, Help, NotFound, PostView, Privacy, Settings, Shell,
+    TagPage, Tags, Terms, Trash, Upload,
 };
 use crate::store::{PREFS, SESSION};
 
@@ -44,6 +44,8 @@ pub enum Route {
         Duplicates {},
         #[route("/help")]
         Help {},
+        #[route("/admin")]
+        Admin {},
     #[end_layout]
     #[route("/privacy")]
     Privacy {},

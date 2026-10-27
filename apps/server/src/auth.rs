@@ -41,6 +41,14 @@ impl AuthUser {
         self.role == Role::Admin || owner == Some(self.id)
     }
 
+    pub fn require_admin(&self) -> AppResult<()> {
+        if self.role == Role::Admin {
+            Ok(())
+        } else {
+            Err(AppError::Forbidden)
+        }
+    }
+
     /// The sign-in session behind the request. API keys are refused, so a
     /// leaked key can't change the password, sign-ins or keys.
     pub fn session_id(&self) -> AppResult<i64> {
@@ -72,14 +80,15 @@ impl FromRequestParts<AppState> for AuthUser {
                 "SELECT u.id, u.role, k.id, k.read_only, \
                         coalesce(k.last_used_at < now() - make_interval(secs => $2), true) \
                  FROM api_keys k JOIN users u ON u.id = k.user_id \
-                 WHERE k.token_hash = $1 AND (k.expires_at IS NULL OR k.expires_at > now())",
+                 WHERE k.token_hash = $1 AND (k.expires_at IS NULL OR k.expires_at > now()) \
+                   AND u.disabled_at IS NULL",
             )
         } else {
             sqlx::query_as(
                 "SELECT u.id, u.role, s.id, false, \
                         s.last_used_at < now() - make_interval(secs => $2) \
                  FROM sessions s JOIN users u ON u.id = s.user_id \
-                 WHERE s.token_hash = $1 AND s.expires_at > now()",
+                 WHERE s.token_hash = $1 AND s.expires_at > now() AND u.disabled_at IS NULL",
             )
         }
         .bind(&token_hash)

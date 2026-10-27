@@ -1,6 +1,6 @@
 use chrono::Utc;
 use dioxus::prelude::*;
-use starbooru_core::{Role, SessionInfo};
+use starbooru_core::{Role, SessionInfo, Usage};
 
 use super::api_keys::ApiKeysCard;
 use super::{ErrorBanner, Spinner};
@@ -8,7 +8,7 @@ use crate::Route;
 use crate::i18n::Lang;
 use crate::icons::{Ico, Icon};
 use crate::store::{self, PREFS, SESSION, Theme};
-use crate::util::time_ago;
+use crate::util::{human_size, time_ago};
 
 const MIN_PASSWORD_CHARS: usize = 8;
 
@@ -33,6 +33,10 @@ pub fn Settings() -> Element {
     let info = use_resource(|| async move {
         let client = store::client()?;
         client.info().await.ok()
+    });
+    let usage = use_resource(|| async move {
+        let client = store::client()?;
+        client.usage().await.ok()
     });
     let prefs = PREFS.read().clone();
     let session = SESSION.read().clone();
@@ -127,6 +131,17 @@ pub fn Settings() -> Element {
                 }
             }
 
+            if session.as_ref().is_some_and(|s| s.user.role == Role::Admin) {
+                section { class: "card",
+                    h2 { class: "card-title", {t!("admin-server-title")} }
+                    Link { class: "list-link", to: Route::Admin {},
+                        Ico { icon: Icon::Shield }
+                        span { {t!("admin-title")} }
+                        span { class: "muted", {t!("settings-admin-note")} }
+                    }
+                }
+            }
+
             section { class: "card",
                 h2 { class: "card-title", {t!("settings-help-legal")} }
                 Link { class: "list-link", to: Route::Help {},
@@ -152,6 +167,23 @@ pub fn Settings() -> Element {
                     dl { class: "meta",
                         dt { {t!("settings-signed-in-as")} } dd { "{s.user.username}" }
                         dt { {t!("settings-role")} } dd { {role_label(s.user.role)} }
+                        if let Some(Some(u)) = usage.read().as_ref() {
+                            dt { {t!("settings-storage")} }
+                            dd { class: "usage",
+                                {usage_text(u)}
+                                if let Some(f) = u.fraction() {
+                                    span {
+                                        class: if f >= 0.9 { "meter full" } else { "meter" },
+                                        role: "meter",
+                                        aria_valuemin: "0",
+                                        aria_valuemax: "100",
+                                        aria_valuenow: "{f * 100.0:.0}",
+                                        aria_label: t!("settings-storage"),
+                                        span { style: "width: {f * 100.0:.1}%" }
+                                    }
+                                }
+                            }
+                        }
                         dt { {t!("login-server")} } dd { class: "break", "{s.server}" }
                         if let Some(Some(i)) = info.read().as_ref() {
                             dt { {t!("settings-server-version")} } dd { "{i.name} {i.version}" }
@@ -170,6 +202,16 @@ pub fn Settings() -> Element {
             }
         }
     }
+}
+
+/// "12 posts · 1.2 GB of 5.0 GB"
+fn usage_text(u: &Usage) -> String {
+    let size = |b: u64| human_size(i64::try_from(b).unwrap_or(i64::MAX));
+    let used = match u.quota_bytes {
+        Some(q) => t!("usage-of", used = size(u.bytes), quota = size(q)),
+        None => size(u.bytes),
+    };
+    format!("{} · {used}", t!("posts-count", count = u.posts))
 }
 
 fn role_label(role: Role) -> String {

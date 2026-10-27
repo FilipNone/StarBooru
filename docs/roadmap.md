@@ -14,7 +14,7 @@ _Status as of 2026-10-27. Scope comes from `docs/checklist.md`._
    - Clients: one Dioxus app for web, desktop and Android.
    - Docker image and a Dokploy-ready compose file.
 2. **M2, daily driver.** Video thumbnails, a recycle bin page, mass edit, saved searches, an explore/trending page, a duplicate finder, keyboard navigation, i18n scaffolding.
-3. **M3, admin and safety.** Admin settings, server stats, usage limits and stats, OAuth (login rate limiting and API keys are done), database backup from the UI.
+3. **M3, admin and safety.** OAuth and database backup from the UI (login rate limiting, API keys, admin settings, server stats, and usage stats and limits are done).
 4. **M4, native polish.** Caching and offline use, a keyring token store, Android dynamic colour, in-app updates, multiple booru backends, sync.
 5. **M5, AI.** Embeddings with pgvector for related media and similar-image search, automatic tagging, OCR, translation, upscaling and background removal (with a bring-your-own API key).
 
@@ -39,11 +39,11 @@ _Status as of 2026-10-27. Scope comes from `docs/checklist.md`._
 | explore tab with trending | ✅ | An Explore tab: trending posts (net upvotes in the last day, week, month or year), popular tags on recent posts, *On this day* from earlier years, and shuffleable random picks. A search narrows it all. |
 | login system | 🟡 | Accounts, Argon2id, revocable tokens, first user becomes admin. Failed sign-ins are limited per account and address (429 with `Retry-After`). OAuth: M3. |
 | profile settings | ✅ | Theme, accent and language; password change (signs out other devices); a list of signed-in devices with last activity, sign-out per device and *Sign out everywhere else*. |
-| usage stats / usage limits | ⬜ | M3 |
+| usage stats / usage limits | ✅ | Each account sees its uploads (posts and bytes) in Settings, with a meter when it has a limit. Admins see every account's usage and set a storage limit per account; uploads past it are refused (`quota_exceeded`). |
 | automatic smart image compression | ⬜ | Originals are kept byte-exact by design. Compressed variants could be added. |
 | video reproduction offload to client | ✅ | Files are streamed with Range support. There is no server transcoding. |
 | mass edits | ✅ | M2 |
-| administration settings tab / server stats tab | ⬜ | M3 |
+| administration settings tab / server stats tab | ✅ | Settings › Administration (admins): *Overview* with post, tag, account and storage totals, database size and uploads per day for 30 days; *Accounts* to change roles, disable, reset passwords, set storage limits and delete; *Server* for the name, open registration and recycle-bin days, which apply at once over the environment variables. |
 | database backup | 🟡 | Dokploy Volume Backups (documented). No in-app backup. |
 | recycle bin to recover files | ✅ | Soft delete and restore, a recycle bin page, permanent delete per post, *Empty recycle bin* (admin), optional automatic purge (`STARBOORU_TRASH_DAYS`) |
 | dark / light theme, custom main colour | ✅ | System, light and dark themes. Accent from swatches or a hue slider. |

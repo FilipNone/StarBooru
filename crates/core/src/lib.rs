@@ -3,6 +3,7 @@
 //! This crate does no I/O so it compiles everywhere the clients run
 //! (native, `wasm32-unknown-unknown`, Android).
 
+pub mod admin;
 pub mod agent;
 pub mod keys;
 pub mod model;
@@ -10,6 +11,10 @@ pub mod query;
 pub mod saved;
 pub mod tag;
 
+pub use admin::{
+    AdminUser, DayCount, PasswordReset, ServerSettings, ServerStats, Usage, UserUpdate,
+    clean_settings,
+};
 pub use agent::describe_user_agent;
 pub use keys::clean_api_key;
 pub use model::*;

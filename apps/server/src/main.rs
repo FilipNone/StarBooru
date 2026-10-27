@@ -7,6 +7,7 @@ mod fetch;
 mod media;
 mod probe;
 mod routes;
+mod settings;
 mod similar;
 mod state;
 mod storage;

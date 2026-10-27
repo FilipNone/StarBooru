@@ -3,7 +3,7 @@ use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use chrono::{DateTime, Utc};
 use starbooru_core::{
-    AuthResponse, Credentials, PasswordChange, RevokeResult, Role, SessionInfo, User,
+    AuthResponse, Credentials, PasswordChange, RevokeResult, Role, SessionInfo, Usage, User,
     describe_user_agent,
 };
 
@@ -11,6 +11,7 @@ use crate::auth::{
     self, AuthUser, SESSION_DAYS, hash_password, hash_token, new_token, verify_password,
 };
 use crate::error::{AppError, AppResult};
+use crate::settings;
 use crate::state::AppState;
 use crate::throttle::{ClientAddr, account_key};
 
@@ -75,7 +76,8 @@ pub async fn register(
     auth::validate_username(&username)?;
     auth::validate_password(&creds.password)?;
     // Cheap early refusal so closed instances never pay for a password hash.
-    if !state.config.allow_registration {
+    let open = settings::current(&state).await?.allow_registration;
+    if !open {
         let has_users: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM users)")
             .fetch_one(&state.db)
             .await?;
@@ -93,7 +95,7 @@ pub async fn register(
     let has_users: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM users)")
         .fetch_one(&mut *tx)
         .await?;
-    if has_users && !state.config.allow_registration {
+    if has_users && !open {
         return Err(AppError::Forbidden);
     }
     let role = if has_users { Role::User } else { Role::Admin };
@@ -128,20 +130,26 @@ pub async fn login(
     let now = Utc::now();
     let account = account_key(&creds.username);
     state.guards.check_login(&account, addr.as_deref(), now)?;
-    let row: Option<(i64, String, String, DateTime<Utc>, String)> = sqlx::query_as(
-        "SELECT id, username, role, created_at, password_hash FROM users \
-         WHERE lower(username) = lower($1)",
+    let row: Option<(i64, String, String, DateTime<Utc>, String, bool)> = sqlx::query_as(
+        "SELECT id, username, role, created_at, password_hash, disabled_at IS NOT NULL \
+         FROM users WHERE lower(username) = lower($1)",
     )
     .bind(creds.username.trim())
     .fetch_optional(&state.db)
     .await?;
     let stored = row.as_ref().map(|r| r.4.clone());
     let verified = verify_password(creds.password, stored).await?;
-    let Some((id, username, role, created_at, _)) = row.filter(|_| verified) else {
+    let Some((id, username, role, created_at, _, disabled)) = row.filter(|_| verified) else {
         state.guards.failed_login(&account, addr.as_deref(), now);
         return Err(AppError::Unauthorized);
     };
     state.guards.account.clear(&account);
+    // Said only after the right password, so it reveals nothing to a guesser.
+    if disabled {
+        return Err(AppError::Denied(
+            "this account is disabled; ask the server's admin",
+        ));
+    }
     sqlx::query("DELETE FROM sessions WHERE expires_at < now()")
         .execute(&state.db)
         .await?;
@@ -163,6 +171,24 @@ pub async fn me(State(state): State<AppState>, user: AuthUser) -> AppResult<Json
             .fetch_one(&state.db)
             .await?;
     Ok(Json(to_user(row)?))
+}
+
+/// `GET /auth/usage`: what the caller has uploaded, against their limit.
+pub async fn usage(State(state): State<AppState>, user: AuthUser) -> AppResult<Json<Usage>> {
+    let (posts, bytes, quota): (i64, i64, Option<i64>) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM posts WHERE uploader_id = $1), \
+                (SELECT coalesce(sum(file_size), 0)::bigint FROM posts WHERE uploader_id = $1), \
+                quota_bytes \
+         FROM users WHERE id = $1",
+    )
+    .bind(user.id)
+    .fetch_one(&state.db)
+    .await?;
+    Ok(Json(Usage {
+        posts: u64::try_from(posts).unwrap_or(0),
+        bytes: u64::try_from(bytes).unwrap_or(0),
+        quota_bytes: quota.and_then(|q| u64::try_from(q).ok()),
+    }))
 }
 
 /// `PUT /auth/password`: needs the current password. Signs out every other

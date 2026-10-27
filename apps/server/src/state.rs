@@ -1,6 +1,7 @@
 use std::ops::Deref;
 use std::sync::Arc;
 
+use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use tracing::warn;
 
@@ -23,6 +24,7 @@ pub struct Inner {
     pub fetcher: Option<Fetcher>,
     /// Sign-in and sign-up limits.
     pub guards: Guards,
+    pub started_at: DateTime<Utc>,
 }
 
 impl AppState {
@@ -44,6 +46,7 @@ impl AppState {
             signer,
             fetcher,
             guards: Guards::default(),
+            started_at: Utc::now(),
         }))
     }
 }
