@@ -3,6 +3,9 @@
 mod auth;
 mod posts;
 mod tags;
+mod trash;
+
+pub use trash::auto_purge;
 
 use std::any::Any;
 use std::time::Duration;
@@ -45,6 +48,8 @@ pub fn router(state: AppState) -> Router {
                 .delete(posts::delete),
         )
         .route("/posts/{id}/restore", post(posts::restore))
+        .route("/posts/{id}/purge", post(posts::purge))
+        .route("/trash/empty", post(trash::empty))
         .route("/posts/{id}/vote", put(posts::vote))
         .route("/tags", get(tags::list))
         .route("/tags/{name}", axum::routing::patch(tags::update))
@@ -141,4 +146,125 @@ fn panic_response(err: Box<dyn Any + Send + 'static>) -> Response {
     resp.headers_mut()
         .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     resp
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::http::{Method, StatusCode};
+    use serde_json::json;
+
+    use crate::testing;
+
+    /// The M1 API end to end: accounts, upload, search, edit, votes, bin.
+    #[tokio::test]
+    async fn core_api_flow() {
+        let Some(app) = testing::app_with(|c| c.allow_registration = false).await else {
+            return;
+        };
+        let info = app
+            .call(Method::GET, "/api/v1/info", None, None)
+            .await
+            .json();
+        assert_eq!(info["has_users"], false);
+        let admin = app.register("admin").await;
+        let me = app.get("/api/v1/auth/me", &admin).await.json();
+        assert_eq!(me["role"], "admin");
+        // Registration closes after the first account.
+        let r = app
+            .call(
+                Method::POST,
+                "/api/v1/auth/register",
+                None,
+                Some(json!({"username": "late", "password": "password123"})),
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::FORBIDDEN);
+
+        let a = app.upload_png(&admin, 10, "blue_sky night").await;
+        let b = app.upload_png(&admin, 11, "blue_sky cloud").await;
+        let dup = app.upload(&admin, &testing::png(18, 8, 10), &[]).await;
+        assert_eq!(dup.status, StatusCode::CONFLICT);
+        let bad = app.upload(&admin, b"not an image", &[]).await;
+        assert_eq!(bad.status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+
+        let ids = |q: &str| {
+            let q = q.to_owned();
+            let app = &app;
+            let admin = admin.clone();
+            async move {
+                let page = app
+                    .get(&format!("/api/v1/posts?q={q}"), &admin)
+                    .await
+                    .json();
+                page["posts"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|p| p["id"].as_i64().unwrap())
+                    .collect::<Vec<_>>()
+            }
+        };
+        assert_eq!(ids("blue_sky").await, vec![b, a]);
+        assert_eq!(ids("blue_sky+-cloud").await, vec![a]);
+        assert_eq!(ids("missing_tag").await, Vec::<i64>::new());
+
+        let r = app
+            .call(
+                Method::PATCH,
+                &format!("/api/v1/posts/{a}"),
+                Some(&admin),
+                Some(json!({"tags": ["Night", "stars"], "rating": "questionable"})),
+            )
+            .await
+            .json();
+        assert_eq!(r["tags"], json!(["night", "stars"]));
+        assert_eq!(r["rating"], "questionable");
+
+        let r = app
+            .call(
+                Method::PUT,
+                &format!("/api/v1/posts/{a}/vote"),
+                Some(&admin),
+                Some(json!({"value": 1})),
+            )
+            .await
+            .json();
+        assert_eq!(
+            (r["score"].as_i64(), r["my_vote"].as_i64()),
+            (Some(1), Some(1))
+        );
+
+        app.call(
+            Method::DELETE,
+            &format!("/api/v1/posts/{b}"),
+            Some(&admin),
+            None,
+        )
+        .await;
+        assert_eq!(ids("status:deleted").await, vec![b]);
+        let tags = app.get("/api/v1/tags?q=blue", &admin).await.json();
+        assert_eq!(tags[0]["post_count"], 0, "counts drop on delete");
+
+        let post = app.get(&format!("/api/v1/posts/{a}"), &admin).await.json();
+        let file = app
+            .call(Method::GET, post["file_url"].as_str().unwrap(), None, None)
+            .await;
+        assert_eq!(file.status, StatusCode::OK);
+        assert!(
+            file.headers["cache-control"]
+                .to_str()
+                .unwrap()
+                .contains("immutable")
+        );
+
+        let r = app
+            .call(Method::POST, "/api/v1/auth/logout", Some(&admin), None)
+            .await;
+        assert_eq!(r.status, StatusCode::NO_CONTENT);
+        assert_eq!(
+            app.get("/api/v1/auth/me", &admin).await.status,
+            StatusCode::UNAUTHORIZED
+        );
+        app.finish().await;
+    }
 }

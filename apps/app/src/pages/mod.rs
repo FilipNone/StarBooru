@@ -3,6 +3,7 @@ mod login;
 mod post;
 mod settings;
 mod shell;
+mod trash;
 mod upload;
 
 use dioxus::prelude::*;
@@ -11,6 +12,7 @@ pub use gallery::Gallery;
 pub use post::PostView;
 pub use settings::Settings;
 pub use shell::Shell;
+pub use trash::Trash;
 pub use upload::Upload;
 
 use crate::Route;

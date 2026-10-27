@@ -7,6 +7,8 @@ mod media;
 mod routes;
 mod state;
 mod storage;
+#[cfg(test)]
+mod testing;
 
 use std::process::ExitCode;
 use std::time::Duration;
@@ -52,6 +54,7 @@ async fn run() -> Result<(), StartupError> {
     let storage = storage::Storage::open(&config.data_dir).await?;
     let state = AppState::new(config, db, storage);
     let app = routes::router(state.clone());
+    tokio::spawn(routes::auto_purge(state.clone()));
 
     let listener = tokio::net::TcpListener::bind(state.config.bind).await?;
     info!("StarBooru listening on http://{}", state.config.bind);

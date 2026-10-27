@@ -9,7 +9,7 @@ mod util;
 
 use dioxus::prelude::*;
 
-use crate::pages::{Gallery, NotFound, PostView, Settings, Shell, Upload};
+use crate::pages::{Gallery, NotFound, PostView, Settings, Shell, Trash, Upload};
 use crate::store::{PREFS, SESSION};
 
 const MAIN_CSS: Asset = asset!("/assets/main.css");
@@ -26,6 +26,8 @@ pub enum Route {
         Upload {},
         #[route("/settings")]
         Settings {},
+        #[route("/trash")]
+        Trash {},
     #[end_layout]
     #[route("/:..segments")]
     NotFound { segments: Vec<String> },

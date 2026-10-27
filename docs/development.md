@@ -67,6 +67,14 @@ The web app keeps the API at its own origin by default. The native apps ask for 
 
 The gate before finishing a task is in `AGENTS.md` › *Before you finish a task*. While iterating:
 
+Server integration tests run the real router against PostgreSQL. Each test creates its own database and drops it afterwards. Point them at a server whose user may create databases; without the variable they are skipped:
+
+```sh
+export STARBOORU_TEST_DATABASE_URL=postgres://starbooru:devpass@127.0.0.1:55432/starbooru
+```
+
+The harness is `apps/server/src/testing.rs`.
+
 ```sh
 cargo test -p starbooru-core
 cargo test -p starbooru-server --bins

@@ -150,6 +150,8 @@ h1, h2 { line-height: 1.2; margin: 0; }
 .btn.text { background: transparent; color: var(--primary); }
 .btn.text:hover:not(:disabled) { background: var(--surface-2); box-shadow: none; }
 .btn.wide { width: 100%; }
+.btn.danger { background: var(--danger); color: var(--on-primary); }
+.btn.small { min-height: 36px; padding: 0 14px; }
 
 .icon-btn {
   display: inline-grid; place-items: center; width: 44px; height: 44px; border: 0; border-radius: 999px;
@@ -360,6 +362,30 @@ input[type="range"] { width: 100%; accent-color: var(--primary); margin-top: 12p
   .stage { position: static; min-height: 200px; border-radius: var(--radius-m); }
   .stage img, .stage video { max-height: 62dvh; }
 }
+
+/* ---------- recycle bin ---------- */
+
+.page-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.page-head .page-title { margin-bottom: 8px; }
+.lead { margin-bottom: 20px; max-width: 70ch; }
+.trash-grid {
+  display: grid; gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(min(168px, 44vw), 1fr));
+}
+.trash-item { display: grid; gap: 4px; }
+.trash-item .thumb { filter: saturate(0.6); }
+.trash-actions { display: flex; justify-content: center; gap: 4px; }
+
+.list-link {
+  display: grid; grid-template-columns: auto 1fr; column-gap: 16px; align-items: center;
+  padding: 12px; margin: 0 -12px; border-radius: var(--radius-m);
+  color: var(--on-surface); text-decoration: none;
+  transition: background-color var(--fast) var(--ease);
+}
+.list-link .icon { grid-row: span 2; color: var(--primary); }
+.list-link span:not(.muted) { font-weight: 600; }
+.list-link .muted { font-size: 14px; }
+.list-link:hover { background: var(--surface-2); }
 
 /* ---------- upload ---------- */
 

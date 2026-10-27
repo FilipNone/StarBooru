@@ -11,11 +11,12 @@ use starbooru_core::{
     DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT, MediaKind, Post, PostPage, PostUpdate, Rating, VoteRequest,
     parse_query, parse_tag_list,
 };
+use tracing::warn;
 
 use crate::auth::AuthUser;
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
-use crate::storage::{Storage, Variant};
+use crate::storage::{Ingested, Storage, Variant};
 
 const MAX_PAGE: u32 = 10_000;
 const MAX_SOURCE_CHARS: usize = 2048;
@@ -251,6 +252,38 @@ pub async fn upload(
         return Err(duplicate(id));
     }
 
+    match insert_post(&state, &user, &info, file_size, rating, source, &tags).await {
+        Ok(id) => Ok(Json(load(&state, user.id, id).await?)),
+        Err(e) => {
+            discard_orphan(&state, &info).await;
+            Err(e)
+        }
+    }
+}
+
+/// After a failed insert, deletes the stored files unless a post owns them.
+async fn discard_orphan(state: &AppState, info: &Ingested) {
+    let owned: Result<bool, _> =
+        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM posts WHERE sha256 = $1)")
+            .bind(info.sha256.as_slice())
+            .fetch_one(&state.db)
+            .await;
+    if let Ok(false) = owned
+        && let Err(e) = state.storage.remove(&hex::encode(info.sha256), info.ext)
+    {
+        warn!("cannot remove orphan upload files: {e}");
+    }
+}
+
+async fn insert_post(
+    state: &AppState,
+    user: &AuthUser,
+    info: &Ingested,
+    file_size: i64,
+    rating: Rating,
+    source: Option<String>,
+    tags: &[String],
+) -> AppResult<i64> {
     let mut tx = state.db.begin().await?;
     let id: i64 = sqlx::query_scalar(
         "INSERT INTO posts (sha256, ext, mime, kind, file_size, width, height, has_thumb, \
@@ -274,9 +307,9 @@ pub async fn upload(
         AppError::Conflict { .. } => duplicate(0),
         other => other,
     })?;
-    set_tags(&mut tx, id, &tags).await?;
+    set_tags(&mut tx, id, tags).await?;
     tx.commit().await?;
-    Ok(Json(load(&state, user.id, id).await?))
+    Ok(id)
 }
 
 fn duplicate(id: i64) -> AppError {
@@ -496,4 +529,63 @@ pub async fn vote(
         .await?;
     tx.commit().await?;
     Ok(Json(load(&state, user.id, id).await?))
+}
+
+/// `POST /posts/{id}/purge`: permanently deletes a post that is in the recycle bin.
+pub async fn purge(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<i64>,
+) -> AppResult<StatusCode> {
+    let row: (Option<i64>, bool) =
+        sqlx::query_as("SELECT uploader_id, deleted_at IS NOT NULL FROM posts WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or(AppError::NotFound)?;
+    if !user.can_moderate(row.0) {
+        return Err(AppError::Forbidden);
+    }
+    if !row.1 {
+        return Err(AppError::Conflict {
+            code: "not_deleted",
+            message: "move the post to the recycle bin first".into(),
+        });
+    }
+    purge_posts(&state, Purge::One(id)).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Which recycle-bin posts to purge.
+pub enum Purge {
+    One(i64),
+    OlderThanDays(u32),
+}
+
+/// Deletes recycle-bin posts and their files. Tag counts were already
+/// lowered when the posts were soft-deleted.
+pub async fn purge_posts(state: &AppState, which: Purge) -> AppResult<u64> {
+    let query = match which {
+        Purge::One(id) => sqlx::query_as(
+            "DELETE FROM posts WHERE deleted_at IS NOT NULL AND id = $1 RETURNING sha256, ext",
+        )
+        .bind(id),
+        Purge::OlderThanDays(days) => sqlx::query_as(
+            "DELETE FROM posts WHERE deleted_at IS NOT NULL \
+             AND deleted_at <= now() - make_interval(days => $1) RETURNING sha256, ext",
+        )
+        .bind(i32::try_from(days).unwrap_or(i32::MAX)),
+    };
+    let rows: Vec<(Vec<u8>, String)> = query.fetch_all(&state.db).await?;
+    let count = rows.len() as u64;
+    let worker = state.clone();
+    tokio::task::spawn_blocking(move || {
+        for (sha, ext) in rows {
+            if let Err(e) = worker.storage.remove(&hex::encode(sha), &ext) {
+                warn!("purged post left files behind: {e}");
+            }
+        }
+    })
+    .await?;
+    Ok(count)
 }

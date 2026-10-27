@@ -28,11 +28,12 @@ The desktop and Android apps are the same Dioxus code as the web app. Each one a
 | Module | What it does |
 |---|---|
 | `config.rs` | Environment variables (see `deployment.md`) |
-| `routes/` | One file per resource: `auth`, `posts`, `tags`. `mod.rs` builds the router and its layers (CORS, compression, tracing, panic catcher, SPA fallback). |
+| `routes/` | One file per resource: `auth`, `posts`, `tags`, `trash`. `mod.rs` builds the router and its layers (CORS, compression, tracing, panic catcher, SPA fallback). |
 | `auth.rs` | Bearer-token extractor; Argon2id password hashing (on the blocking pool) |
 | `storage.rs` | Format sniffing, content-addressed storage, thumbnails |
 | `media.rs` | HMAC-signed media URLs and the file handler (supports Range for video seeking) |
 | `error.rs` | `AppError` → JSON `{code, message}` with the right status |
+| `testing.rs` | Test-only harness: a fresh database per test and the real router |
 
 ## Data model
 
@@ -84,5 +85,5 @@ Media URLs look like `/media/thumb/<sha>.jpg?exp=…&sig=…`:
 | File | Role |
 |---|---|
 | `store.rs` | The session (server URL, token, user) and preferences (theme, accent hue) in global signals. They persist to `localStorage` on the web and to `<config dir>/StarBooru/state.json` on native. |
-| `pages/` | `shell` (top bar, search with tag autocomplete, navigation; bottom bar on phones), `login`, `gallery` (infinite scroll), `post` (viewer, votes, edit, delete/restore), `upload` (drag and drop, queue), `settings` |
+| `pages/` | `shell` (top bar, search with tag autocomplete, navigation; bottom bar on phones), `login`, `gallery` (infinite scroll), `post` (viewer, votes, edit, delete/restore), `upload` (drag and drop, queue), `trash` (recycle bin), `settings` |
 | `assets/main.css` | The design system. Material-You-style colour roles come from one OKLCH seed hue (`--seed-hue`), with light, dark and system themes. Glass applies to the bars only. Animations use spring easing and are disabled under reduced motion. |

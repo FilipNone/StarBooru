@@ -34,6 +34,7 @@ Desktop and Android users sign in with the same URL (`https://your-domain`).
 | `STARBOORU_NAME` | `StarBooru` | Instance name shown at sign-in |
 | `STARBOORU_ALLOW_REGISTRATION` | `false` | Allow sign-ups after the first (admin) account |
 | `STARBOORU_MAX_UPLOAD_MB` | `512` | Largest upload, 1 to 16384 |
+| `STARBOORU_TRASH_DAYS` | `0` | Purge recycle-bin posts (and their files) after this many days; `0` keeps them until emptied by hand |
 | `STARBOORU_BIND` | `0.0.0.0:8080` | Listen address |
 | `STARBOORU_DATA_DIR` | `/data` in the image | Media storage |
 | `STARBOORU_WEB_DIR` | `/app/web` in the image | Compiled web app; unset means the server runs API-only |

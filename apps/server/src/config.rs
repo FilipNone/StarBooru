@@ -24,6 +24,8 @@ pub struct Config {
     pub max_upload_bytes: usize,
     pub allow_registration: bool,
     pub instance_name: String,
+    /// Posts stay in the recycle bin this many days, then are purged. 0 keeps them.
+    pub trash_days: u32,
 }
 
 const MIN_SECRET_LEN: usize = 32;
@@ -66,6 +68,14 @@ impl Config {
             });
         }
 
+        let trash_days: u32 = match get("STARBOORU_TRASH_DAYS") {
+            None => 0,
+            Some(v) => v.trim().parse().map_err(|_| ConfigError::Invalid {
+                name: "STARBOORU_TRASH_DAYS",
+                reason: format!("`{v}` is not a whole number of days"),
+            })?,
+        };
+
         let web_dir = get("STARBOORU_WEB_DIR")
             .filter(|s| !s.trim().is_empty())
             .map(PathBuf::from);
@@ -86,7 +96,23 @@ impl Config {
                 )
             }),
             instance_name: get("STARBOORU_NAME").unwrap_or_else(|| "StarBooru".into()),
+            trash_days,
         })
+    }
+
+    #[cfg(test)]
+    pub fn for_tests(data_dir: &std::path::Path) -> Self {
+        Self {
+            bind: SocketAddr::from(([127, 0, 0, 1], 0)),
+            database_url: String::new(),
+            data_dir: data_dir.to_path_buf(),
+            web_dir: None,
+            secret: b"test-secret-test-secret-test-secret!".to_vec(),
+            max_upload_bytes: 64 * 1024 * 1024,
+            allow_registration: true,
+            instance_name: "StarBooru".into(),
+            trash_days: 0,
+        }
     }
 }
 
@@ -116,6 +142,7 @@ mod tests {
         assert_eq!(c.max_upload_bytes, 512 * 1024 * 1024);
         assert!(!c.allow_registration);
         assert!(c.web_dir.is_none());
+        assert_eq!(c.trash_days, 0);
     }
 
     #[test]
@@ -135,6 +162,14 @@ mod tests {
                 ("DATABASE_URL", "x"),
                 ("STARBOORU_SECRET", SECRET),
                 ("STARBOORU_BIND", "nope")
+            ])
+            .is_err()
+        );
+        assert!(
+            cfg(&[
+                ("DATABASE_URL", "x"),
+                ("STARBOORU_SECRET", SECRET),
+                ("STARBOORU_TRASH_DAYS", "soon")
             ])
             .is_err()
         );

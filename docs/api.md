@@ -12,7 +12,7 @@ All endpoints are under `/api/v1`. Bodies are JSON unless noted. The Rust types 
 | 401 | missing or expired token |
 | 403 | not allowed |
 | 404 | not found |
-| 409 | conflict (`duplicate`, `username_taken`, `deleted`) |
+| 409 | conflict (`duplicate`, `username_taken`, `deleted`, `not_deleted`) |
 | 413 | upload too large |
 | 415 | unsupported file type |
 | 429 | rate limited; the client honours `Retry-After` |
@@ -49,6 +49,7 @@ Account rules:
 | PATCH | `/posts/{id}` | `PostUpdate {tags?, rating?, source?}` | `Post`. `tags` replaces the whole list. |
 | DELETE | `/posts/{id}` | | 204; moves the post to the recycle bin (admin or uploader) |
 | POST | `/posts/{id}/restore` | | `Post` |
+| POST | `/posts/{id}/purge` | | 204; permanently deletes a post that is in the recycle bin, with its files (admin or uploader). 409 `not_deleted` if the post is live. |
 | PUT | `/posts/{id}/vote` | `{value: -1 \| 0 \| 1}` | `Post` with the new `score` and `my_vote` |
 
 A `Post` carries `file_url` and `thumb_url`. These are signed paths relative to the server, valid for at least 6 hours. Fetch them without the bearer token. `thumb_url` is null when no thumbnail exists.
@@ -67,6 +68,14 @@ Terms are separated by spaces, with at most 40 terms.
 | `status:deleted` | browse the recycle bin |
 
 Tags are normalised: trimmed, lower-cased, spaces and underscores folded to one `_`, and at most 128 characters.
+
+## Recycle bin
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| POST | `/trash/empty?older_than_days=` | | `PurgeResult {purged}`. Admin only. Purges every post in the bin, or only those deleted at least `older_than_days` ago. |
+
+Browse the bin with `GET /posts?q=status:deleted`. `STARBOORU_TRASH_DAYS` purges old posts automatically.
 
 ## Tags
 

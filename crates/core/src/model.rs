@@ -249,6 +249,12 @@ pub struct TagUpdate {
     pub category: TagCategory,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PurgeResult {
+    /// Posts permanently deleted.
+    pub purged: u64,
+}
+
 /// Body of every non-2xx JSON response.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ApiError {

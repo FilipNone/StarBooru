@@ -7,8 +7,8 @@ use reqwest::{Method, RequestBuilder, StatusCode, header};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use starbooru_core::{
-    API_PREFIX, ApiError, AuthResponse, Credentials, Post, PostPage, PostUpdate, Rating,
-    ServerInfo, Tag, TagUpdate, User, VoteRequest,
+    API_PREFIX, ApiError, AuthResponse, Credentials, Post, PostPage, PostUpdate, PurgeResult,
+    Rating, ServerInfo, Tag, TagUpdate, User, VoteRequest,
 };
 use thiserror::Error;
 use url::Url;
@@ -172,6 +172,16 @@ impl Client {
 
     pub async fn restore_post(&self, id: i64) -> Result<Post> {
         Self::send(self.request(Method::POST, &format!("/posts/{id}/restore"))?).await
+    }
+
+    /// Permanently deletes a post that is already in the recycle bin.
+    pub async fn purge_post(&self, id: i64) -> Result<()> {
+        Self::send_empty(self.request(Method::POST, &format!("/posts/{id}/purge"))?).await
+    }
+
+    /// Admins: purges every post in the recycle bin.
+    pub async fn empty_trash(&self) -> Result<PurgeResult> {
+        Self::send(self.request(Method::POST, "/trash/empty")?).await
     }
 
     pub async fn vote(&self, id: i64, value: i16) -> Result<Post> {

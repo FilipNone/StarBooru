@@ -45,7 +45,7 @@ _Status as of 2026-10-27. Scope comes from `docs/checklist.md`._
 | mass edits | ⬜ | M2 |
 | administration settings tab / server stats tab | ⬜ | M3 |
 | database backup | 🟡 | Dokploy Volume Backups (documented). No in-app backup. |
-| recycle bin to recover files | 🟡 | Soft delete, restore, `status:deleted` search. Missing: a dedicated page and purge. |
+| recycle bin to recover files | ✅ | Soft delete and restore, a recycle bin page, permanent delete per post, *Empty recycle bin* (admin), optional automatic purge (`STARBOORU_TRASH_DAYS`) |
 | dark / light theme, custom main colour | ✅ | System, light and dark themes. Accent from swatches or a hue slider. |
 | share system | ⬜ | |
 | duplicate remover | 🟡 | Exact duplicates are refused at upload (SHA-256). No near-duplicate detection. |
@@ -94,5 +94,5 @@ _Status as of 2026-10-27. Scope comes from `docs/checklist.md`._
 - **No login rate limiting.** Put the instance behind HTTPS and use strong passwords until M3.
 - **Plaintext token on desktop.** The token is stored in the user's config directory. Moving it to the OS keyring is M4.
 - **No video, AVIF or JPEG XL thumbnails.** The client shows a placeholder.
-- **Orphan files.** If a post's database insert fails after the file was written, the file stays on disk. A cleanup task is planned.
+- **Orphan files.** Fixed for failed inserts (the files are removed unless another post owns them) and interrupted writes (`tmp/` is cleared at startup). Files left by a crash between the write and the insert are not swept yet.
 - **Autocomplete has no keyboard navigation yet.**

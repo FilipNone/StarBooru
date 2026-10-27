@@ -80,7 +80,13 @@ impl Storage {
         for v in [Variant::Original, Variant::Thumb] {
             tokio::fs::create_dir_all(root.join(v.as_str())).await?;
         }
-        tokio::fs::create_dir_all(root.join("tmp")).await?;
+        let tmp = root.join("tmp");
+        tokio::fs::create_dir_all(&tmp).await?;
+        // Leftovers from writes interrupted by a crash or restart.
+        let mut entries = tokio::fs::read_dir(&tmp).await?;
+        while let Some(entry) = entries.next_entry().await? {
+            let _ = tokio::fs::remove_file(entry.path()).await;
+        }
         Ok(Self {
             root: root.to_path_buf(),
         })
@@ -163,6 +169,22 @@ impl Storage {
         })
     }
 
+    /// Deletes a post's original and thumbnail. Missing files are not an error.
+    pub fn remove(&self, sha_hex: &str, ext: &str) -> std::io::Result<()> {
+        for variant in [Variant::Original, Variant::Thumb] {
+            let Some(path) = self.path_for_file(variant, &Self::file_name(variant, sha_hex, ext))
+            else {
+                continue;
+            };
+            match std::fs::remove_file(&path) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(())
+    }
+
     fn write_atomic(&self, dest: &Path, bytes: &[u8]) -> std::io::Result<()> {
         if dest.exists() {
             return Ok(()); // content-addressed: same name, same bytes
@@ -238,6 +260,29 @@ mod tests {
         assert_eq!((t.width(), t.height()), (512, 150));
         // Same bytes again: idempotent.
         assert!(storage.ingest(&png_bytes(1024, 300)).is_ok());
+
+        storage.remove(&sha, "png").unwrap();
+        assert!(!thumb_path(&storage, &sha).exists());
+        // Removing twice is fine.
+        storage.remove(&sha, "png").unwrap();
+    }
+
+    fn thumb_path(storage: &Storage, sha: &str) -> PathBuf {
+        storage
+            .path_for_file(
+                Variant::Thumb,
+                &Storage::file_name(Variant::Thumb, sha, "png"),
+            )
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn open_clears_staging_leftovers() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("tmp")).unwrap();
+        std::fs::write(dir.path().join("tmp/partial"), b"half a file").unwrap();
+        Storage::open(dir.path()).await.unwrap();
+        assert!(!dir.path().join("tmp/partial").exists());
     }
 
     #[tokio::test]

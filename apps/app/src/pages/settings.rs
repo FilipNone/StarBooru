@@ -1,5 +1,6 @@
 use dioxus::prelude::*;
 
+use crate::Route;
 use crate::icons::{Ico, Icon};
 use crate::store::{self, PREFS, SESSION, Theme};
 
@@ -72,6 +73,15 @@ pub fn Settings() -> Element {
                             }
                         },
                     }
+                }
+            }
+
+            section { class: "card",
+                h2 { class: "card-title", "Library" }
+                Link { class: "list-link", to: Route::Trash {},
+                    Ico { icon: Icon::Delete }
+                    span { "Recycle bin" }
+                    span { class: "muted", "Restore or permanently delete posts" }
                 }
             }
 
