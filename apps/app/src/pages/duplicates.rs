@@ -7,6 +7,7 @@ use starbooru_core::{DEFAULT_DUPLICATE_DISTANCE, DuplicateGroup, Post, ResolveDu
 
 use super::{ErrorBanner, Spinner};
 use crate::Route;
+use crate::cache;
 use crate::icons::{Ico, Icon};
 use crate::store;
 use crate::util::{human_size, posts_count};
@@ -242,7 +243,7 @@ fn DupItem(post: Post, group: i64, keep: i64, onpick: EventHandler<i64>) -> Elem
     let src = post
         .thumb_url
         .as_deref()
-        .and_then(|u| store::client().map(|c| c.absolute(u)));
+        .and_then(|u| store::client().map(|c| cache::url(&c, u)));
     let size = match (post.width, post.height) {
         (Some(w), Some(h)) => format!("{w}×{h}"),
         _ => t!("dup-unknown-size"),

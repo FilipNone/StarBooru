@@ -742,3 +742,12 @@ post-sample-note = Showing a smaller copy. Zooming in loads the original.
 post-show-original = Show original
 settings-originals = Always open originals in the viewer
 settings-originals-hint = Big images otherwise open as a smaller copy, which loads faster and uses less data.
+
+## Media cache (desktop and Android)
+
+cache-title = Storage on this device
+cache-hint = Thumbnails and the images you open are kept on this device, so they show at once next time.
+cache-used = Images kept: { $size }
+cache-limit = Keep up to
+cache-off = Nothing (off)
+cache-clear = Clear

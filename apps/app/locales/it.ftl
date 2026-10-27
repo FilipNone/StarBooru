@@ -742,3 +742,12 @@ post-sample-note = Stai vedendo una copia più leggera. Ingrandendo si carica l�
 post-show-original = Mostra originale
 settings-originals = Apri sempre gli originali nel visualizzatore
 settings-originals-hint = Altrimenti le immagini grandi si aprono come copia più leggera, più veloce e con meno dati.
+
+## Media cache (desktop and Android)
+
+cache-title = Spazio su questo dispositivo
+cache-hint = Le miniature e le immagini che apri restano su questo dispositivo, così la volta dopo si vedono subito.
+cache-used = Immagini salvate: { $size }
+cache-limit = Tieni fino a
+cache-off = Niente (disattivato)
+cache-clear = Svuota

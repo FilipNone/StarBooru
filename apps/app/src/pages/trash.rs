@@ -5,6 +5,7 @@ use starbooru_core::{Post, Role};
 
 use super::{ErrorBanner, Spinner};
 use crate::Route;
+use crate::cache;
 use crate::icons::{Ico, Icon};
 use crate::store::{self, SESSION};
 
@@ -168,7 +169,7 @@ fn TrashItem(post: Post, onrestore: EventHandler<i64>, onpurge: EventHandler<i64
     let src = post
         .thumb_url
         .as_deref()
-        .and_then(|u| store::client().map(|c| c.absolute(u)));
+        .and_then(|u| store::client().map(|c| cache::url(&c, u)));
     let id = post.id;
     rsx! {
         div { class: "trash-item",

@@ -6,6 +6,7 @@ use super::api_keys::ApiKeysCard;
 use super::share::SharesCard;
 use super::{ErrorBanner, Spinner};
 use crate::Route;
+use crate::cache;
 use crate::i18n::Lang;
 use crate::icons::{Ico, Icon};
 use crate::oidc::{self, Done};
@@ -145,6 +146,10 @@ pub fn Settings() -> Element {
                     span { {t!("settings-originals")} }
                 }
                 p { class: "muted hint", {t!("settings-originals-hint")} }
+            }
+
+            if cache::AVAILABLE {
+                CacheCard {}
             }
 
             section { class: "card",
@@ -633,6 +638,51 @@ fn SessionRevoke(id: i64, disabled: bool, onrevoke: EventHandler<i64>) -> Elemen
             disabled,
             onclick: move |_| onrevoke.call(id),
             Ico { icon: Icon::Logout }
+        }
+    }
+}
+
+/// Size and limit of the media cache, with a button to empty it.
+#[component]
+fn CacheCard() -> Element {
+    let mut used = use_resource(|| async move { cache::size().await });
+    let limit = PREFS.read().cache_mb;
+    let label = |mb: u32| match mb {
+        0 => t!("cache-off"),
+        mb => cache::limit_label(mb),
+    };
+    rsx! {
+        section { class: "card",
+            h2 { class: "card-title", {t!("cache-title")} }
+            p { class: "muted hint", {t!("cache-hint")} }
+            label { class: "field cache-limit",
+                span { {t!("cache-limit")} }
+                select {
+                    onchange: move |e| {
+                        if let Ok(mb) = e.value().parse() {
+                            PREFS.write().cache_mb = mb;
+                        }
+                    },
+                    for mb in cache::LIMITS_MB {
+                        option { key: "{mb}", value: "{mb}", selected: limit == mb, {label(mb)} }
+                    }
+                }
+            }
+            div { class: "row-end",
+                if let Some(bytes) = used() {
+                    span { class: "muted", {t!("cache-used", size = human_size(i64::try_from(bytes).unwrap_or(i64::MAX)))} }
+                }
+                button {
+                    class: "btn tonal",
+                    disabled: used() == Some(0),
+                    onclick: move |_| async move {
+                        cache::clear().await;
+                        used.restart();
+                    },
+                    Ico { icon: Icon::Delete }
+                    {t!("cache-clear")}
+                }
+            }
         }
     }
 }

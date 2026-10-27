@@ -2,13 +2,14 @@ use std::collections::HashMap;
 
 use dioxus::html::geometry::{ClientPoint, PixelsRect};
 use dioxus::prelude::*;
-use starbooru_client::ClientError;
+use starbooru_client::{Client, ClientError};
 use starbooru_core::{EditKind, MediaKind, Neighbors, Post, PostUpdate, Rating, edit_kind};
 
 use super::editor::EditorSheet;
 use super::share::ShareSheet;
 use super::{ErrorBanner, Spinner};
 use crate::Route;
+use crate::cache;
 use crate::icons::{Ico, Icon};
 use crate::store;
 use crate::util::{format_duration, human_size, rating_label};
@@ -137,7 +138,7 @@ pub fn PostView(id: i64, q: String) -> Element {
             spawn(async move {
                 if let Ok(p) = client.post(near).await {
                     if p.kind != MediaKind::Video {
-                        let url = client.absolute(shown_url(&p, false));
+                        let url = stage_url(&client, &p, false);
                         let url = serde_json::to_string(&url).unwrap_or_default();
                         document::eval(&format!("new Image().src = {url}"));
                     }
@@ -248,9 +249,15 @@ pub fn PostView(id: i64, q: String) -> Element {
     let sample = p
         .sample_url
         .as_deref()
-        .filter(|_| !original() && !store::PREFS.read().originals)
-        .map(abs);
-    let thumb = p.thumb_url.as_deref().map(abs);
+        .filter(|_| !original() && !store::PREFS.read().originals);
+    let src = client
+        .as_ref()
+        .map(|c| stage_url(c, &p, original()))
+        .unwrap_or_default();
+    let thumb = p
+        .thumb_url
+        .as_deref()
+        .and_then(|u| client.as_ref().map(|c| cache::url(c, u)));
     let ext = p.mime.rsplit('/').next().unwrap_or("bin").to_owned();
     let alt = p.tags.join(" ");
     let added = p.created_at.format("%Y-%m-%d %H:%M").to_string();
@@ -271,7 +278,7 @@ pub fn PostView(id: i64, q: String) -> Element {
             Stage {
                 id: p.id,
                 kind: p.kind,
-                src: sample.clone().unwrap_or_else(|| file_url.clone()),
+                src,
                 thumb,
                 size: p.width.zip(p.height),
                 enter: enter_class(entered()),
@@ -479,6 +486,18 @@ fn shown_url(p: &Post, original: bool) -> &str {
     match &p.sample_url {
         Some(s) if !original && !store::PREFS.peek().originals => s,
         _ => &p.file_url,
+    }
+}
+
+/// The stage's `src`. Images come through the media cache, except
+/// originals too big to keep; videos stream from the server.
+fn stage_url(client: &Client, p: &Post, original: bool) -> String {
+    let path = shown_url(p, original);
+    let small = u64::try_from(p.file_size).is_ok_and(|n| n <= cache::MAX_FILE_BYTES);
+    if p.kind == MediaKind::Video || (path == p.file_url && !small) {
+        client.absolute(path)
+    } else {
+        cache::url(client, path)
     }
 }
 

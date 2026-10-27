@@ -4,6 +4,7 @@
 
 #[macro_use]
 mod i18n;
+mod cache;
 mod icons;
 mod oidc;
 mod pages;
@@ -82,6 +83,7 @@ fn launch_desktop() {
 
 #[component]
 fn App() -> Element {
+    cache::register();
     // Persist whenever the session or preferences change.
     use_effect(|| {
         let _session = SESSION.read();

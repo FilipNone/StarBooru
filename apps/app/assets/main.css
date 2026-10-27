@@ -365,7 +365,7 @@ input[type="range"] { width: 100%; accent-color: var(--primary); margin-top: 12p
 .saved-searches .chip { gap: 6px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .saved-searches .chip svg { flex: none; color: var(--primary); }
 .sort { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; font-size: 14px; }
-.sort select, .bulk-rating, .key-options select {
+.sort select, .bulk-rating, .key-options select, .cache-limit select {
   min-height: 40px; padding: 0 36px 0 14px; border: 1px solid var(--outline); border-radius: 999px;
   font: inherit; font-weight: 600; color: var(--on-surface); cursor: pointer; appearance: none;
   background-color: var(--surface);
@@ -376,7 +376,7 @@ input[type="range"] { width: 100%; accent-color: var(--primary); margin-top: 12p
   background-size: 5px 5px, 5px 5px;
   background-repeat: no-repeat;
 }
-.sort select:focus-visible, .key-options select:focus-visible { outline: 3px solid var(--primary); outline-offset: 2px; }
+.sort select:focus-visible, .key-options select:focus-visible, .cache-limit select:focus-visible { outline: 3px solid var(--primary); outline-offset: 2px; }
 .gallery .page-head .select-toggle { margin-left: -4px; }
 
 /* selection mode */

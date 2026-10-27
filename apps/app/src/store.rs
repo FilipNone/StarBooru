@@ -58,6 +58,8 @@ pub struct Prefs {
     pub language: Option<Lang>,
     /// Show originals in the viewer even when the server has a sample.
     pub originals: bool,
+    /// Media cache limit in MiB on desktop and Android; 0 is off.
+    pub cache_mb: u32,
 }
 
 impl Default for Prefs {
@@ -68,6 +70,7 @@ impl Default for Prefs {
             last_server: String::new(),
             language: None,
             originals: false,
+            cache_mb: crate::cache::DEFAULT_LIMIT_MB,
         }
     }
 }

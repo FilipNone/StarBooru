@@ -37,6 +37,9 @@ pub enum ClientError {
     /// `retry_after` is in seconds when the server sent one.
     #[error("{}", rate_limited_message(*.retry_after))]
     RateLimited { retry_after: Option<u64> },
+    /// A download was bigger than the caller allowed.
+    #[error("the file is larger than {limit} bytes")]
+    TooLarge { limit: u64 },
 }
 
 impl ClientError {
@@ -134,6 +137,40 @@ impl Client {
             .join(path.trim_start_matches('/'))
             .map(String::from)
             .unwrap_or_else(|_| path.to_owned())
+    }
+
+    /// Downloads a signed media path as the API returned it
+    /// (`/media/…?exp=…&sig=…`) from this server, up to `max_bytes`. The
+    /// signature is the permission, so the token is not sent.
+    pub async fn media_bytes(&self, path: &str, max_bytes: u64) -> Result<Vec<u8>> {
+        if !path.starts_with("/media/") {
+            return Err(ClientError::InvalidUrl(format!("{path}: not a media path")));
+        }
+        let too_large = ClientError::TooLarge { limit: max_bytes };
+        #[allow(unused_mut, reason = "read in chunks natively only")]
+        let mut resp = send_patiently(self.http.get(self.absolute(path))).await?;
+        if resp.content_length().is_some_and(|n| n > max_bytes) {
+            return Err(too_large);
+        }
+        // Natively, stop reading once past the limit, whatever the length
+        // said. The browser has no chunked reads.
+        #[cfg(not(target_arch = "wasm32"))]
+        let body = {
+            let mut body = Vec::new();
+            while let Some(chunk) = resp.chunk().await? {
+                if body.len().saturating_add(chunk.len()) as u64 > max_bytes {
+                    return Err(too_large);
+                }
+                body.extend_from_slice(&chunk);
+            }
+            body
+        };
+        #[cfg(target_arch = "wasm32")]
+        let body = resp.bytes().await?.to_vec();
+        if body.len() as u64 > max_bytes {
+            return Err(too_large);
+        }
+        Ok(body)
     }
 
     fn request(&self, method: Method, path: &str) -> Result<RequestBuilder> {
@@ -734,6 +771,37 @@ mod tests {
             }
         ));
         assert_eq!(server.await.unwrap(), 1);
+    }
+
+    fn media_response(body: &str, length: usize) -> String {
+        format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: image/jpeg\r\nConnection: close\r\nContent-Length: {length}\r\n\r\n{body}"
+        )
+    }
+
+    #[tokio::test]
+    async fn downloads_media_up_to_a_limit() {
+        let (url, server) = canned(vec![media_response("jpeg!", 5)]).await;
+        let client = Client::new(&url).unwrap().with_token(Some("secret".into()));
+        let bytes = client
+            .media_bytes("/media/thumb/ab.jpg?exp=1&sig=2", 5)
+            .await
+            .unwrap();
+        assert_eq!(bytes, b"jpeg!");
+        assert_eq!(server.await.unwrap(), 1);
+
+        // Refused from the announced length, before reading the body.
+        let (url, _server) = canned(vec![media_response("jpeg!", 5)]).await;
+        let err = Client::new(&url)
+            .unwrap()
+            .media_bytes("/media/thumb/ab.jpg", 4)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ClientError::TooLarge { limit: 4 }));
+
+        // Only media paths, so it can't be pointed at the API.
+        let err = client.media_bytes("/api/v1/posts", 5).await.unwrap_err();
+        assert!(matches!(err, ClientError::InvalidUrl(_)));
     }
 
     #[test]

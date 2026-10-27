@@ -10,6 +10,7 @@ use super::post::OPENING;
 use super::share::ShareSheet;
 use super::{ErrorBanner, Spinner};
 use crate::Route;
+use crate::cache;
 use crate::icons::{Ico, Icon};
 use crate::store;
 use crate::util::{escape_attr, format_duration, rating_label, split_tag_edit};
@@ -551,7 +552,7 @@ pub(super) fn Thumb(
     let src = post
         .thumb_url
         .as_deref()
-        .and_then(|u| client.as_ref().map(|c| c.absolute(u)));
+        .and_then(|u| client.as_ref().map(|c| cache::url(c, u)));
     let video = matches!(post.kind, MediaKind::Video);
     let preview_src = client
         .as_ref()
