@@ -169,6 +169,21 @@ pub fn group(
     groups
 }
 
+/// For each 16-bit chunk of `hash` (lowest first), the chunk values within
+/// `radius` bits, as the indexes in migration 0015 hold them. A hash within
+/// `4 * radius + 3` bits of `hash` matches at least one of them.
+pub fn chunk_reach(hash: u64, radius: u32) -> Vec<Vec<i64>> {
+    (0..CHUNKS)
+        .map(|c| {
+            let value = u16::try_from((hash >> (c * CHUNK_BITS)) & 0xffff).unwrap_or(0);
+            neighbours(value, radius)
+                .into_iter()
+                .map(i64::from)
+                .collect()
+        })
+        .collect()
+}
+
 /// `value` and every 16-bit value within `radius` (at most 2) bits of it.
 fn neighbours(value: u16, radius: u32) -> Vec<u16> {
     let mut out = vec![value];
@@ -399,5 +414,24 @@ pub mod tests {
         assert_eq!(g.len(), 1);
         assert_eq!(g[0].ids.len(), 40);
         assert_eq!(g[0].distance, 0);
+    }
+
+    #[test]
+    fn chunk_reach_covers_seven_bits() {
+        let a: u64 = 0x1234_5678_9abc_def0;
+        let reach = chunk_reach(a, 1);
+        assert_eq!(reach.len(), 4);
+        assert!(reach.iter().all(|values| values.len() == 17));
+        assert!(reach[0].contains(&0xdef0) && reach[3].contains(&0x1234));
+        // Two bits off in three chunks and one in the last: still in reach.
+        let b = a ^ (0b11 | 0b11 << 16 | 0b11 << 32 | 0b1 << 63);
+        assert_eq!(distance(a, b), 7);
+        let hit = (0..4).any(|c| {
+            let chunk = i64::try_from((b >> (c * 16)) & 0xffff).unwrap();
+            reach[c as usize].contains(&chunk)
+        });
+        assert!(hit);
+        // The top chunk of a hash with the sign bit set is still positive.
+        assert!(chunk_reach(u64::MAX, 0)[3] == [0xffff]);
     }
 }

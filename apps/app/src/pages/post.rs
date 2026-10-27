@@ -419,6 +419,83 @@ pub fn PostView(id: i64, q: String) -> Element {
                         }
                     }
                 }
+                Related {
+                    id: p.id,
+                    onopen: move |near: Post| {
+                        *OPENING.write() = Some(near.clone());
+                        entered.set(None);
+                        document::eval(SCROLL_TOP);
+                        // Pushed, so Back returns to this post.
+                        navigator().push(Route::PostView { id: near.id, q: String::new() });
+                    },
+                }
+            }
+        }
+    }
+}
+
+/// Posts the viewer suggests under the details.
+const RELATED_SHOWN: u32 = 12;
+
+/// The viewer starts at the top when another post opens from below.
+const SCROLL_TOP: &str = r#"
+const smooth = !matchMedia("(prefers-reduced-motion: reduce)").matches;
+window.scrollTo({ top: 0, behavior: smooth ? "smooth" : "auto" });
+"#;
+
+/// Posts like this one (shared rare tags, or a look-alike), as small
+/// thumbnails. Nothing shows until there are some.
+#[component]
+fn Related(id: i64, onopen: EventHandler<Post>) -> Element {
+    let related = use_resource(use_reactive!(|id| async move {
+        let client = store::client()?;
+        client.related(id, RELATED_SHOWN).await.ok()
+    }));
+    let posts = related
+        .read()
+        .clone()
+        .flatten()
+        .map(|r| r.posts)
+        .unwrap_or_default();
+    if posts.is_empty() {
+        return rsx! {};
+    }
+    let client = store::client();
+    rsx! {
+        section { class: "card related",
+            h2 { class: "card-title", {t!("post-related")} }
+            div { class: "related-grid",
+                for near in posts {
+                    {
+                        let src = near
+                            .thumb_url
+                            .as_deref()
+                            .and_then(|u| client.as_ref().map(|c| cache::url(c, u)));
+                        let label = if near.tags.is_empty() {
+                            t!("post-alt", id = near.id)
+                        } else {
+                            near.tags.join(" ")
+                        };
+                        let id = near.id;
+                        rsx! {
+                            Link {
+                                key: "{id}",
+                                class: "thumb",
+                                to: Route::PostView { id, q: String::new() },
+                                title: "{label}",
+                                onclick: move |_| onopen.call(near.clone()),
+                                onclick_only: true,
+                                if let Some(src) = src {
+                                    img { src, alt: "{label}", loading: "lazy", decoding: "async" }
+                                } else {
+                                    div { class: "thumb-placeholder", aria_label: "{label}",
+                                        Ico { icon: Icon::Play, size: 24 }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }

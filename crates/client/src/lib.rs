@@ -11,9 +11,10 @@ use starbooru_core::{
     Backups, BulkEdit, BulkResult, CreatedApiKey, Credentials, DismissDuplicates, Duplicates,
     Explore, Identity, ImplicationRequest, ImportRequest, MediaEdit, Neighbors, NewApiKey,
     NewShare, OidcBegin, OidcFinish, OidcStart, PasswordChange, PasswordReset, Post, PostPage,
-    PostUpdate, PurgeResult, Rating, ResolveDuplicates, RevokeResult, SaveSearchRequest,
-    SavedSearch, ServerInfo, ServerSettings, ServerStats, SessionInfo, Share, SharedView,
-    SignInMethods, Tag, TagDetail, TagOrder, TagUpdate, Usage, User, UserUpdate, VoteRequest,
+    PostUpdate, PurgeResult, Rating, RelatedPosts, ResolveDuplicates, RevokeResult,
+    SaveSearchRequest, SavedSearch, ServerInfo, ServerSettings, ServerStats, SessionInfo, Share,
+    SharedView, SignInMethods, Tag, TagDetail, TagOrder, TagUpdate, Usage, User, UserUpdate,
+    VoteRequest,
 };
 use std::time::Duration;
 use thiserror::Error;
@@ -438,6 +439,14 @@ impl Client {
         let req = self
             .request(Method::GET, &format!("/posts/{id}/neighbors"))?
             .query(&[("q", query)]);
+        Self::send(req).await
+    }
+
+    /// Up to `limit` posts like `id`, most alike first.
+    pub async fn related(&self, id: i64, limit: u32) -> Result<RelatedPosts> {
+        let req = self
+            .request(Method::GET, &format!("/posts/{id}/related"))?
+            .query(&[("limit", limit)]);
         Self::send(req).await
     }
 

@@ -125,6 +125,7 @@ A `Backup`'s `url` is a signed path relative to the server, valid for an hour. F
 | POST | `/posts/import` | `ImportRequest {url, tags?, rating?, source?}`. `tags` is a list; `source` defaults to `url`. | `Post`, like an upload. 400 for a non-http(s) address, credentials in the URL, a private-network address (unless the server allows them) or import turned off; 413 over the upload limit; 409 `duplicate`; 502 `fetch_failed` when the remote server errors, times out or redirects more than 5 times. |
 | GET | `/posts/{id}` | | `Post` |
 | GET | `/posts/{id}/neighbors?q=` | | `Neighbors {prev, next}`: the ids just before and after the post in the results of search `q` (same filters and order), or null at either end. Both are null for `order:random` or when `q` matches nothing. |
+| GET | `/posts/{id}/related?limit=` | | `RelatedPosts {posts}`: up to `limit` live posts like this one (default 12, at most 48), most alike first. Shared tags count by rarity, so a tag on a handful of posts outweighs one on half the collection; posts whose look (difference hash) is close count too, even without tags. Candidates come from the post's 8 rarest tags and from look-alikes, so the list is a suggestion, not an exhaustive search. Empty when nothing is alike. |
 | PATCH | `/posts/{id}` | `PostUpdate {tags?, rating?, source?}` | `Post`. `tags` replaces the whole list. |
 | DELETE | `/posts/{id}` | | 204; moves the post to the recycle bin (admin or uploader) |
 | POST | `/posts/{id}/restore` | | `Post` |

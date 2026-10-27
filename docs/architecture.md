@@ -75,6 +75,17 @@ Tags are stored on each post as a `BIGINT[]` with a GIN index. A query like `blu
 
 Partial indexes cover live posts, so the recycle bin doesn't slow normal browsing. Explore runs its four sections in parallel. Its random picks come from a sample of the table's pages (`TABLESAMPLE SYSTEM`) once the collection has more than 20,000 posts. When the sample has too few matches for a rare search, all the matches are sorted instead. Timings at a million posts are in `development.md` › *Speed at scale*. The query syntax is in `api.md`.
 
+### Related posts
+
+`GET /posts/{id}/related` ranks live posts by what they share with the post. Each shared tag adds its inverse document frequency, `ln((N + 1) / (post_count + 1))`. So a tag on three posts says a lot and one on half the collection almost nothing. `N` is the planner's row estimate once the table has 10,000 rows, and an exact count below that. A difference hash within 12 bits adds up to 9 more, about what a tag on one post in 10,000 is worth.
+
+Candidates come from two cheap lookups, never a scan:
+
+- the newest 200 posts of each of the post's 8 rarest tags, through the GIN index;
+- up to 400 look-alikes whose hash has a 16-bit chunk within one bit of the post's, through four expression indexes (migration 0015). By the pigeonhole rule, that catches every hash within 7 bits.
+
+Only those candidates are scored, and only the top ones get full rows.
+
 ## Media storage
 
 ```text

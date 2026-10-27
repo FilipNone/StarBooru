@@ -16,7 +16,7 @@ _Status as of 2026-10-27. Scope comes from `docs/checklist.md`._
 2. **M2, daily driver.** Video thumbnails, a recycle bin page, mass edit, saved searches, an explore/trending page, a duplicate finder, keyboard navigation, i18n scaffolding.
 3. **M3, admin and safety.** Done: sign-in with an OpenID Connect provider, login rate limiting, API keys, admin settings, server stats, usage stats and limits, and database backups.
 4. **M4, native polish.** Caching and offline use, a keyring token store, Android dynamic colour, in-app updates, multiple booru backends, sync.
-5. **M5, AI.** Embeddings with pgvector for related media and similar-image search, automatic tagging, OCR, translation, upscaling and background removal (with a bring-your-own API key).
+5. **M5, AI.** Embeddings with pgvector for similar-image search (and content-aware related media), automatic tagging, OCR, translation, upscaling and background removal (with a bring-your-own API key).
 
 ## Server (docker)
 
@@ -30,7 +30,7 @@ _Status as of 2026-10-27. Scope comes from `docs/checklist.md`._
 | grid view of media | ✅ | |
 | pages and infinite scroll | ✅ | Infinite scroll with a "Load more" fallback. No numbered pages yet. |
 | media viewer | ✅ | Image, GIF, video. Zoom (wheel, double-click, pinch, buttons, `+`/`-`/`0`) and drag to pan; previous/next in the order of the search you came from (arrows, `←`/`→`, swipe); fullscreen (`F`); `E` edits tags, `Esc` steps back out. Autocomplete takes `↑`/`↓`, `Enter`/`Tab` and `Esc`. |
-| related media suggestion | ⬜ | M5 (embeddings) |
+| related media suggestion | ✅ | The viewer shows up to 12 related posts under the details. They share the post's rarer tags (each shared tag counts by how rare it is) or look like it (a difference hash within a few bits), so look-alikes show even without tags. Found from the 8 rarest tags and a 4-chunk hash index, never a scan. Image embeddings (M5) could later add posts that look alike only in content. |
 | simple image editor / simple video editor | ✅ | The post viewer's editor turns, flips and crops an image (drag the corners) or trims a video (type times or take the playing position). The result is saved as a new post with the same tags; the original can go to the recycle bin. Video trims need ffmpeg: a lossless copy when the keyframes allow it, a re-encode otherwise. |
 | video preview | ✅ | Thumbnails for video, AVIF and JPEG XL through ffmpeg (bundled in the image), length badge, muted preview on mouse hover, plays in the viewer. Older posts get thumbnails at the next start. |
 | media importer / upload tab | ✅ | Multi-file drag and drop; folder import (only images and videos, optionally tagged with the folder name); import from URLs (downloaded by the server, public addresses only by default); shared tags and rating plus tags per file. |

@@ -86,7 +86,8 @@ cargo clippy -p starbooru-app --target wasm32-unknown-unknown --no-default-featu
 `apps/server/src/bench.rs` is an ignored test. It seeds generated posts straight into a test database (one million by default):
 - 5 to 24 tags a post, taken from 5,000 tags, with popularity falling off steeply;
 - 2% of the posts in the bin;
-- votes on 5%.
+- votes on 5%;
+- a random difference hash on each post, except 1% that share a blank one (hash 0).
 
 It then times the API calls the clients make most, through the real router, and fails if any median is over 400 ms. Run it in release:
 
@@ -106,6 +107,7 @@ Results at 1,000,000 posts (Ryzen 9 5900X, PostgreSQL 17 in Docker, default sett
 | `/posts?q=tag_4000` (a rare tag) | 18.8 ms |
 | `/posts?q=order:random` | 141 ms |
 | `/posts/{id}`, `/posts/{id}/neighbors`, tag search | under 1.2 ms |
+| `/posts/{id}/related` (a random hash, and a blank one shared by 10,000 posts) | 24–37 ms |
 | `/explore` | 72 ms |
 | `/explore?q=tag_1` | 116 ms |
 | `/admin/stats` | 112 ms |

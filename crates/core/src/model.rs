@@ -493,6 +493,18 @@ pub struct Neighbors {
     pub next: Option<i64>,
 }
 
+/// Posts asked for by `GET /posts/{id}/related` when no `limit` is given.
+pub const DEFAULT_RELATED_LIMIT: u32 = 12;
+/// The most posts `GET /posts/{id}/related` returns.
+pub const MAX_RELATED_LIMIT: u32 = 48;
+
+/// Posts like one post (`GET /posts/{id}/related`), most alike first: they
+/// share its rarer tags or look like it.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct RelatedPosts {
+    pub posts: Vec<Post>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PurgeResult {
     /// Posts permanently deleted.

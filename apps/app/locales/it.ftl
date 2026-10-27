@@ -428,6 +428,7 @@ cancel = Annulla
 save = Salva
 post-no-tags = Ancora nessun tag.
 post-details = Dettagli
+post-related = Simili
 post-size = Dimensione
 post-dimensions = Risoluzione
 post-length = Durata

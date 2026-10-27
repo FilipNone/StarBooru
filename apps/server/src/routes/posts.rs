@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use axum::Json;
 use axum::body::Bytes;
 use axum::extract::multipart::MultipartError;
@@ -9,15 +11,16 @@ use sqlx::{FromRow, Postgres, QueryBuilder, Transaction};
 use starbooru_core::query::{SearchQuery, SortKey};
 use starbooru_core::tag::normalize_tags;
 use starbooru_core::{
-    BulkEdit, BulkResult, DEFAULT_PAGE_LIMIT, ImportRequest, MAX_BULK_POSTS, MAX_PAGE_LIMIT,
-    MediaKind, Neighbors, Post, PostPage, PostUpdate, Rating, VoteRequest, parse_query,
-    parse_tag_list,
+    BulkEdit, BulkResult, DEFAULT_PAGE_LIMIT, DEFAULT_RELATED_LIMIT, ImportRequest, MAX_BULK_POSTS,
+    MAX_PAGE_LIMIT, MAX_RELATED_LIMIT, MediaKind, Neighbors, Post, PostPage, PostUpdate, Rating,
+    RelatedPosts, VoteRequest, parse_query, parse_tag_list,
 };
 use tracing::warn;
 
 use crate::auth::AuthUser;
 use crate::error::{AppError, AppResult};
 use crate::fetch::FetchError;
+use crate::similar;
 use crate::state::AppState;
 use crate::storage::{Ingested, Storage, Variant};
 
@@ -376,6 +379,171 @@ pub async fn neighbors(
         prev: prev.build_query_scalar().fetch_optional(&state.db).await?,
         next: next.build_query_scalar().fetch_optional(&state.db).await?,
     }))
+}
+
+#[derive(Deserialize)]
+pub struct RelatedParams {
+    limit: Option<u32>,
+}
+
+/// Related posts are found through the post's rarest tags: this many, each
+/// giving up to `RELATED_PER_TAG` of its newest posts.
+const RELATED_SEED_TAGS: usize = 8;
+const RELATED_PER_TAG: i64 = 200;
+/// Look-alikes found per probed hash chunk value, at most.
+const RELATED_PER_CHUNK: i64 = 25;
+/// Hamming distance below which a hash adds to the score, and the worth of
+/// each bit under it: an identical hash adds 9, about what a tag on one
+/// post in 10,000 is worth.
+const RELATED_LOOK_BITS: i64 = 12;
+const RELATED_LOOK_WEIGHT: f64 = 0.75;
+/// The planner's row estimate stands in for an exact count from this size.
+const ESTIMATE_FROM: f32 = 10_000.0;
+
+/// How much sharing a tag on `count` of `total` posts says: its inverse
+/// document frequency. A tag on three posts says a lot, one on half the
+/// collection almost nothing, one on every post nothing.
+fn tag_weight(total: f64, count: i32) -> f64 {
+    ((total + 1.0) / (f64::from(count.max(0)) + 1.0))
+        .ln()
+        .max(0.0)
+}
+
+/// `GET /posts/{id}/related?limit=`: live posts like `id`, most alike
+/// first. Shared tags count by rarity and close hashes count too, so
+/// look-alikes show up even without tags.
+///
+/// Only cheap lookups find candidates: the newest posts of each of the
+/// rarest tags (the GIN index), and posts whose hash has a 16-bit chunk
+/// within one bit of the post's (the chunk indexes of migration 0015, which
+/// catch every hash within 7 bits). The queries are one-shot, so each is
+/// planned for its actual tags: a rare tag through the GIN index, a common
+/// one by walking the newest posts.
+pub async fn related(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<i64>,
+    Query(params): Query<RelatedParams>,
+) -> AppResult<Json<RelatedPosts>> {
+    let limit = params
+        .limit
+        .unwrap_or(DEFAULT_RELATED_LIMIT)
+        .clamp(1, MAX_RELATED_LIMIT);
+    let (tags, hash): (Vec<i64>, Option<i64>) =
+        sqlx::query_as("SELECT tag_ids, phash FROM posts WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or(AppError::NotFound)?;
+
+    // Tags no other post has can't relate it to anything.
+    let mut counts: Vec<(i64, i32)> =
+        sqlx::query_as("SELECT id, post_count FROM tags WHERE id = ANY($1) AND post_count > 1")
+            .bind(&tags)
+            .fetch_all(&state.db)
+            .await?;
+    let total = if counts.is_empty() {
+        0.0
+    } else {
+        live_posts(&state).await?
+    };
+    counts.sort_by_key(|&(id, count)| (count, id));
+    let weighted: Vec<(i64, f64)> = counts
+        .iter()
+        .map(|&(id, count)| (id, tag_weight(total, count)))
+        .filter(|&(_, w)| w > 0.0)
+        .collect();
+    let reach = hash
+        .map(|h| similar::chunk_reach(u64::from_be_bytes(h.to_be_bytes()), 1))
+        .unwrap_or_default();
+    if weighted.is_empty() && reach.is_empty() {
+        return Ok(Json(RelatedPosts::default()));
+    }
+
+    let (ids, weights): (Vec<i64>, Vec<f64>) = weighted.iter().copied().unzip();
+    let mut qb = QueryBuilder::<Postgres>::new("WITH w(id, w) AS (SELECT * FROM unnest(");
+    qb.push_bind(ids)
+        .push("::bigint[], ")
+        .push_bind(weights)
+        .push("::float8[])), cand AS (SELECT NULL::bigint AS id");
+    for &(tag, _) in weighted.iter().take(RELATED_SEED_TAGS) {
+        qb.push(
+            " UNION (SELECT p.id FROM posts p WHERE p.deleted_at IS NULL AND p.tag_ids @> ARRAY[",
+        )
+        .push_bind(tag)
+        .push("]::bigint[] ORDER BY p.id DESC LIMIT ")
+        .push_bind(RELATED_PER_TAG)
+        .push(")");
+    }
+    for (chunk, values) in reach.into_iter().enumerate() {
+        let column = match chunk {
+            0 => "(p.phash & 65535)",
+            1 => "((p.phash >> 16) & 65535)",
+            2 => "((p.phash >> 32) & 65535)",
+            _ => "((p.phash >> 48) & 65535)",
+        };
+        qb.push(" UNION (SELECT l.id FROM unnest(")
+            .push_bind(values)
+            .push("::bigint[]) v CROSS JOIN LATERAL (SELECT p.id FROM posts p WHERE p.deleted_at IS NULL AND ")
+            .push(column)
+            .push(" = v LIMIT ")
+            .push_bind(RELATED_PER_CHUNK)
+            .push(") l)");
+    }
+    qb.push(
+        ") SELECT p.id FROM cand JOIN posts p ON p.id = cand.id \
+         CROSS JOIN LATERAL (SELECT \
+             COALESCE((SELECT sum(w.w) FROM w WHERE w.id = ANY(p.tag_ids)), 0) \
+             + COALESCE(GREATEST(",
+    )
+    .push_bind(RELATED_LOOK_BITS)
+    .push(" - bit_count((p.phash # ")
+    .push_bind(hash)
+    .push("::bigint)::bit(64)), 0) * ")
+    .push_bind(RELATED_LOOK_WEIGHT)
+    .push(", 0) AS score) s WHERE p.id <> ")
+    .push_bind(id)
+    .push(" AND s.score > 0 ORDER BY s.score DESC, p.id DESC LIMIT ")
+    .push_bind(i64::from(limit));
+    let ranked: Vec<i64> = qb
+        .build_query_scalar()
+        .persistent(false)
+        .fetch_all(&state.db)
+        .await?;
+
+    let mut qb = select_posts(user.id);
+    qb.push(" WHERE p.id = ANY(").push_bind(&ranked).push(")");
+    let mut rows: HashMap<i64, PostRow> = qb
+        .build_query_as::<PostRow>()
+        .fetch_all(&state.db)
+        .await?
+        .into_iter()
+        .map(|r| (r.id, r))
+        .collect();
+    let posts = ranked
+        .iter()
+        .filter_map(|id| rows.remove(id))
+        .map(|r| to_post(&state, r))
+        .collect();
+    Ok(Json(RelatedPosts { posts }))
+}
+
+/// About how many live posts there are: exact for a small collection, the
+/// planner's estimate (`reltuples`, -1 before the first `ANALYZE`) for a
+/// big one, where counting would read the whole table.
+async fn live_posts(state: &AppState) -> AppResult<f64> {
+    let (estimate,): (f32,) =
+        sqlx::query_as("SELECT reltuples FROM pg_class WHERE oid = 'posts'::regclass")
+            .fetch_one(&state.db)
+            .await?;
+    if estimate >= ESTIMATE_FROM {
+        return Ok(f64::from(estimate));
+    }
+    let (count,): (i64,) = sqlx::query_as("SELECT count(*) FROM posts WHERE deleted_at IS NULL")
+        .fetch_one(&state.db)
+        .await?;
+    // Exact: below `ESTIMATE_FROM` posts, or barely past it before an `ANALYZE`.
+    Ok(f64::from(i32::try_from(count).unwrap_or(i32::MAX)))
 }
 
 pub async fn get_one(
@@ -1131,6 +1299,8 @@ pub async fn purge_posts(state: &AppState, which: Purge) -> AppResult<u64> {
 mod tests {
     use axum::http::{Method, StatusCode};
 
+    use super::tag_weight;
+
     use crate::testing;
 
     async fn order_of(app: &testing::TestApp, token: &str, q: &str) -> Vec<i64> {
@@ -1273,6 +1443,105 @@ mod tests {
         }
         assert_eq!(step(1, "order:random").await, (None, None));
         assert_eq!(step(1, "missing_tag").await, (None, None));
+        app.finish().await;
+    }
+
+    #[test]
+    fn rare_tags_weigh_more() {
+        let w = |count| tag_weight(1_000_000.0, count);
+        assert!(w(3) > w(1_000) && w(1_000) > w(500_000));
+        assert!((w(3) - (1_000_001f64 / 4.0).ln()).abs() < 1e-9);
+        // On every post, or counted on more than the estimate: worthless, never negative.
+        assert_eq!(w(1_000_000), 0.0);
+        assert_eq!(tag_weight(10.0, 50), 0.0);
+        assert_eq!(tag_weight(0.0, -3), 0.0);
+    }
+
+    #[tokio::test]
+    async fn related_ranks_rare_tags_and_look_alikes_first() {
+        let Some(app) = testing::app().await else {
+            return;
+        };
+        let t = app.register("admin").await;
+        let mut ids = Vec::new();
+        for (seed, tags) in [
+            "common rare_x mid_a", // the post
+            "common rare_x mid_a", // a: shares everything
+            "common mid_a",        // b
+            "common",              // c
+            "other",               // d: nothing in common
+            "rare_x",              // e: deleted below
+            "",                    // f: no tags, but looks alike
+            "common mid_a",        // g
+            "common",              // h
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            ids.push(
+                app.upload_png(&t, 100 + u32::try_from(seed).unwrap(), tags)
+                    .await,
+            );
+        }
+        let [post, a, b, c, _d, e, f, g, h]: [i64; 9] = ids.try_into().unwrap();
+        let hash: i64 = 0x0f0f_3c3c_5a5a_9696;
+        sqlx::query("UPDATE posts SET phash = $1")
+            .bind(!hash)
+            .execute(app.db())
+            .await
+            .unwrap();
+        for (id, value) in [(post, hash), (f, hash ^ 0b101)] {
+            sqlx::query("UPDATE posts SET phash = $2 WHERE id = $1")
+                .bind(id)
+                .bind(value)
+                .execute(app.db())
+                .await
+                .unwrap();
+        }
+        let r = app
+            .call(
+                Method::DELETE,
+                &format!("/api/v1/posts/{e}"),
+                Some(&t),
+                None,
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::NO_CONTENT);
+
+        let related = |path: String| {
+            let app = &app;
+            let t = t.clone();
+            async move {
+                let r = app.get(&path, &t).await;
+                assert_eq!(r.status, StatusCode::OK, "{:?}", r.json());
+                r.json()["posts"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|p| p["id"].as_i64().unwrap())
+                    .collect::<Vec<_>>()
+            }
+        };
+        assert_eq!(
+            related(format!("/api/v1/posts/{post}/related")).await,
+            [f, a, g, b, h, c]
+        );
+        assert_eq!(
+            related(format!("/api/v1/posts/{post}/related?limit=2")).await,
+            [f, a]
+        );
+        // Without a hash only the tags count.
+        sqlx::query("UPDATE posts SET phash = NULL WHERE id = $1")
+            .bind(post)
+            .execute(app.db())
+            .await
+            .unwrap();
+        assert_eq!(
+            related(format!("/api/v1/posts/{post}/related")).await,
+            [a, g, b, h, c]
+        );
+        let r = app.get("/api/v1/posts/999999/related", &t).await;
+        assert_eq!(r.status, StatusCode::NOT_FOUND);
         app.finish().await;
     }
 

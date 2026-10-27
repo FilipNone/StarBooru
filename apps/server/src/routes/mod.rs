@@ -96,6 +96,7 @@ pub fn router(state: AppState) -> Router {
         .route("/posts/import", post(posts::import))
         .route("/posts/bulk", post(posts::bulk))
         .route("/posts/{id}/neighbors", get(posts::neighbors))
+        .route("/posts/{id}/related", get(posts::related))
         .route("/posts/{id}/restore", post(posts::restore))
         .route("/posts/{id}/purge", post(posts::purge))
         .route("/trash/empty", post(trash::empty))

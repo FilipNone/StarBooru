@@ -55,10 +55,12 @@ async fn search_at_scale() {
     .await
     .unwrap();
     // 5 to 24 tags a post, drawn towards the popular ones. The inner series
-    // refers to `g`, so it runs again for every post.
+    // refers to `g`, so it runs again for every post. Hashes are random,
+    // except for one post in 100 that is blank (hash 0, as flat pictures
+    // get), which is the worst case for finding look-alikes.
     sqlx::query(
         "INSERT INTO posts (sha256, ext, mime, kind, file_size, width, height, has_thumb, \
-                            rating, score, tag_ids, uploader_id, created_at, updated_at, deleted_at) \
+                            rating, score, tag_ids, uploader_id, created_at, updated_at, deleted_at, phash) \
          SELECT sha256(int8send(g)), 'png', 'image/png', \
                 CASE WHEN g % 25 = 0 THEN 2 WHEN g % 40 = 0 THEN 1 ELSE 0 END, \
                 (10000 + random() * 20000000)::bigint, \
@@ -69,7 +71,9 @@ async fn search_at_scale() {
                     FROM generate_series(1, 5 + (g % 20))) s), \
                 1, now() - make_interval(secs => ($1 - g) * 30), \
                 now() - make_interval(secs => random() * 86400 * 365), \
-                CASE WHEN g % 50 = 0 THEN now() END \
+                CASE WHEN g % 50 = 0 THEN now() END, \
+                CASE WHEN g % 100 = 0 THEN 0 \
+                     ELSE ('x' || substr(md5(g::text), 1, 16))::bit(64)::bigint END \
          FROM generate_series(1, $1) g",
     )
     .bind(posts)
@@ -121,6 +125,8 @@ async fn search_at_scale() {
         format!("/api/v1/posts/{mid}"),
         format!("/api/v1/posts/{mid}/neighbors"),
         format!("/api/v1/posts/{mid}/neighbors?q=tag_1+order:score"),
+        format!("/api/v1/posts/{mid}/related"),
+        format!("/api/v1/posts/{}/related", mid + 1),
         "/api/v1/tags?q=tag_12".into(),
         "/api/v1/tags?order=count".into(),
         "/api/v1/explore".into(),
