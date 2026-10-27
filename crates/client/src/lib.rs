@@ -13,8 +13,15 @@ use starbooru_core::{
     RevokeResult, SaveSearchRequest, SavedSearch, ServerInfo, SessionInfo, Tag, TagDetail,
     TagOrder, TagUpdate, User, VoteRequest,
 };
+use std::time::Duration;
 use thiserror::Error;
 use url::Url;
+
+/// How many times a rate-limited request is sent again before giving up.
+const RATE_LIMIT_RETRIES: u32 = 2;
+/// A longer `Retry-After` than this is returned to the caller instead of
+/// waited out, so the UI never hangs on one request.
+const MAX_RETRY_WAIT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Error)]
 pub enum ClientError {
@@ -24,7 +31,8 @@ pub enum ClientError {
     Http(#[from] reqwest::Error),
     #[error("{}", .error.message)]
     Api { status: u16, error: ApiError },
-    /// HTTP 429. `retry_after` is in seconds when the server sent one.
+    /// HTTP 429 that is still there after the automatic retries.
+    /// `retry_after` is in seconds when the server sent one.
     #[error("rate limited, retry later")]
     RateLimited { retry_after: Option<u64> },
 }
@@ -131,12 +139,12 @@ impl Client {
     }
 
     async fn send<T: DeserializeOwned>(req: RequestBuilder) -> Result<T> {
-        let resp = check(req.send().await?).await?;
+        let resp = send_patiently(req).await?;
         Ok(resp.json().await?)
     }
 
     async fn send_empty(req: RequestBuilder) -> Result<()> {
-        check(req.send().await?).await?;
+        send_patiently(req).await?;
         Ok(())
     }
 
@@ -393,6 +401,55 @@ fn segment(s: &str) -> String {
         .replace('+', "%20")
 }
 
+/// Sends `req`, and on a 429 waits as the server asks and sends it again
+/// (a rate-limited request wasn't processed, so this is safe for any
+/// method). Requests whose body can't be replayed, like streamed uploads,
+/// are sent once.
+async fn send_patiently(req: RequestBuilder) -> Result<reqwest::Response> {
+    let mut attempt = 0;
+    let mut next = req;
+    loop {
+        let spare = next.try_clone();
+        match check(next.send().await?).await {
+            Err(ClientError::RateLimited { retry_after }) => {
+                let wait = retry_delay(attempt, retry_after);
+                let (Some(wait), Some(again)) = (wait, spare) else {
+                    return Err(ClientError::RateLimited { retry_after });
+                };
+                sleep(wait).await;
+                attempt += 1;
+                next = again;
+            }
+            other => return other,
+        }
+    }
+}
+
+/// How long to wait before retry number `attempt + 1`, or `None` to give
+/// up. Honours `Retry-After` (seconds) up to [`MAX_RETRY_WAIT`]; without
+/// it, backs off 1 s, 2 s, …
+fn retry_delay(attempt: u32, retry_after: Option<u64>) -> Option<Duration> {
+    if attempt >= RATE_LIMIT_RETRIES {
+        return None;
+    }
+    let wait = match retry_after {
+        Some(secs) => Duration::from_secs(secs),
+        None => Duration::from_secs(1u64 << attempt.min(5)),
+    };
+    (wait <= MAX_RETRY_WAIT).then_some(wait)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+async fn sleep(wait: Duration) {
+    tokio::time::sleep(wait).await;
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn sleep(wait: Duration) {
+    let ms = u32::try_from(wait.as_millis()).unwrap_or(u32::MAX);
+    gloo_timers::future::TimeoutFuture::new(ms).await;
+}
+
 async fn check(resp: reqwest::Response) -> Result<reqwest::Response> {
     let status = resp.status();
     if status.is_success() {
@@ -435,6 +492,86 @@ mod tests {
             c.absolute("/media/thumb/ab.jpg?sig=1"),
             "https://b.example.com/sub/media/thumb/ab.jpg?sig=1"
         );
+    }
+
+    #[test]
+    fn plans_rate_limit_retries() {
+        assert_eq!(retry_delay(0, None), Some(Duration::from_secs(1)));
+        assert_eq!(retry_delay(1, None), Some(Duration::from_secs(2)));
+        assert_eq!(retry_delay(2, None), None);
+        assert_eq!(retry_delay(0, Some(0)), Some(Duration::ZERO));
+        assert_eq!(retry_delay(1, Some(30)), Some(MAX_RETRY_WAIT));
+        assert_eq!(retry_delay(0, Some(31)), None);
+        assert_eq!(retry_delay(u32::MAX, Some(1)), None);
+    }
+
+    /// Serves canned HTTP responses, one per connection, and counts them.
+    async fn canned(responses: Vec<String>) -> (String, tokio::task::JoinHandle<usize>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let task = tokio::spawn(async move {
+            let mut served = 0;
+            for body in responses {
+                let (mut sock, _) = listener.accept().await.unwrap();
+                let mut buf = [0u8; 4096];
+                let _ = sock.read(&mut buf).await.unwrap();
+                sock.write_all(body.as_bytes()).await.unwrap();
+                sock.shutdown().await.unwrap();
+                served += 1;
+            }
+            served
+        });
+        (url, task)
+    }
+
+    const LIMITED: &str = "HTTP/1.1 429 Too Many Requests\r\nRetry-After: 0\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+    const LIMITED_LONG: &str = "HTTP/1.1 429 Too Many Requests\r\nRetry-After: 3600\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+    fn ok_info() -> String {
+        let body = serde_json::to_string(&ServerInfo {
+            name: "StarBooru".into(),
+            version: "1".into(),
+            has_users: true,
+            registration_open: false,
+            max_upload_bytes: 1,
+            url_import: false,
+        })
+        .unwrap();
+        format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        )
+    }
+
+    #[tokio::test]
+    async fn retries_after_rate_limit() {
+        let (url, server) = canned(vec![LIMITED.into(), LIMITED.into(), ok_info()]).await;
+        let info = Client::new(&url).unwrap().info().await.unwrap();
+        assert_eq!(info.name, "StarBooru");
+        assert_eq!(server.await.unwrap(), 3);
+    }
+
+    #[tokio::test]
+    async fn gives_up_when_still_limited_or_asked_to_wait_long() {
+        let (url, server) = canned(vec![LIMITED.into(); 3]).await;
+        let err = Client::new(&url).unwrap().info().await.unwrap_err();
+        assert!(matches!(
+            err,
+            ClientError::RateLimited {
+                retry_after: Some(0)
+            }
+        ));
+        assert_eq!(server.await.unwrap(), 3);
+
+        let (url, server) = canned(vec![LIMITED_LONG.into()]).await;
+        let err = Client::new(&url).unwrap().info().await.unwrap_err();
+        assert!(matches!(
+            err,
+            ClientError::RateLimited {
+                retry_after: Some(3600)
+            }
+        ));
+        assert_eq!(server.await.unwrap(), 1);
     }
 
     #[test]

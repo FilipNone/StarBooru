@@ -59,7 +59,7 @@ _Status as of 2026-10-27. Scope comes from `docs/checklist.md`._
 |---|---|---|
 | login to the self-hosted instance | ✅ | Session stored in the user config directory |
 | multiple booru api supported | ⬜ | M4 |
-| api rate limit aware | 🟡 | The client surfaces `429` with `Retry-After`. No automatic retry yet. |
+| api rate limit aware | ✅ | On `429` the client waits as `Retry-After` asks (up to 30 s; 1 s then 2 s without it) and retries twice before surfacing `RateLimited`. Replayable requests only; streamed uploads are sent once. |
 | caching | ⬜ | M4 |
 | drag and drop media | ✅ | |
 | download and upload media | 🟡 | Upload works. Download uses the webview's download handling and is untested on every OS. |

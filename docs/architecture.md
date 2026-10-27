@@ -19,7 +19,7 @@ The desktop and Android apps are the same Dioxus code as the web app. Each one a
 | Crate | Role |
 |---|---|
 | `crates/core` (`starbooru-core`) | API models (`Post`, `Tag`, `User`, …), tag normalisation, the search query parser. Pure Rust, no I/O. |
-| `crates/client` (`starbooru-client`) | `Client`: one async method per endpoint, with a bearer token. Maps HTTP errors to `ClientError` (including `RateLimited { retry_after }`). Runs on wasm and native. |
+| `crates/client` (`starbooru-client`) | `Client`: one async method per endpoint, with a bearer token. Maps HTTP errors to `ClientError`. A `429` is retried twice after the `Retry-After` wait (at most 30 s) before it surfaces as `RateLimited { retry_after }`. Runs on wasm and native. |
 | `apps/server` (`starbooru-server`) | axum router, auth, posts, tags, storage, thumbnails, signed media. |
 | `apps/app` (`starbooru-app`) | Dioxus 0.7 UI. Feature `web`, `desktop` or `mobile` selects the renderer. |
 

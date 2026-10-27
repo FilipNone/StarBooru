@@ -15,7 +15,7 @@ All endpoints are under `/api/v1`. Bodies are JSON unless noted. The Rust types 
 | 409 | conflict (`duplicate`, `username_taken`, `deleted`, `not_deleted`, `implication_cycle`, `name_taken`) |
 | 413 | upload too large |
 | 415 | unsupported file type |
-| 429 | rate limited; the client honours `Retry-After` |
+| 429 | rate limited; `starbooru-client` waits out `Retry-After` (up to 30 s) and retries twice |
 | 500 | internal error (details only in the server log) |
 | 502 | `fetch_failed`: URL import could not download the address |
 

@@ -5700,6 +5700,7 @@ dependencies = [
 name = "starbooru-client"
 version = "0.1.0"
 dependencies = [
+ "gloo-timers",
  "reqwest 0.13.5",
  "serde",
  "serde_json",
