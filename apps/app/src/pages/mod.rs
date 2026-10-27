@@ -1,5 +1,7 @@
 mod explore;
 mod gallery;
+mod help;
+mod legal;
 mod login;
 mod post;
 mod settings;
@@ -12,6 +14,8 @@ use dioxus::prelude::*;
 
 pub use explore::Explore;
 pub use gallery::Gallery;
+pub use help::Help;
+pub use legal::{LegalLinks, Privacy, Terms};
 pub use post::PostView;
 pub use settings::Settings;
 pub use shell::Shell;

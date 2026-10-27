@@ -86,8 +86,8 @@ _Status as of 2026-10-27. Scope comes from `docs/checklist.md`._
 | Item | Status |
 |---|---|
 | documentation up to date | ✅ `docs/` |
-| cheat sheet | 🟡 Search syntax in `docs/api.md`. No in-app page yet. |
-| Privacy Policy, Terms of Service pages | ⬜ |
+| cheat sheet | ✅ `/help`: every search term with examples that run the search, a box that explains a query as you type, and the viewer's keyboard shortcuts. Linked from Settings and from a failed or empty search. |
+| Privacy Policy, Terms of Service pages | ✅ `/privacy` and `/terms`, open without signing in and linked from the sign-in card and Settings. They describe what the software stores; the operator of each server is responsible for it. |
 
 ## Known gaps and risks
 

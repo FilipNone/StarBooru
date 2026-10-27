@@ -2,6 +2,7 @@ use dioxus::prelude::*;
 use starbooru_client::Client;
 use starbooru_core::{Credentials, ServerInfo};
 
+use super::LegalLinks;
 use crate::icons::{Ico, Icon};
 use crate::store::{self, PREFS};
 
@@ -149,6 +150,7 @@ pub fn Login() -> Element {
                         if creating() { "I already have an account" } else { "Create an account" }
                     }
                 }
+                LegalLinks {}
             }
         }
     }

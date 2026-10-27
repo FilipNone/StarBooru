@@ -193,6 +193,12 @@ pub fn Gallery(q: String) -> Element {
             }
             if let Some(message) = error() {
                 ErrorBanner { message, onretry: retry }
+                if parse_query(&q).is_err() {
+                    Link { class: "btn text help-link", to: Route::Help {},
+                        Ico { icon: Icon::Help }
+                        "Search syntax"
+                    }
+                }
             }
             if is_empty {
                 div { class: "card empty",
@@ -204,6 +210,7 @@ pub fn Gallery(q: String) -> Element {
                     } else {
                         h2 { "No matches" }
                         p { class: "muted", "Nothing matches this search. Try fewer tags." }
+                        Link { class: "btn text", to: Route::Help {}, "Search syntax" }
                     }
                 }
             }

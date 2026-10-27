@@ -11,7 +11,8 @@ mod zoom;
 use dioxus::prelude::*;
 
 use crate::pages::{
-    Explore, Gallery, NotFound, PostView, Settings, Shell, TagPage, Tags, Trash, Upload,
+    Explore, Gallery, Help, NotFound, PostView, Privacy, Settings, Shell, TagPage, Tags, Terms,
+    Trash, Upload,
 };
 use crate::store::{PREFS, SESSION};
 
@@ -37,7 +38,13 @@ pub enum Route {
         Settings {},
         #[route("/trash")]
         Trash {},
+        #[route("/help")]
+        Help {},
     #[end_layout]
+    #[route("/privacy")]
+    Privacy {},
+    #[route("/terms")]
+    Terms {},
     #[route("/:..segments")]
     NotFound { segments: Vec<String> },
 }

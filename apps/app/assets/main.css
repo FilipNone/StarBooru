@@ -655,6 +655,48 @@ button.chip:disabled { cursor: default; }
 }
 .login-card .btn + .btn { margin-top: 8px; }
 
+/* ---------- help and legal ---------- */
+.try-query { display: flex; gap: 8px; margin-bottom: 12px; }
+.try-query input {
+  flex: 1; min-width: 0; padding: 10px 14px; border: 1px solid var(--outline); border-radius: var(--radius-s);
+  background: var(--surface); color: var(--on-surface);
+  font: 14px ui-monospace, "Cascadia Code", "Roboto Mono", monospace;
+}
+.try-query input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px oklch(from var(--primary) l c h / 0.25); }
+.explain { margin: 0; padding-left: 20px; display: grid; gap: 4px; font-size: 14px; }
+.syntax { display: grid; grid-template-columns: minmax(0, 15rem) 1fr; gap: 10px 16px; align-items: baseline; margin: 0; }
+.syntax dt { min-width: 0; }
+.syntax dd { margin: 0; font-size: 14px; color: var(--on-surface-2); }
+.code-chip, kbd {
+  display: inline-block; max-width: 100%; padding: 3px 8px; border-radius: 6px; overflow-wrap: anywhere;
+  border: 1px solid var(--outline); background: var(--surface-2); color: var(--on-surface);
+  font: 13px ui-monospace, "Cascadia Code", "Roboto Mono", monospace; text-decoration: none;
+}
+.code-chip { transition: background-color var(--fast) var(--ease), color var(--fast) var(--ease); }
+.code-chip:hover { background: var(--primary-container); color: var(--on-primary-container); border-color: var(--primary); }
+kbd { box-shadow: inset 0 -1px 0 var(--outline); white-space: nowrap; }
+.tips { margin: 0; padding-left: 20px; display: grid; gap: 6px; font-size: 14px; }
+.help-link { margin: -4px 0 16px; }
+.card.empty .btn.text { margin-top: 4px; }
+@media (max-width: 520px) {
+  .syntax { grid-template-columns: 1fr; gap: 4px; }
+  .syntax dd { margin-bottom: 10px; }
+}
+
+.legal-page { min-height: 100vh; min-height: 100dvh; padding: 32px 16px; background: var(--canvas); }
+.legal { max-width: 720px; margin: 0 auto; line-height: 1.6; }
+.legal-brand { margin-bottom: 20px; }
+.legal .legal-brand span { display: inline; }
+.legal h1 { font-size: 28px; margin: 0 0 12px; }
+.legal h2 { font-size: 17px; margin: 24px 0 6px; }
+.legal p, .legal ul { margin: 0 0 8px; }
+.legal ul { padding-left: 20px; display: grid; gap: 4px; }
+.legal .lead { color: var(--on-surface-2); font-size: 16px; }
+.legal-links { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 16px; margin-top: 16px; font-size: 13px; }
+.legal-links a { color: var(--on-surface-2); text-decoration: none; }
+.legal-links a:hover { color: var(--primary); text-decoration: underline; }
+.legal .legal-links { margin-top: 32px; padding-top: 16px; border-top: 1px solid var(--outline); }
+
 /* ---------- motion ---------- */
 
 @keyframes spin { to { transform: rotate(360deg); } }

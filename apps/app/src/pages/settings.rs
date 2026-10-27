@@ -93,6 +93,25 @@ pub fn Settings() -> Element {
                 }
             }
 
+            section { class: "card",
+                h2 { class: "card-title", "Help and legal" }
+                Link { class: "list-link", to: Route::Help {},
+                    Ico { icon: Icon::Help }
+                    span { "Search cheat sheet" }
+                    span { class: "muted", "Query syntax, examples and keyboard shortcuts" }
+                }
+                Link { class: "list-link", to: Route::Privacy {},
+                    Ico { icon: Icon::Shield }
+                    span { "Privacy Policy" }
+                    span { class: "muted", "What is stored, where, and for how long" }
+                }
+                Link { class: "list-link", to: Route::Terms {},
+                    Ico { icon: Icon::Article }
+                    span { "Terms of Service" }
+                    span { class: "muted", "The rules for using this server" }
+                }
+            }
+
             if let Some(s) = session {
                 section { class: "card",
                     h2 { class: "card-title", "Account" }
