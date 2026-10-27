@@ -50,6 +50,7 @@ pub fn router(state: AppState) -> Router {
                 .delete(posts::delete),
         )
         .route("/posts/import", post(posts::import))
+        .route("/posts/bulk", post(posts::bulk))
         .route("/posts/{id}/neighbors", get(posts::neighbors))
         .route("/posts/{id}/restore", post(posts::restore))
         .route("/posts/{id}/purge", post(posts::purge))

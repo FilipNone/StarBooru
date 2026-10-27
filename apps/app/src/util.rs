@@ -74,9 +74,48 @@ pub fn parse_urls(text: &str) -> Vec<String> {
     out
 }
 
+/// Splits a bulk tag edit like `cat -dog` into tags to add and to remove.
+/// A tag in both lists is dropped from both, since the result is unclear.
+pub fn split_tag_edit(text: &str) -> (Vec<String>, Vec<String>) {
+    let mut add: Vec<String> = Vec::new();
+    let mut remove: Vec<String> = Vec::new();
+    for word in text.split_whitespace() {
+        let (list, name) = match word.strip_prefix('-') {
+            Some(name) => (&mut remove, name),
+            None => (&mut add, word),
+        };
+        let name = name.to_lowercase();
+        if !name.is_empty() && !list.contains(&name) {
+            list.push(name);
+        }
+    }
+    let both: Vec<String> = add.iter().filter(|t| remove.contains(t)).cloned().collect();
+    add.retain(|t| !both.contains(t));
+    remove.retain(|t| !both.contains(t));
+    (add, remove)
+}
+
+/// "1 post" or "N posts".
+pub fn posts_count(n: u64) -> String {
+    match n {
+        1 => "1 post".to_owned(),
+        n => format!("{n} posts"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn splits_tag_edits() {
+        let (add, remove) = split_tag_edit("  Cat -dog cat - -- sky -SKY night ");
+        assert_eq!(add, ["cat", "night"]);
+        assert_eq!(remove, ["dog", "-"]);
+        assert_eq!(split_tag_edit(""), (vec![], vec![]));
+        assert_eq!(posts_count(1), "1 post");
+        assert_eq!(posts_count(0), "0 posts");
+    }
 
     #[test]
     fn formats_sizes() {

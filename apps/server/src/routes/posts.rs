@@ -9,8 +9,9 @@ use sqlx::{FromRow, Postgres, QueryBuilder, Transaction};
 use starbooru_core::query::{SearchQuery, SortKey};
 use starbooru_core::tag::normalize_tags;
 use starbooru_core::{
-    DEFAULT_PAGE_LIMIT, ImportRequest, MAX_PAGE_LIMIT, MediaKind, Neighbors, Post, PostPage,
-    PostUpdate, Rating, VoteRequest, parse_query, parse_tag_list,
+    BulkEdit, BulkResult, DEFAULT_PAGE_LIMIT, ImportRequest, MAX_BULK_POSTS, MAX_PAGE_LIMIT,
+    MediaKind, Neighbors, Post, PostPage, PostUpdate, Rating, VoteRequest, parse_query,
+    parse_tag_list,
 };
 use tracing::warn;
 
@@ -679,6 +680,92 @@ pub async fn update(
     Ok(Json(load(&state, user.id, id).await?))
 }
 
+/// `POST /posts/bulk`: adds and removes tags and sets the rating on many
+/// posts in one transaction, or moves them to the recycle bin.
+pub async fn bulk(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Json(edit): Json<BulkEdit>,
+) -> AppResult<Json<BulkResult>> {
+    let mut ids = edit.ids.clone();
+    ids.sort_unstable();
+    ids.dedup();
+    if ids.is_empty() || ids.len() > MAX_BULK_POSTS {
+        return Err(AppError::BadRequest(format!(
+            "select between 1 and {MAX_BULK_POSTS} posts"
+        )));
+    }
+    let edits = !edit.add_tags.is_empty() || !edit.remove_tags.is_empty() || edit.rating.is_some();
+    if edit.delete {
+        if edits {
+            return Err(AppError::BadRequest(
+                "delete posts or edit them, not both at once".into(),
+            ));
+        }
+        let mut result = BulkResult::default();
+        for id in ids {
+            match set_deleted(&state, &user, id, true).await {
+                Ok(()) => result.updated += 1,
+                Err(AppError::NotFound | AppError::Forbidden | AppError::Conflict { .. }) => {
+                    result.skipped += 1;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        return Ok(Json(result));
+    }
+    if !edits {
+        return Err(AppError::BadRequest("nothing to change".into()));
+    }
+    let add = normalize_tags(edit.add_tags.iter().map(String::as_str))?;
+    let remove = normalize_tags(edit.remove_tags.iter().map(String::as_str))?;
+
+    let mut tx = state.db.begin().await?;
+    // Removing an alias removes its tag.
+    let remove = super::tags::canonical_names(&mut *tx, &remove).await?;
+    // Locked in id order, so concurrent bulk edits can't deadlock.
+    let live: Vec<(i64, Vec<String>)> = sqlx::query_as(
+        "SELECT p.id, ARRAY(SELECT t.name FROM tags t WHERE t.id = ANY(p.tag_ids) ORDER BY t.name) \
+         FROM posts p WHERE p.id = ANY($1) AND p.deleted_at IS NULL ORDER BY p.id FOR UPDATE",
+    )
+    .bind(&ids)
+    .fetch_all(&mut *tx)
+    .await?;
+    if !add.is_empty() || !remove.is_empty() {
+        for (id, current) in &live {
+            let mut names: Vec<String> = current
+                .iter()
+                .filter(|t| !remove.contains(t))
+                .cloned()
+                .collect();
+            names.extend(
+                add.iter()
+                    .filter(|t| !names.contains(t))
+                    .cloned()
+                    .collect::<Vec<_>>(),
+            );
+            if names.len() > starbooru_core::tag::MAX_TAGS_PER_POST {
+                return Err(starbooru_core::tag::TagError::TooMany.into());
+            }
+            set_tags(&mut tx, *id, &names).await?;
+        }
+    }
+    let live_ids: Vec<i64> = live.iter().map(|(id, _)| *id).collect();
+    if let Some(rating) = edit.rating {
+        sqlx::query("UPDATE posts SET rating = $2, updated_at = now() WHERE id = ANY($1)")
+            .bind(&live_ids)
+            .bind(rating.to_db())
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    let updated = live_ids.len() as u64;
+    Ok(Json(BulkResult {
+        updated,
+        skipped: (ids.len() as u64).saturating_sub(updated),
+    }))
+}
+
 /// Soft delete: moves the post to the recycle bin.
 pub async fn delete(
     State(state): State<AppState>,
@@ -1172,5 +1259,124 @@ mod tests {
             .await;
         assert_eq!(r.status, StatusCode::BAD_REQUEST);
         off.finish().await;
+    }
+
+    #[tokio::test]
+    async fn bulk_edits_tags_rating_and_deletes() {
+        let Some(app) = testing::app().await else {
+            return;
+        };
+        let admin = app.register("admin").await;
+        let user = app.register("user").await;
+        app.call(
+            Method::POST,
+            "/api/v1/tags/cat/aliases",
+            Some(&admin),
+            Some(serde_json::json!({ "alias": "kitty" })),
+        )
+        .await;
+        app.call(
+            Method::POST,
+            "/api/v1/tags/cat/implications",
+            Some(&admin),
+            Some(serde_json::json!({ "implies": "animal" })),
+        )
+        .await;
+        let a = app.upload_png(&admin, 1, "cat sky").await;
+        let b = app.upload_png(&admin, 2, "sky old").await;
+        let c = app.upload_png(&user, 3, "sky").await;
+        let gone = app.upload_png(&admin, 4, "sky").await;
+        app.call(
+            Method::DELETE,
+            &format!("/api/v1/posts/{gone}"),
+            Some(&admin),
+            None,
+        )
+        .await;
+
+        let r = app
+            .call(
+                Method::POST,
+                "/api/v1/posts/bulk",
+                Some(&user),
+                Some(serde_json::json!({
+                    "ids": [a, b, c, gone, 999_999, a],
+                    "add_tags": ["Kitty", "night"],
+                    "remove_tags": ["old", "sky"],
+                    "rating": "questionable",
+                })),
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::OK, "{:?}", r.json());
+        assert_eq!(r.json(), serde_json::json!({ "updated": 3, "skipped": 2 }));
+        for id in [a, b, c] {
+            let p = app.get(&format!("/api/v1/posts/{id}"), &user).await.json();
+            assert_eq!(
+                p["tags"],
+                serde_json::json!(["animal", "cat", "night"]),
+                "{id}"
+            );
+            assert_eq!(p["rating"], "questionable");
+        }
+        // The deleted post is untouched, and counts follow.
+        let p = app
+            .get(&format!("/api/v1/posts/{gone}"), &admin)
+            .await
+            .json();
+        assert_eq!(p["tags"], serde_json::json!(["sky"]));
+        let sky = app.get("/api/v1/tags/sky", &user).await.json();
+        assert_eq!(sky["tag"]["post_count"], 0);
+
+        // Removing an alias removes its tag; implied tags come back while cat stays.
+        let r = app
+            .call(
+                Method::POST,
+                "/api/v1/posts/bulk",
+                Some(&user),
+                Some(serde_json::json!({ "ids": [a], "remove_tags": ["kitty", "animal"] })),
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::OK);
+        let p = app.get(&format!("/api/v1/posts/{a}"), &user).await.json();
+        assert_eq!(p["tags"], serde_json::json!(["night"]));
+
+        // Deleting: only your own posts unless you're an admin.
+        let r = app
+            .call(
+                Method::POST,
+                "/api/v1/posts/bulk",
+                Some(&user),
+                Some(serde_json::json!({ "ids": [a, c], "delete": true })),
+            )
+            .await;
+        assert_eq!(r.json(), serde_json::json!({ "updated": 1, "skipped": 1 }));
+        let r = app
+            .call(
+                Method::POST,
+                "/api/v1/posts/bulk",
+                Some(&admin),
+                Some(serde_json::json!({ "ids": [a, b], "delete": true })),
+            )
+            .await;
+        assert_eq!(r.json(), serde_json::json!({ "updated": 2, "skipped": 0 }));
+
+        for body in [
+            serde_json::json!({ "ids": [] , "rating": "general" }),
+            serde_json::json!({ "ids": [a] }),
+            serde_json::json!({ "ids": [a], "delete": true, "rating": "general" }),
+            serde_json::json!({ "ids": (1..=501).collect::<Vec<i64>>(), "rating": "general" }),
+            serde_json::json!({ "ids": [a], "add_tags": ["-bad"] }),
+        ] {
+            let r = app
+                .call(
+                    Method::POST,
+                    "/api/v1/posts/bulk",
+                    Some(&admin),
+                    Some(body.clone()),
+                )
+                .await;
+            assert_eq!(r.status, StatusCode::BAD_REQUEST, "{body}");
+        }
+        app.finish().await;
     }
 }

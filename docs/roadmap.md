@@ -42,7 +42,7 @@ _Status as of 2026-10-27. Scope comes from `docs/checklist.md`._
 | usage stats / usage limits | ⬜ | M3 |
 | automatic smart image compression | ⬜ | Originals are kept byte-exact by design. Compressed variants could be added. |
 | video reproduction offload to client | ✅ | Files are streamed with Range support. There is no server transcoding. |
-| mass edits | ⬜ | M2 |
+| mass edits | ✅ | M2 |
 | administration settings tab / server stats tab | ⬜ | M3 |
 | database backup | 🟡 | Dokploy Volume Backups (documented). No in-app backup. |
 | recycle bin to recover files | ✅ | Soft delete and restore, a recycle bin page, permanent delete per post, *Empty recycle bin* (admin), optional automatic purge (`STARBOORU_TRASH_DAYS`) |

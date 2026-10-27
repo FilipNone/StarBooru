@@ -1,12 +1,16 @@
+use std::collections::BTreeSet;
+
 use dioxus::prelude::*;
 use starbooru_core::saved::MAX_SEARCH_NAME_CHARS;
-use starbooru_core::{MediaKind, Order, Post, SavedSearch, parse_query, with_order};
+use starbooru_core::{
+    BulkEdit, MAX_BULK_POSTS, MediaKind, Order, Post, Rating, SavedSearch, parse_query, with_order,
+};
 
 use super::{ErrorBanner, Spinner};
 use crate::Route;
 use crate::icons::{Ico, Icon};
 use crate::store;
-use crate::util::{escape_attr, format_duration};
+use crate::util::{escape_attr, format_duration, posts_count, split_tag_edit};
 
 const PAGE_SIZE: u32 = 60;
 
@@ -67,7 +71,7 @@ pub fn Gallery(q: String) -> Element {
         });
     };
 
-    use_effect(use_reactive!(|q| {
+    let mut restart = move |q: String| {
         generation += 1;
         query.set(q);
         posts.write().clear();
@@ -76,7 +80,54 @@ pub fn Gallery(q: String) -> Element {
         loading.set(false);
         error.set(None);
         load_more();
+    };
+    // Bumped to run the search again, in this scope (spawns from a child's
+    // task would die with the child).
+    let mut reload = use_signal(|| 0u64);
+    use_effect(use_reactive!(|q| {
+        reload();
+        restart(q);
     }));
+
+    // Selection mode for mass edits. `anchor` is the last thumb clicked, for
+    // shift-click ranges.
+    let mut selecting = use_signal(|| false);
+    let mut selected = use_signal(BTreeSet::<i64>::new);
+    let mut anchor = use_signal(|| None::<usize>);
+    let mut notice = use_signal(|| None::<String>);
+    let toggle = move |(index, shift): (usize, bool)| {
+        let list = posts.read();
+        let Some(id) = list.get(index).map(|p| p.id) else {
+            return;
+        };
+        let mut set = selected.write();
+        let range = anchor()
+            .filter(|_| shift)
+            .map(|a| a.min(index)..=a.max(index));
+        if let Some(range) = range {
+            let on = !set.contains(&id);
+            for p in list.iter().skip(*range.start()).take(range.count()) {
+                if on && set.len() < MAX_BULK_POSTS {
+                    set.insert(p.id);
+                } else if !on {
+                    set.remove(&p.id);
+                }
+            }
+        } else if !set.remove(&id) && set.len() < MAX_BULK_POSTS {
+            set.insert(id);
+        }
+        anchor.set(Some(index));
+    };
+    let mut stop_selecting = move || {
+        selecting.set(false);
+        selected.write().clear();
+        anchor.set(None);
+    };
+    let ondone = move |message: String| {
+        stop_selecting();
+        notice.set(Some(message));
+        reload += 1;
+    };
 
     // The user's saved searches; `None` until loaded.
     let mut saved = use_signal(|| None::<Vec<SavedSearch>>);
@@ -118,6 +169,24 @@ pub fn Gallery(q: String) -> Element {
                     SaveToggle { q: q.clone(), saved }
                 }
                 SortMenu { q: q.clone() }
+                button {
+                    class: if selecting() { "icon-btn select-toggle on" } else { "icon-btn select-toggle" },
+                    title: if selecting() { "Stop selecting" } else { "Select posts" },
+                    aria_label: if selecting() { "Stop selecting" } else { "Select posts" },
+                    aria_pressed: selecting(),
+                    onclick: move |_| {
+                        if selecting() {
+                            stop_selecting();
+                        } else {
+                            notice.set(None);
+                            selecting.set(true);
+                        }
+                    },
+                    Ico { icon: if selecting() { Icon::Close } else { Icon::Check } }
+                }
+            }
+            if let Some(message) = notice() {
+                div { class: "banner info", role: "status", "{message}" }
             }
             if q.trim().is_empty() {
                 SavedList { saved }
@@ -138,9 +207,16 @@ pub fn Gallery(q: String) -> Element {
                     }
                 }
             }
-            div { class: "grid",
+            div { class: if selecting() { "grid selecting" } else { "grid" },
                 for (index, post) in posts.read().iter().enumerate() {
-                    Thumb { key: "{post.id}", post: post.clone(), index, q: q.clone() }
+                    Thumb {
+                        key: "{post.id}",
+                        post: post.clone(),
+                        index,
+                        q: q.clone(),
+                        selected: selecting().then(|| selected.read().contains(&post.id)),
+                        ontoggle: toggle,
+                    }
                 }
             }
             if has_more() && error().is_none() {
@@ -157,6 +233,155 @@ pub fn Gallery(q: String) -> Element {
                         button { class: "btn tonal", onclick: move |_| load_more(), "Load more" }
                     }
                 }
+            }
+            if selecting() {
+                BulkBar {
+                    selected,
+                    loaded: posts.read().iter().map(|p| p.id).collect::<Vec<_>>(),
+                    ondone,
+                }
+            }
+        }
+    }
+}
+
+/// The bar of a selection: tags, rating and delete for every selected post.
+#[component]
+fn BulkBar(
+    selected: Signal<BTreeSet<i64>>,
+    loaded: Vec<i64>,
+    ondone: EventHandler<String>,
+) -> Element {
+    let mut selected = selected;
+    let mut tags = use_signal(String::new);
+    let mut rating = use_signal(|| None::<Rating>);
+    let mut busy = use_signal(|| false);
+    let mut confirm_delete = use_signal(|| false);
+    let mut error = use_signal(|| None::<String>);
+    let count = selected.read().len();
+    let (add, remove) = split_tag_edit(&tags());
+    let has_edit = !add.is_empty() || !remove.is_empty() || rating().is_some();
+    let all_selected = !loaded.is_empty() && loaded.iter().all(|id| selected.read().contains(id));
+
+    let mut send = move |edit: BulkEdit| {
+        let Some(client) = store::client() else {
+            return;
+        };
+        busy.set(true);
+        error.set(None);
+        spawn(async move {
+            let deleting = edit.delete;
+            let result = client.bulk_edit(&edit).await;
+            // Before `ondone`, which closes this bar and drops its signals.
+            busy.set(false);
+            match result {
+                Ok(done) => {
+                    let verb = if deleting { "Moved" } else { "Updated" };
+                    let mut message = format!("{verb} {}", posts_count(done.updated));
+                    if deleting {
+                        message.push_str(" to the recycle bin");
+                    }
+                    if done.skipped > 0 {
+                        message.push_str(&format!("; skipped {}", posts_count(done.skipped)));
+                        if deleting {
+                            message.push_str(" you can't delete");
+                        }
+                    }
+                    message.push('.');
+                    ondone.call(message);
+                }
+                Err(e) => error.set(Some(e.to_string())),
+            }
+        });
+    };
+    let apply = move |e: FormEvent| {
+        e.prevent_default();
+        let (add_tags, remove_tags) = split_tag_edit(&tags.peek());
+        send(BulkEdit {
+            ids: selected.peek().iter().copied().collect(),
+            add_tags,
+            remove_tags,
+            rating: *rating.peek(),
+            delete: false,
+        });
+    };
+    let delete = move |_| {
+        if !confirm_delete() {
+            confirm_delete.set(true);
+            return;
+        }
+        confirm_delete.set(false);
+        send(BulkEdit {
+            ids: selected.peek().iter().copied().collect(),
+            delete: true,
+            ..BulkEdit::default()
+        });
+    };
+
+    rsx! {
+        form { class: "bulk-bar glass", aria_label: "Edit selected posts", onsubmit: apply,
+            div { class: "bulk-count",
+                strong { role: "status", if count == 0 { "Select posts" } else { "{count} selected" } }
+                button {
+                    r#type: "button",
+                    class: "btn text small",
+                    disabled: loaded.is_empty(),
+                    onclick: move |_| {
+                        let mut set = selected.write();
+                        if all_selected {
+                            set.clear();
+                        } else {
+                            for id in loaded.iter().take(MAX_BULK_POSTS.saturating_sub(set.len())) {
+                                set.insert(*id);
+                            }
+                        }
+                    },
+                    if all_selected { "Select none" } else { "Select all" }
+                }
+            }
+            input {
+                class: "bulk-tags",
+                r#type: "text",
+                placeholder: "Tags: cat -dog",
+                title: "Tags to add; put - before a tag to remove it",
+                aria_label: "Tags to add, or to remove with a leading minus",
+                autocapitalize: "none",
+                spellcheck: false,
+                value: "{tags}",
+                oninput: move |e| tags.set(e.value()),
+            }
+            select {
+                class: "bulk-rating",
+                aria_label: "Rating",
+                onchange: move |e| rating.set(Rating::parse(&e.value())),
+                option { value: "", selected: rating().is_none(), "Keep rating" }
+                for r in Rating::ALL {
+                    option { key: "{r.as_str()}", value: r.as_str(), selected: rating() == Some(r), "{r.as_str()}" }
+                }
+            }
+            button {
+                class: "btn",
+                r#type: "submit",
+                disabled: busy() || count == 0 || !has_edit,
+                Ico { icon: Icon::Check }
+                "Apply"
+            }
+            button {
+                r#type: "button",
+                class: if confirm_delete() { "btn danger" } else { "btn tonal" },
+                disabled: busy() || count == 0,
+                onclick: delete,
+                onblur: move |_| confirm_delete.set(false),
+                aria_label: if confirm_delete() { "Delete {count} posts?" } else { "Delete" },
+                Ico { icon: Icon::Delete }
+                if confirm_delete() {
+                    "Delete {count}?"
+                } else {
+                    span { class: "bulk-label", "Delete" }
+                }
+            }
+            if let Some(message) = error() {
+                p { class: "bulk-error", role: "alert", "{message}" }
             }
         }
     }
@@ -261,8 +486,16 @@ fn SortMenu(q: String) -> Element {
     }
 }
 
+/// A post in the grid. With `selected` set (selection mode), a click
+/// toggles it instead of opening it.
 #[component]
-fn Thumb(post: Post, index: usize, q: String) -> Element {
+fn Thumb(
+    post: Post,
+    index: usize,
+    q: String,
+    selected: Option<bool>,
+    ontoggle: EventHandler<(usize, bool)>,
+) -> Element {
     let client = store::client();
     let src = post
         .thumb_url
@@ -279,44 +512,61 @@ fn Thumb(post: Post, index: usize, q: String) -> Element {
     let delay = (index % PAGE_SIZE as usize) * 16;
     let alt = post.tags.join(" ");
     let duration = post.duration_ms.and_then(format_duration);
+    let media = rsx! {
+        div {
+            class: "thumb-media",
+            onpointerenter: move |e: PointerEvent| {
+                if video && e.pointer_type() == "mouse" {
+                    hovered.set(true);
+                }
+            },
+            onpointerleave: move |_| hovered.set(false),
+            if let Some(src) = src {
+                img { src, alt: alt.clone(), loading: "lazy", decoding: "async" }
+            } else {
+                div { class: "thumb-placeholder", Ico { icon: Icon::Play, size: 40 } }
+            }
+            if hovered() && let Some(src) = preview_src {
+                // Parsed HTML, because only a parsed `muted` attribute
+                // mutes the video, and browsers autoplay muted videos only.
+                div {
+                    class: "preview",
+                    aria_hidden: "true",
+                    dangerous_inner_html: "<video src=\"{escape_attr(&src)}\" muted autoplay loop playsinline preload=\"auto\"></video>",
+                }
+            }
+        }
+        match post.kind {
+            MediaKind::Video => rsx! {
+                span { class: "badge",
+                    Ico { icon: Icon::Play, size: 16 }
+                    if let Some(d) = duration { "{d}" }
+                }
+            },
+            MediaKind::Animation => rsx! { span { class: "badge", "GIF" } },
+            MediaKind::Image => rsx! {},
+        }
+    };
+    if let Some(on) = selected {
+        return rsx! {
+            button {
+                class: if on { "thumb selectable on" } else { "thumb selectable" },
+                style: "--delay: {delay}ms",
+                r#type: "button",
+                aria_pressed: on,
+                aria_label: if alt.is_empty() { format!("Post {}", post.id) } else { alt.clone() },
+                onclick: move |e: MouseEvent| ontoggle.call((index, e.modifiers().shift())),
+                {media}
+                span { class: "check-mark", aria_hidden: "true", Ico { icon: Icon::Check, size: 20 } }
+            }
+        };
+    }
     rsx! {
         Link {
             class: "thumb",
             style: "--delay: {delay}ms",
             to: Route::PostView { id: post.id, q },
-            div {
-                class: "thumb-media",
-                onpointerenter: move |e: PointerEvent| {
-                    if video && e.pointer_type() == "mouse" {
-                        hovered.set(true);
-                    }
-                },
-                onpointerleave: move |_| hovered.set(false),
-                if let Some(src) = src {
-                    img { src, alt, loading: "lazy", decoding: "async" }
-                } else {
-                    div { class: "thumb-placeholder", Ico { icon: Icon::Play, size: 40 } }
-                }
-                if hovered() && let Some(src) = preview_src {
-                    // Parsed HTML, because only a parsed `muted` attribute
-                    // mutes the video, and browsers autoplay muted videos only.
-                    div {
-                        class: "preview",
-                        aria_hidden: "true",
-                        dangerous_inner_html: "<video src=\"{escape_attr(&src)}\" muted autoplay loop playsinline preload=\"auto\"></video>",
-                    }
-                }
-            }
-            match post.kind {
-                MediaKind::Video => rsx! {
-                    span { class: "badge",
-                        Ico { icon: Icon::Play, size: 16 }
-                        if let Some(d) = duration { "{d}" }
-                    }
-                },
-                MediaKind::Animation => rsx! { span { class: "badge", "GIF" } },
-                MediaKind::Image => rsx! {},
-            }
+            {media}
         }
     }
 }

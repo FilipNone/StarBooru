@@ -253,6 +253,31 @@ pub struct SaveSearchRequest {
     pub query: String,
 }
 
+/// Most posts one bulk edit may touch.
+pub const MAX_BULK_POSTS: usize = 500;
+
+/// `POST /posts/bulk`: one change applied to many posts.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct BulkEdit {
+    pub ids: Vec<i64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub add_tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub remove_tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rating: Option<Rating>,
+    /// Move the posts to the recycle bin. Can't be combined with edits.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub delete: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BulkResult {
+    pub updated: u64,
+    /// Posts left alone: missing, in the recycle bin, or not yours to delete.
+    pub skipped: u64,
+}
+
 /// Partial update: fields left `None` stay unchanged.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PostUpdate {

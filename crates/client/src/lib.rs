@@ -7,7 +7,7 @@ use reqwest::{Method, RequestBuilder, StatusCode, header};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use starbooru_core::{
-    API_PREFIX, AliasRequest, ApiError, AuthResponse, Credentials,
+    API_PREFIX, AliasRequest, ApiError, AuthResponse, BulkEdit, BulkResult, Credentials,
     ImplicationRequest, ImportRequest, Neighbors, Post, PostPage, PostUpdate, PurgeResult, Rating,
     SaveSearchRequest, SavedSearch, ServerInfo, Tag, TagDetail, TagOrder, TagUpdate, User,
     VoteRequest,
@@ -174,6 +174,11 @@ impl Client {
     pub async fn update_post(&self, id: i64, update: &PostUpdate) -> Result<Post> {
         self.json(Method::PATCH, &format!("/posts/{id}"), update)
             .await
+    }
+
+    /// Tags, rating or deletion for many posts at once.
+    pub async fn bulk_edit(&self, edit: &BulkEdit) -> Result<BulkResult> {
+        self.json(Method::POST, "/posts/bulk", edit).await
     }
 
     pub async fn delete_post(&self, id: i64) -> Result<()> {
