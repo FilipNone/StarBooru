@@ -19,8 +19,8 @@ use dioxus::prelude::*;
 
 use crate::oidc::OidcReturn;
 use crate::pages::{
-    Admin, Duplicates, Explore, Gallery, Help, NotFound, PostView, Privacy, Settings, SharedPage,
-    Shell, TagPage, Tags, Terms, Trash, Upload,
+    Admin, Boorus, Duplicates, Explore, Gallery, Help, NotFound, PostView, Privacy, Settings,
+    SharedPage, Shell, TagPage, Tags, Terms, Trash, Upload,
 };
 use crate::store::{PREFS, SESSION};
 
@@ -42,6 +42,8 @@ pub enum Route {
         TagPage { name: String },
         #[route("/upload")]
         Upload {},
+        #[route("/boorus")]
+        Boorus {},
         #[route("/settings")]
         Settings {},
         #[route("/trash")]

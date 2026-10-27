@@ -10,6 +10,7 @@ pub mod keys;
 pub mod model;
 pub mod oidc;
 pub mod query;
+pub mod remote;
 pub mod saved;
 pub mod share;
 pub mod tag;
@@ -24,6 +25,9 @@ pub use keys::clean_api_key;
 pub use model::*;
 pub use oidc::{Identity, OidcBegin, OidcError, OidcFinish, OidcStart, SignInMethods};
 pub use query::{Order, SearchQuery, SortKey, parse_query, with_order};
+pub use remote::{
+    BooruApi, BooruSite, RemoteError, RemotePage, RemotePost, RemoteSearch, SITES, remote_tags,
+};
 pub use saved::clean_saved_search;
 pub use share::{NewShare, Share, ShareError, SharedPost, SharedView};
 pub use tag::{normalize_tag, parse_tag_list};

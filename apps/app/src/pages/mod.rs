@@ -1,6 +1,7 @@
 mod admin;
 mod admin_backups;
 mod api_keys;
+mod boorus;
 mod duplicates;
 mod editor;
 mod explore;
@@ -19,6 +20,7 @@ mod upload;
 use dioxus::prelude::*;
 
 pub use admin::Admin;
+pub use boorus::Boorus;
 pub use duplicates::Duplicates;
 pub use explore::Explore;
 pub use gallery::Gallery;

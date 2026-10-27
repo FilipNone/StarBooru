@@ -58,7 +58,7 @@ _Status as of 2026-10-27. Scope comes from `docs/checklist.md`._
 | Item | Status | Notes |
 |---|---|---|
 | login to the self-hosted instance | ✅ | Session stored in the user config directory |
-| multiple booru api supported | ⬜ | M4 |
+| multiple booru api supported | ✅ | *Upload › Other boorus*: search Danbooru, Gelbooru 0.2 (Safebooru, Rule34…), Moebooru (yande.re, Konachan), e621/e926 and Blombooru, with presets or any address, and an optional account per site (login or user ID, API key) kept on the device. Pick results and import them with their tags, rating and source page. The server makes the requests (`POST /remote/search`) under the URL import rules; a busy site gives 429, which the client waits out. Verified live on each of those sites except Blombooru, which is tested against the response shape in its source (no instance address to test against). Web, desktop and Android share it. |
 | api rate limit aware | ✅ | On `429` the client waits as `Retry-After` asks (up to 30 s; 1 s then 2 s without it) and retries twice before surfacing `RateLimited`. Replayable requests only; streamed uploads are sent once. |
 | caching | ✅ | Thumbnails and the images the viewer shows are kept on disk by their SHA-256, so they open at once and survive the 6-hourly change of signed URLs. Least recently used files go past a limit set in Settings (off, 256 MB to 5 GB; 512 MB by default), which also shows the size and can clear it. Videos and big originals (over 64 MiB) stream from the server. |
 | drag and drop media | ✅ | |

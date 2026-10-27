@@ -11,6 +11,7 @@ mod fetch;
 mod media;
 mod oidc;
 mod probe;
+mod remote;
 mod routes;
 mod settings;
 mod similar;

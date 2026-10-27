@@ -9,6 +9,7 @@ mod explore;
 mod keys;
 mod oidc;
 mod posts;
+mod remote;
 mod searches;
 mod shares;
 mod tags;
@@ -94,6 +95,7 @@ pub fn router(state: AppState) -> Router {
                 .delete(posts::delete),
         )
         .route("/posts/import", post(posts::import))
+        .route("/remote/search", post(remote::search))
         .route("/posts/bulk", post(posts::bulk))
         .route("/posts/{id}/neighbors", get(posts::neighbors))
         .route("/posts/{id}/related", get(posts::related))

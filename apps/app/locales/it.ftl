@@ -781,3 +781,29 @@ saver-never = Mai
 
 accent-system = Sfondo
 accent-system-hint = Segui i colori che Android prende dallo sfondo
+
+## Other boorus
+boorus-open = Altri booru
+boorus-title = Altri booru
+boorus-hint = Cerca nei siti Danbooru, Gelbooru, Moebooru, e621 e Blombooru, scegli i post e importali con tag, classificazione e fonte.
+boorus-site = Sito
+boorus-custom = Un altro sito…
+boorus-address = Indirizzo
+boorus-api = Tipo di sito
+boorus-account = Account (facoltativo)
+boorus-account-hint = Alcuni siti rispondono, o permettono ricerche più lunghe, solo con il tuo account. Resta su questo dispositivo e viene inviato solo a quel sito, tramite il tuo server.
+boorus-login = Nome utente
+boorus-user-id = ID utente
+boorus-key = Chiave API
+boorus-password-hash = Hash della password
+boorus-search = Cerca
+boorus-search-label = Cerca su quel sito
+boorus-search-placeholder = Tag, nella sintassi di quel sito
+boorus-nothing = Nessun risultato su quel sito.
+boorus-more = Carica altri
+boorus-post = Post { $id }
+boorus-known = Già presente
+boorus-extra-tags = Tag in più per questi post
+boorus-import-label = Importa i post selezionati
+boorus-import = Importa { $count }
+boorus-some-failed = Alcuni post non sono stati importati: { $error }

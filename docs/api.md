@@ -200,6 +200,25 @@ Tags are resolved the same way everywhere: an alias in a post's tags or in a sea
 |---|---|---|---|
 | GET | `/explore?days=&q=` | | `Explore {days, trending, tags, on_this_day, random}`. `days` is the window, 1 to 365 (default 7). `trending`: up to 24 posts with the most net upvotes cast or changed in the window (only those above zero). `tags`: up to 20 `TagTrend {tag, recent}`, the tags most used on posts added in the window, without the tags `q` requires. `on_this_day`: up to 12 posts added on today's month and day (UTC) in earlier years, newest first. `random`: 12 random posts. `q` uses the search syntax and narrows every section; its `order:` and `status:` are ignored. 400 for a bad query. |
 
+## Other boorus
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| POST | `/remote/search` | `RemoteSearch {api, base, tags?, page?, login?, api_key?}` | `RemotePage {posts, more}` |
+
+The server searches another booru for you, so the app needs no cross-site access and the same address rules as `POST /posts/import` apply (public addresses only unless the server allows private ones; off when URL import is off).
+
+- `api` is `danbooru`, `gelbooru` (Gelbooru 0.2 and forks such as Safebooru and Rule34's `api.rule34.xxx`), `moebooru` (yande.re, Konachan), `e621` (e621, e926) or `blombooru` (Danbooru's API, but its `s` rating means safe).
+- `base` is the site's http(s) address without query or credentials; a trailing slash is dropped. `tags` is in the site's own syntax. `page` starts at 1 and goes up to 1000. Each page asks for 40 posts.
+- `login` and `api_key` are the account on that site, sent only to it, in the query as it names them (`user_id` for Gelbooru, `password_hash` for Moebooru). They are used only when both are given, and are never stored or logged by the server. Each field is at most 512 bytes.
+- A `RemotePost` is `{id, page_url, preview_url, file_url, tags, rating, width, height}`. `tags` holds only tags valid here (the rest are dropped); `rating` is mapped to StarBooru's scale. Posts without a file the account may see are left out. `more` is true when the site sent a full page.
+- Import a result with `POST /posts/import`, `url` = `file_url` and `source` = `page_url`.
+
+Errors:
+- 400 `bad_request`: a bad request, an address the server won't reach, URL import turned off, a site that wants an account (401/403 from it), or a search it refused (400/422, e.g. Danbooru's two-tag limit without an account).
+- 429 `rate_limited` with `Retry-After: 5` when the site is busy (429/503).
+- 502 `fetch_failed` when the site errors, times out, or answers with something that isn't that API's search.
+
 ## Saved searches
 
 Each user's own list; other users never see it.

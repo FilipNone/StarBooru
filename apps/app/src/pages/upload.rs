@@ -188,6 +188,12 @@ pub fn Upload() -> Element {
                     }
                     span { {t!("upload-folder-tags")} }
                 }
+                if show_url {
+                    Link { class: "btn tonal", to: Route::Boorus {},
+                        Ico { icon: Icon::Explore }
+                        {t!("boorus-open")}
+                    }
+                }
             }
             if show_url {
                 form {

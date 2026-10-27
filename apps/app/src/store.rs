@@ -115,6 +115,19 @@ impl Hand {
     }
 }
 
+/// Another booru the user searched from StarBooru, with their account
+/// there, if any. The account is kept here like the session token.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SavedBooru {
+    /// `BooruApi::as_str`; plain text, so an API from a newer version
+    /// doesn't stop the settings from loading.
+    pub api: String,
+    pub base: String,
+    pub login: String,
+    pub api_key: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Prefs {
@@ -133,6 +146,8 @@ pub struct Prefs {
     pub cache_mb: u32,
     pub hand: Hand,
     pub battery_saver: Saver,
+    /// Other boorus searched, the latest first.
+    pub boorus: Vec<SavedBooru>,
 }
 
 impl Default for Prefs {
@@ -147,6 +162,7 @@ impl Default for Prefs {
             cache_mb: crate::cache::DEFAULT_LIMIT_MB,
             hand: Hand::Either,
             battery_saver: Saver::Auto,
+            boorus: Vec::new(),
         }
     }
 }
@@ -318,6 +334,7 @@ mod tests {
         assert_eq!(prefs.theme, Theme::Dark);
         assert_eq!(prefs.hand, Hand::Either);
         assert_eq!(prefs.battery_saver, Saver::Auto);
+        assert!(prefs.boorus.is_empty());
         let prefs: Prefs = serde_json::from_str(r#"{"hand":"left"}"#).unwrap();
         assert_eq!(prefs.hand, Hand::Left);
         // An unknown hand from a newer version falls back rather than failing.

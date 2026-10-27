@@ -14,10 +14,10 @@ use starbooru_core::{
     Backups, BulkEdit, BulkResult, CreatedApiKey, Credentials, DismissDuplicates, Duplicates,
     Explore, Identity, ImplicationRequest, ImportRequest, MediaEdit, Neighbors, NewApiKey,
     NewShare, OidcBegin, OidcFinish, OidcStart, PasswordChange, PasswordReset, Post, PostPage,
-    PostUpdate, PurgeResult, Rating, RelatedPosts, ResolveDuplicates, RevokeResult,
-    SaveSearchRequest, SavedSearch, ServerInfo, ServerSettings, ServerStats, SessionInfo, Share,
-    SharedView, SignInMethods, Tag, TagDetail, TagOrder, TagUpdate, Usage, User, UserUpdate,
-    VoteRequest,
+    PostUpdate, PurgeResult, Rating, RelatedPosts, RemotePage, RemoteSearch, ResolveDuplicates,
+    RevokeResult, SaveSearchRequest, SavedSearch, ServerInfo, ServerSettings, ServerStats,
+    SessionInfo, Share, SharedView, SignInMethods, Tag, TagDetail, TagOrder, TagUpdate, Usage,
+    User, UserUpdate, VoteRequest,
 };
 use std::time::Duration;
 use thiserror::Error;
@@ -516,6 +516,12 @@ impl Client {
     /// Asks the server to download `request.url` and add it as a post.
     pub async fn import_url(&self, request: &ImportRequest) -> Result<Post> {
         self.json(Method::POST, "/posts/import", request).await
+    }
+
+    /// One page of a search on another booru, fetched by the server. Import
+    /// a result with [`Client::import_url`].
+    pub async fn remote_search(&self, search: &RemoteSearch) -> Result<RemotePage> {
+        self.json(Method::POST, "/remote/search", search).await
     }
 
     /// The signed-in user's saved searches, by name.
