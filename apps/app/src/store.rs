@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 use starbooru_client::Client;
 use starbooru_core::{AuthResponse, User};
 
+use crate::i18n::Lang;
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Session {
     pub server: String,
@@ -36,11 +38,11 @@ impl Theme {
         }
     }
 
-    pub fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Theme::System => "System",
-            Theme::Light => "Light",
-            Theme::Dark => "Dark",
+            Theme::System => t!("theme-system"),
+            Theme::Light => t!("theme-light"),
+            Theme::Dark => t!("theme-dark"),
         }
     }
 }
@@ -52,6 +54,8 @@ pub struct Prefs {
     /// OKLCH hue (0–360) the whole palette is derived from.
     pub accent_hue: u16,
     pub last_server: String,
+    /// `None` follows the system language.
+    pub language: Option<Lang>,
 }
 
 impl Default for Prefs {
@@ -60,6 +64,7 @@ impl Default for Prefs {
             theme: Theme::System,
             accent_hue: 285,
             last_server: String::new(),
+            language: None,
         }
     }
 }

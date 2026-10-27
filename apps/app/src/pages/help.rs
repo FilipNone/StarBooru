@@ -7,78 +7,65 @@ use starbooru_core::{MediaKind, Order, Rating, SearchQuery, SortKey, parse_query
 
 use crate::Route;
 use crate::icons::{Ico, Icon};
+use crate::util::rating_label;
 
-/// Example term and what it does, grouped under a heading.
-const SECTIONS: [(&str, &[(&str, &str)]); 4] = [
-    (
-        "Tags",
-        &[
-            ("blue_sky", "has the tag"),
-            ("blue_sky night", "has every tag listed"),
-            ("-cloud", "doesn't have the tag"),
-            (
-                "blue sky",
-                "two tags: spaces separate terms, so write blue_sky",
-            ),
-        ],
-    ),
-    (
-        "Filters",
-        &[
-            (
-                "rating:g",
-                "rated general (g), sensitive (s), questionable (q) or explicit (e)",
-            ),
-            ("rating:g rating:s", "any of the listed ratings"),
-            ("-rating:e", "any rating but explicit"),
-            (
-                "type:image",
-                "still images; also type:animation and type:video",
-            ),
-            ("status:deleted", "posts in the recycle bin"),
-        ],
-    ),
-    (
-        "Sorting",
-        &[
-            (
-                "order:new",
-                "newest first (the default); order:old for oldest",
-            ),
-            ("order:score", "highest score first"),
-            ("order:size", "largest file first"),
-            ("order:pixels", "highest resolution first"),
-            ("order:tags", "most tags first"),
-            ("order:updated", "most recently edited first"),
-            ("order:size_asc", "add _asc or _desc to set the direction"),
-            ("order:random", "a new shuffle every time"),
-        ],
-    ),
-    (
-        "Combined",
-        &[
-            (
-                "cat -dog rating:g order:score",
-                "safe cats without dogs, best first",
-            ),
-            ("type:video order:size", "the biggest videos"),
-        ],
-    ),
-];
+/// Example terms and what they do, grouped under a heading.
+fn sections() -> [(String, Vec<(&'static str, String)>); 4] {
+    [
+        (
+            t!("help-tags"),
+            vec![
+                ("blue_sky", t!("help-tag")),
+                ("blue_sky night", t!("help-tag-all")),
+                ("-cloud", t!("help-tag-not")),
+                ("blue sky", t!("help-tag-spaces")),
+            ],
+        ),
+        (
+            t!("help-filters"),
+            vec![
+                ("rating:g", t!("help-rating")),
+                ("rating:g rating:s", t!("help-rating-any")),
+                ("-rating:e", t!("help-rating-not")),
+                ("type:image", t!("help-type")),
+                ("status:deleted", t!("help-deleted")),
+            ],
+        ),
+        (
+            t!("help-sorting"),
+            vec![
+                ("order:new", t!("help-order-new")),
+                ("order:score", t!("help-order-score")),
+                ("order:size", t!("help-order-size")),
+                ("order:pixels", t!("help-order-pixels")),
+                ("order:tags", t!("help-order-tags")),
+                ("order:updated", t!("help-order-updated")),
+                ("order:size_asc", t!("help-order-direction")),
+                ("order:random", t!("help-order-random")),
+            ],
+        ),
+        (
+            t!("help-combined"),
+            vec![
+                ("cat -dog rating:g order:score", t!("help-combined-cats")),
+                ("type:video order:size", t!("help-combined-videos")),
+            ],
+        ),
+    ]
+}
 
-const SHORTCUTS: [(&str, &str); 8] = [
-    ("← →", "previous or next post"),
-    ("E", "edit tags and rating"),
-    ("F", "full screen"),
-    ("+ −", "zoom in or out"),
-    ("0", "fit to the screen"),
-    (
-        "Esc",
-        "reset zoom, leave full screen, then back to the gallery",
-    ),
-    ("Double click", "zoom in on a point, again to fit"),
-    ("Shift + click", "select a range in selection mode"),
-];
+fn shortcuts() -> [(String, String); 8] {
+    [
+        ("← →".into(), t!("key-prev-next")),
+        ("E".into(), t!("key-edit")),
+        ("F".into(), t!("key-fullscreen")),
+        ("+ −".into(), t!("key-zoom")),
+        ("0".into(), t!("key-fit")),
+        ("Esc".into(), t!("key-escape")),
+        (t!("key-double-click"), t!("key-double-click-action")),
+        (t!("key-shift-click"), t!("key-shift-click-action")),
+    ]
+}
 
 #[component]
 pub fn Help() -> Element {
@@ -87,10 +74,10 @@ pub fn Help() -> Element {
     let invalid = explained.is_err();
     rsx! {
         div { class: "page narrow",
-            h1 { class: "page-title", "Search cheat sheet" }
+            h1 { class: "page-title", {t!("help-title")} }
 
             section { class: "card",
-                h2 { class: "card-title", "Try a query" }
+                h2 { class: "card-title", {t!("help-try")} }
                 form {
                     class: "try-query",
                     onsubmit: move |e: FormEvent| {
@@ -100,7 +87,7 @@ pub fn Help() -> Element {
                     input {
                         r#type: "search",
                         placeholder: "cat -dog rating:g order:score",
-                        aria_label: "Query to explain",
+                        aria_label: t!("help-try-label"),
                         autocomplete: "off",
                         spellcheck: "false",
                         value: "{text}",
@@ -108,7 +95,7 @@ pub fn Help() -> Element {
                     }
                     button { class: "btn", r#type: "submit", disabled: invalid,
                         Ico { icon: Icon::Search }
-                        "Search"
+                        {t!("help-search")}
                     }
                 }
                 match explained {
@@ -125,16 +112,16 @@ pub fn Help() -> Element {
                 }
             }
 
-            for (title, rows) in SECTIONS {
+            for (title, rows) in sections() {
                 section { key: "{title}", class: "card",
                     h2 { class: "card-title", "{title}" }
                     dl { class: "syntax",
-                        for (term, meaning) in rows.iter().copied() {
+                        for (term, meaning) in rows {
                             dt { key: "{term}",
                                 Link {
                                     class: "code-chip",
                                     to: Route::Gallery { q: term.to_owned() },
-                                    title: "Search for {term}",
+                                    title: t!("help-search-for", term = term),
                                     "{term}"
                                 }
                             }
@@ -145,19 +132,19 @@ pub fn Help() -> Element {
             }
 
             section { class: "card",
-                h2 { class: "card-title", "Good to know" }
+                h2 { class: "card-title", {t!("help-tips")} }
                 ul { class: "tips",
-                    li { "Tags are lower-cased, and spaces or repeated underscores become one _." }
-                    li { "An alias finds its tag, and implied tags are added when you tag a post." }
-                    li { "A query holds at most 40 terms." }
-                    li { "Star a search in the gallery to keep it as a saved search." }
+                    li { {t!("help-tip-normalise")} }
+                    li { {t!("help-tip-aliases")} }
+                    li { {t!("help-tip-terms")} }
+                    li { {t!("help-tip-saved")} }
                 }
             }
 
             section { class: "card",
-                h2 { class: "card-title", "Keyboard shortcuts" }
+                h2 { class: "card-title", {t!("help-shortcuts")} }
                 dl { class: "syntax",
-                    for (keys, action) in SHORTCUTS {
+                    for (keys, action) in shortcuts() {
                         dt { key: "{keys}", kbd { "{keys}" } }
                         dd { "{action}" }
                     }
@@ -173,70 +160,69 @@ pub fn explain(text: &str) -> Result<Vec<String>, String> {
     let q: SearchQuery = parse_query(text).map_err(|e| e.to_string())?;
     let mut lines = Vec::new();
     if q.deleted {
-        lines.push("In the recycle bin".to_owned());
+        lines.push(t!("explain-deleted"));
     }
     match q.include.as_slice() {
         [] => {}
-        [tag] => lines.push(format!("Tagged {tag}")),
-        tags => lines.push(format!("Tagged with all of {}", tags.join(", "))),
+        [tag] => lines.push(t!("explain-tagged", tag = tag.as_str())),
+        tags => lines.push(t!("explain-tagged-all", tags = tags.join(", "))),
     }
     match q.exclude.as_slice() {
         [] => {}
-        [tag] => lines.push(format!("Not tagged {tag}")),
-        tags => lines.push(format!("Tagged with none of {}", tags.join(", "))),
+        [tag] => lines.push(t!("explain-not-tagged", tag = tag.as_str())),
+        tags => lines.push(t!("explain-tagged-none", tags = tags.join(", "))),
     }
     if !q.ratings.is_empty() {
-        lines.push(format!("Rated {}", ratings(&q.ratings, "or")));
+        lines.push(t!("explain-rated", ratings = ratings(&q.ratings)));
     }
     if !q.exclude_ratings.is_empty() {
-        lines.push(format!("Not rated {}", ratings(&q.exclude_ratings, "or")));
+        lines.push(t!(
+            "explain-not-rated",
+            ratings = ratings(&q.exclude_ratings)
+        ));
     }
     if let Some(kind) = q.kind {
-        lines.push(
-            match kind {
-                MediaKind::Image => "Still images only",
-                MediaKind::Animation => "Animations only",
-                MediaKind::Video => "Videos only",
-            }
-            .to_owned(),
-        );
+        lines.push(match kind {
+            MediaKind::Image => t!("explain-images"),
+            MediaKind::Animation => t!("explain-animations"),
+            MediaKind::Video => t!("explain-videos"),
+        });
     }
     if lines.is_empty() || (lines.len() == 1 && q.deleted) {
-        lines.push("Every post".to_owned());
+        lines.push(t!("explain-every"));
     }
     lines.push(order_phrase(q.order));
     Ok(lines)
 }
 
-fn ratings(list: &[Rating], joiner: &str) -> String {
-    let names: Vec<&str> = list.iter().map(|r| r.as_str()).collect();
+/// "general, sensitive or questionable".
+fn ratings(list: &[Rating]) -> String {
+    let names: Vec<String> = list.iter().map(|r| rating_label(*r)).collect();
     match names.split_last() {
         Some((last, rest)) if !rest.is_empty() => {
-            format!("{} {joiner} {last}", rest.join(", "))
+            t!("list-or", rest = rest.join(", "), last = last.as_str())
         }
-        _ => names.join(""),
+        _ => names.concat(),
     }
 }
 
 fn order_phrase(order: Order) -> String {
-    let (key, high, low) = match order.key {
-        SortKey::Id => {
-            return if order.descending {
-                "Newest first"
-            } else {
-                "Oldest first"
-            }
-            .into();
-        }
-        SortKey::Random => return "In random order".into(),
-        SortKey::Score => ("score", "highest", "lowest"),
-        SortKey::Size => ("file size", "largest", "smallest"),
-        SortKey::Pixels => ("resolution", "highest", "lowest"),
-        SortKey::TagCount => ("tag count", "most", "fewest"),
-        SortKey::Updated => ("last edit", "latest", "earliest"),
-    };
-    let first = if order.descending { high } else { low };
-    format!("By {key}, {first} first")
+    let d = order.descending;
+    match order.key {
+        SortKey::Id if d => t!("explain-order-new"),
+        SortKey::Id => t!("explain-order-old"),
+        SortKey::Random => t!("explain-order-random"),
+        SortKey::Score if d => t!("explain-order-score-desc"),
+        SortKey::Score => t!("explain-order-score-asc"),
+        SortKey::Size if d => t!("explain-order-size-desc"),
+        SortKey::Size => t!("explain-order-size-asc"),
+        SortKey::Pixels if d => t!("explain-order-pixels-desc"),
+        SortKey::Pixels => t!("explain-order-pixels-asc"),
+        SortKey::TagCount if d => t!("explain-order-tags-desc"),
+        SortKey::TagCount => t!("explain-order-tags-asc"),
+        SortKey::Updated if d => t!("explain-order-updated-desc"),
+        SortKey::Updated => t!("explain-order-updated-asc"),
+    }
 }
 
 #[cfg(test)]
@@ -273,7 +259,7 @@ mod tests {
 
     #[test]
     fn every_example_parses() {
-        for (_, rows) in SECTIONS {
+        for (_, rows) in sections() {
             for (term, _) in rows {
                 assert!(parse_query(term).is_ok(), "{term}");
             }

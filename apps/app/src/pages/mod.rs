@@ -33,9 +33,9 @@ pub fn NotFound(segments: Vec<String>) -> Element {
     rsx! {
         div { class: "center-page",
             div { class: "card empty",
-                h1 { "Nothing here" }
-                p { class: "muted", "There is no page at /{path}." }
-                Link { class: "btn", to: Route::Gallery { q: String::new() }, "Back to the gallery" }
+                h1 { {t!("notfound-title")} }
+                p { class: "muted", {t!("notfound-body", path = format!("/{path}"))} }
+                Link { class: "btn", to: Route::Gallery { q: String::new() }, {t!("notfound-back")} }
             }
         }
     }
@@ -48,7 +48,7 @@ pub fn ErrorBanner(message: String, onretry: Option<EventHandler<()>>) -> Elemen
         div { class: "banner error", role: "alert",
             span { "{message}" }
             if let Some(retry) = onretry {
-                button { class: "btn text", onclick: move |_| retry.call(()), "Retry" }
+                button { class: "btn text", onclick: move |_| retry.call(()), {t!("retry")} }
             }
         }
     }
@@ -56,5 +56,5 @@ pub fn ErrorBanner(message: String, onretry: Option<EventHandler<()>>) -> Elemen
 
 #[component]
 pub fn Spinner() -> Element {
-    rsx! { span { class: "spinner", role: "status", "aria-label": "Loading" } }
+    rsx! { span { class: "spinner", role: "status", "aria-label": t!("loading") } }
 }

@@ -10,23 +10,30 @@ use super::{ErrorBanner, Spinner};
 use crate::Route;
 use crate::icons::{Ico, Icon};
 use crate::store;
-use crate::util::{escape_attr, format_duration, posts_count, split_tag_edit};
+use crate::util::{escape_attr, format_duration, rating_label, split_tag_edit};
 
 const PAGE_SIZE: u32 = 60;
 
-/// Sort menu entries: label and `order:` value.
-const SORTS: [(&str, &str); 10] = [
-    ("Newest", "new"),
-    ("Oldest", "old"),
-    ("Top score", "score"),
-    ("Recently edited", "updated"),
-    ("Largest file", "size"),
-    ("Smallest file", "size_asc"),
-    ("Highest resolution", "pixels"),
-    ("Most tags", "tags"),
-    ("Fewest tags", "tags_asc"),
-    ("Random", "random"),
+/// Sort menu entries: `order:` values.
+const SORTS: [&str; 10] = [
+    "new", "old", "score", "updated", "size", "size_asc", "pixels", "tags", "tags_asc", "random",
 ];
+
+fn sort_label(order: &str) -> String {
+    match order {
+        "new" => t!("sort-new"),
+        "old" => t!("sort-old"),
+        "score" => t!("sort-score"),
+        "updated" => t!("sort-updated"),
+        "size" => t!("sort-size"),
+        "size_asc" => t!("sort-size-asc"),
+        "pixels" => t!("sort-pixels"),
+        "tags" => t!("sort-tags"),
+        "tags_asc" => t!("sort-tags-asc"),
+        "random" => t!("sort-random"),
+        other => other.to_owned(),
+    }
+}
 
 #[component]
 pub fn Gallery(q: String) -> Element {
@@ -157,10 +164,10 @@ pub fn Gallery(q: String) -> Element {
         div { class: "page gallery",
             div { class: "page-head",
                 h1 { class: if title.is_empty() { "page-title visually-hidden" } else { "page-title" },
-                    if title.is_empty() { "Gallery" } else { "{title}" }
+                    if title.is_empty() { {t!("nav-gallery")} } else { "{title}" }
                 }
                 if let Some(name) = single_tag {
-                    Link { class: "icon-btn tag-info", title: "About this tag", aria_label: "About this tag",
+                    Link { class: "icon-btn tag-info", title: t!("gallery-tag-info"), aria_label: t!("gallery-tag-info"),
                         to: Route::TagPage { name },
                         Ico { icon: Icon::Label }
                     }
@@ -171,8 +178,8 @@ pub fn Gallery(q: String) -> Element {
                 SortMenu { q: q.clone() }
                 button {
                     class: if selecting() { "icon-btn select-toggle on" } else { "icon-btn select-toggle" },
-                    title: if selecting() { "Stop selecting" } else { "Select posts" },
-                    aria_label: if selecting() { "Stop selecting" } else { "Select posts" },
+                    title: if selecting() { t!("gallery-stop-selecting") } else { t!("gallery-select") },
+                    aria_label: if selecting() { t!("gallery-stop-selecting") } else { t!("gallery-select") },
                     aria_pressed: selecting(),
                     onclick: move |_| {
                         if selecting() {
@@ -196,7 +203,7 @@ pub fn Gallery(q: String) -> Element {
                 if parse_query(&q).is_err() {
                     Link { class: "btn text help-link", to: Route::Help {},
                         Ico { icon: Icon::Help }
-                        "Search syntax"
+                        {t!("gallery-syntax")}
                     }
                 }
             }
@@ -204,13 +211,13 @@ pub fn Gallery(q: String) -> Element {
                 div { class: "card empty",
                     Ico { icon: Icon::Gallery, size: 48 }
                     if q.is_empty() {
-                        h2 { "No posts yet" }
-                        p { class: "muted", "Upload images or videos to start your collection." }
-                        Link { class: "btn", to: Route::Upload {}, Ico { icon: Icon::Upload } "Upload" }
+                        h2 { {t!("gallery-empty")} }
+                        p { class: "muted", {t!("gallery-empty-body")} }
+                        Link { class: "btn", to: Route::Upload {}, Ico { icon: Icon::Upload } {t!("nav-upload")} }
                     } else {
-                        h2 { "No matches" }
-                        p { class: "muted", "Nothing matches this search. Try fewer tags." }
-                        Link { class: "btn text", to: Route::Help {}, "Search syntax" }
+                        h2 { {t!("no-matches")} }
+                        p { class: "muted", {t!("gallery-try-fewer")} }
+                        Link { class: "btn text", to: Route::Help {}, {t!("gallery-syntax")} }
                     }
                 }
             }
@@ -237,7 +244,7 @@ pub fn Gallery(q: String) -> Element {
                     if loading() {
                         Spinner {}
                     } else {
-                        button { class: "btn tonal", onclick: move |_| load_more(), "Load more" }
+                        button { class: "btn tonal", onclick: move |_| load_more(), {t!("load-more")} }
                     }
                 }
             }
@@ -283,18 +290,25 @@ fn BulkBar(
             busy.set(false);
             match result {
                 Ok(done) => {
-                    let verb = if deleting { "Moved" } else { "Updated" };
-                    let mut message = format!("{verb} {}", posts_count(done.updated));
-                    if deleting {
-                        message.push_str(" to the recycle bin");
-                    }
-                    if done.skipped > 0 {
-                        message.push_str(&format!("; skipped {}", posts_count(done.skipped)));
-                        if deleting {
-                            message.push_str(" you can't delete");
-                        }
-                    }
-                    message.push('.');
+                    let count = done.updated;
+                    let main = if deleting {
+                        t!("bulk-moved", count = count)
+                    } else {
+                        t!("bulk-updated", count = count)
+                    };
+                    let message = match (done.skipped, deleting) {
+                        (0, _) => t!("bulk-done", done = main),
+                        (n, true) => t!(
+                            "bulk-done-skipped",
+                            done = main,
+                            skipped = t!("bulk-skipped-undeletable", count = n)
+                        ),
+                        (n, false) => t!(
+                            "bulk-done-skipped",
+                            done = main,
+                            skipped = t!("bulk-skipped", count = n)
+                        ),
+                    };
                     ondone.call(message);
                 }
                 Err(e) => error.set(Some(e.to_string())),
@@ -326,9 +340,9 @@ fn BulkBar(
     };
 
     rsx! {
-        form { class: "bulk-bar glass", aria_label: "Edit selected posts", onsubmit: apply,
+        form { class: "bulk-bar glass", aria_label: t!("bulk-label"), onsubmit: apply,
             div { class: "bulk-count",
-                strong { role: "status", if count == 0 { "Select posts" } else { "{count} selected" } }
+                strong { role: "status", if count == 0 { {t!("gallery-select")} } else { {t!("bulk-selected", count = count)} } }
                 button {
                     r#type: "button",
                     class: "btn text small",
@@ -343,15 +357,15 @@ fn BulkBar(
                             }
                         }
                     },
-                    if all_selected { "Select none" } else { "Select all" }
+                    if all_selected { {t!("bulk-select-none")} } else { {t!("bulk-select-all")} }
                 }
             }
             input {
                 class: "bulk-tags",
                 r#type: "text",
-                placeholder: "Tags: cat -dog",
-                title: "Tags to add; put - before a tag to remove it",
-                aria_label: "Tags to add, or to remove with a leading minus",
+                placeholder: t!("bulk-tags-placeholder"),
+                title: t!("bulk-tags-title"),
+                aria_label: t!("bulk-tags-label"),
                 autocapitalize: "none",
                 spellcheck: false,
                 value: "{tags}",
@@ -359,11 +373,11 @@ fn BulkBar(
             }
             select {
                 class: "bulk-rating",
-                aria_label: "Rating",
+                aria_label: t!("rating"),
                 onchange: move |e| rating.set(Rating::parse(&e.value())),
-                option { value: "", selected: rating().is_none(), "Keep rating" }
+                option { value: "", selected: rating().is_none(), {t!("bulk-keep-rating")} }
                 for r in Rating::ALL {
-                    option { key: "{r.as_str()}", value: r.as_str(), selected: rating() == Some(r), "{r.as_str()}" }
+                    option { key: "{r.as_str()}", value: r.as_str(), selected: rating() == Some(r), {rating_label(r)} }
                 }
             }
             button {
@@ -371,7 +385,7 @@ fn BulkBar(
                 r#type: "submit",
                 disabled: busy() || count == 0 || !has_edit,
                 Ico { icon: Icon::Check }
-                "Apply"
+                {t!("bulk-apply")}
             }
             button {
                 r#type: "button",
@@ -379,12 +393,12 @@ fn BulkBar(
                 disabled: busy() || count == 0,
                 onclick: delete,
                 onblur: move |_| confirm_delete.set(false),
-                aria_label: if confirm_delete() { "Delete {count} posts?" } else { "Delete" },
+                aria_label: if confirm_delete() { t!("bulk-delete-confirm-label", count = count) } else { t!("post-delete") },
                 Ico { icon: Icon::Delete }
                 if confirm_delete() {
-                    "Delete {count}?"
+                    {t!("bulk-delete-confirm", count = count)}
                 } else {
-                    span { class: "bulk-label", "Delete" }
+                    span { class: "bulk-label", {t!("post-delete")} }
                 }
             }
             if let Some(message) = error() {
@@ -405,9 +419,9 @@ fn SaveToggle(q: String, saved: Signal<Option<Vec<SavedSearch>>>) -> Element {
         .as_ref()
         .and_then(|list| list.iter().find(|s| s.query == query).map(|s| s.id));
     let label = if existing.is_some() {
-        "Forget this search"
+        t!("search-forget")
     } else {
-        "Save this search"
+        t!("search-save")
     };
     let toggle = move |_| {
         let Some(client) = store::client() else {
@@ -438,7 +452,7 @@ fn SaveToggle(q: String, saved: Signal<Option<Vec<SavedSearch>>>) -> Element {
     rsx! {
         button {
             class: if existing.is_some() { "icon-btn save-search on" } else { "icon-btn save-search" },
-            title: label,
+            title: label.clone(),
             aria_label: label,
             aria_pressed: existing.is_some(),
             disabled: busy() || saved.read().is_none(),
@@ -456,7 +470,7 @@ fn SavedList(saved: Signal<Option<Vec<SavedSearch>>>) -> Element {
         return rsx! {};
     };
     rsx! {
-        nav { class: "saved-searches", aria_label: "Saved searches",
+        nav { class: "saved-searches", aria_label: t!("saved-searches"),
             for s in list.iter() {
                 Link { key: "{s.id}", class: "chip", title: "{s.query}", to: Route::Gallery { q: s.query.clone() },
                     Ico { icon: Icon::Star, size: 16 }
@@ -473,19 +487,19 @@ fn SortMenu(q: String) -> Element {
     let current = parse_query(&q).map(|p| p.order).unwrap_or_default();
     rsx! {
         label { class: "sort",
-            span { class: "muted", "Sort" }
+            span { class: "muted", {t!("sort")} }
             select {
-                aria_label: "Sort by",
+                aria_label: t!("sort-by"),
                 onchange: move |e| {
                     let order = Order::parse(&e.value());
                     navigator().push(Route::Gallery { q: with_order(&q, order) });
                 },
-                for (label, value) in SORTS {
+                for value in SORTS {
                     option {
                         key: "{value}",
                         value,
                         selected: Order::parse(value) == Some(current),
-                        "{label}"
+                        {sort_label(value)}
                     }
                 }
             }
@@ -561,7 +575,7 @@ pub(super) fn Thumb(
                 style: "--delay: {delay}ms",
                 r#type: "button",
                 aria_pressed: on,
-                aria_label: if alt.is_empty() { format!("Post {}", post.id) } else { alt.clone() },
+                aria_label: if alt.is_empty() { t!("post-alt", id = post.id) } else { alt.clone() },
                 onclick: move |e: MouseEvent| ontoggle.call((index, e.modifiers().shift())),
                 {media}
                 span { class: "check-mark", aria_hidden: "true", Ico { icon: Icon::Check, size: 20 } }

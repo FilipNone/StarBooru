@@ -11,19 +11,22 @@ use crate::store::{self, SESSION};
 
 const PAGE_SIZE: u32 = 60;
 
-const CATEGORIES: [(TagCategory, &str); 5] = [
-    (TagCategory::General, "General"),
-    (TagCategory::Artist, "Artist"),
-    (TagCategory::Character, "Character"),
-    (TagCategory::Copyright, "Copyright"),
-    (TagCategory::Meta, "Meta"),
+const CATEGORIES: [TagCategory; 5] = [
+    TagCategory::General,
+    TagCategory::Artist,
+    TagCategory::Character,
+    TagCategory::Copyright,
+    TagCategory::Meta,
 ];
 
-fn category_label(category: TagCategory) -> &'static str {
-    CATEGORIES
-        .iter()
-        .find(|(c, _)| *c == category)
-        .map_or("General", |(_, label)| label)
+fn category_label(category: TagCategory) -> String {
+    match category {
+        TagCategory::General => t!("category-general"),
+        TagCategory::Artist => t!("category-artist"),
+        TagCategory::Character => t!("category-character"),
+        TagCategory::Copyright => t!("category-copyright"),
+        TagCategory::Meta => t!("category-meta"),
+    }
 }
 
 fn is_admin() -> bool {
@@ -101,9 +104,9 @@ pub fn Tags() -> Element {
     rsx! {
         div { class: "page",
             div { class: "page-head",
-                h1 { class: "page-title", "Tags" }
-                div { class: "segmented", role: "radiogroup", aria_label: "Sort tags",
-                    for (value, label) in [(TagOrder::Count, "Most used"), (TagOrder::Name, "A–Z")] {
+                h1 { class: "page-title", {t!("nav-tags")} }
+                div { class: "segmented", role: "radiogroup", aria_label: t!("tags-sort"),
+                    for (value, label) in [(TagOrder::Count, t!("tags-most-used")), (TagOrder::Name, t!("tags-a-z"))] {
                         button {
                             key: "{label}",
                             role: "radio",
@@ -121,10 +124,10 @@ pub fn Tags() -> Element {
                 }
             }
             label { class: "field tag-filter",
-                span { class: "visually-hidden", "Filter tags" }
+                span { class: "visually-hidden", {t!("tags-filter-label")} }
                 input {
                     r#type: "search",
-                    placeholder: "Filter by name or alias",
+                    placeholder: t!("tags-filter-placeholder"),
                     autocomplete: "off",
                     spellcheck: "false",
                     value: "{filter}",
@@ -141,9 +144,9 @@ pub fn Tags() -> Element {
                 div { class: "card empty",
                     Ico { icon: Icon::Label, size: 48 }
                     h2 {
-                        if filter().trim().is_empty() { "No tags yet" } else { "No tags match" }
+                        if filter().trim().is_empty() { {t!("tags-none-yet")} } else { {t!("tags-none-match")} }
                     }
-                    p { "Tags appear here once posts use them." }
+                    p { {t!("tags-appear")} }
                 }
             }
             if !tags.read().is_empty() {
@@ -172,7 +175,7 @@ pub fn Tags() -> Element {
                     if loading() {
                         Spinner {}
                     } else {
-                        button { class: "btn tonal", onclick: move |_| load_more(), "Load more" }
+                        button { class: "btn tonal", onclick: move |_| load_more(), {t!("load-more")} }
                     }
                 }
             }
@@ -283,8 +286,8 @@ pub fn TagPage(name: String) -> Element {
                 } else if missing() {
                     div { class: "card empty",
                         Ico { icon: Icon::Label, size: 48 }
-                        h2 { "No tag called “{name}”" }
-                        Link { class: "btn tonal", to: Route::Tags {}, "All tags" }
+                        h2 { {t!("tags-missing", name = name.clone())} }
+                        Link { class: "btn tonal", to: Route::Tags {}, {t!("tags-all")} }
                     }
                 } else {
                     div { class: "sentinel", Spinner {} }
@@ -293,10 +296,7 @@ pub fn TagPage(name: String) -> Element {
         };
     };
     let tag = d.tag.clone();
-    let posts_label = match tag.post_count {
-        1 => "Browse 1 post".to_owned(),
-        n => format!("Browse {n} posts"),
-    };
+    let posts_label = t!("tags-browse", count = tag.post_count);
 
     rsx! {
         div { class: "page tag-page",
@@ -309,7 +309,7 @@ pub fn TagPage(name: String) -> Element {
             }
             if tag.name != name.trim().to_lowercase() {
                 div { class: "banner info", role: "status",
-                    "“{name}” is an alias of this tag."
+                    {t!("tags-is-alias", name = name.clone())}
                 }
             }
             if let Some(message) = error() {
@@ -317,9 +317,9 @@ pub fn TagPage(name: String) -> Element {
             }
             div { class: "tag-cards",
                 section { class: "card",
-                    h2 { class: "card-title", "Category" }
-                    div { class: "chips", role: "radiogroup", aria_label: "Category",
-                        for (category, label) in CATEGORIES {
+                    h2 { class: "card-title", {t!("tags-category")} }
+                    div { class: "chips", role: "radiogroup", aria_label: t!("tags-category"),
+                        for (category, label) in CATEGORIES.map(|c| (c, category_label(c))) {
                             button {
                                 key: "{label}",
                                 role: "radio",
@@ -333,10 +333,9 @@ pub fn TagPage(name: String) -> Element {
                     }
                 }
                 RelationCard {
-                    title: "Aliases",
-                    hint: "Other names for this tag. Tagging or searching with an alias uses this tag. \
-                           Adding an alias that is already a tag merges it into this one.",
-                    empty: "No aliases.",
+                    title: t!("tags-aliases"),
+                    hint: t!("tags-aliases-hint"),
+                    empty: t!("tags-aliases-none"),
                     names: d.aliases.clone(),
                     linked: false,
                     relation: Relation::Alias,
@@ -346,9 +345,9 @@ pub fn TagPage(name: String) -> Element {
                     onremove: remove,
                 }
                 RelationCard {
-                    title: "Implies",
-                    hint: "Posts with this tag get these tags too, including posts tagged earlier.",
-                    empty: "Implies no other tags.",
+                    title: t!("tags-implies"),
+                    hint: t!("tags-implies-hint"),
+                    empty: t!("tags-implies-none"),
                     names: d.implies.iter().map(|t| t.name.clone()).collect::<Vec<_>>(),
                     linked: true,
                     relation: Relation::Implies,
@@ -358,10 +357,10 @@ pub fn TagPage(name: String) -> Element {
                     onremove: remove,
                 }
                 section { class: "card",
-                    h2 { class: "card-title", "Implied by" }
-                    p { class: "muted hint", "Tags that add this one." }
+                    h2 { class: "card-title", {t!("tags-implied-by")} }
+                    p { class: "muted hint", {t!("tags-implied-by-hint")} }
                     if d.implied_by.is_empty() {
-                        p { class: "muted", "No tag implies this one." }
+                        p { class: "muted", {t!("tags-implied-by-none")} }
                     } else {
                         div { class: "chips",
                             for t in d.implied_by.iter() {
@@ -377,9 +376,9 @@ pub fn TagPage(name: String) -> Element {
 
 #[component]
 fn RelationCard(
-    title: &'static str,
-    hint: &'static str,
-    empty: &'static str,
+    title: String,
+    hint: String,
+    empty: String,
     names: Vec<String>,
     linked: bool,
     relation: Relation,
@@ -390,8 +389,8 @@ fn RelationCard(
 ) -> Element {
     let mut text = use_signal(String::new);
     let label = match relation {
-        Relation::Alias => "New alias",
-        Relation::Implies => "Implied tag",
+        Relation::Alias => t!("tags-new-alias"),
+        Relation::Implies => t!("tags-implied-tag"),
     };
     rsx! {
         section { class: "card",
@@ -412,8 +411,8 @@ fn RelationCard(
                                 button {
                                     class: "chip-x",
                                     disabled: busy,
-                                    title: "Remove",
-                                    aria_label: "Remove {n}",
+                                    title: t!("tags-remove"),
+                                    aria_label: t!("tags-remove-named", name = n.clone()),
                                     onclick: {
                                         let n = n.clone();
                                         move |_| onremove.call((relation, n.clone()))
@@ -446,11 +445,11 @@ fn RelationCard(
                     }
                     button { class: "btn tonal small", r#type: "submit", disabled: busy || text().trim().is_empty(),
                         Ico { icon: Icon::Add }
-                        "Add"
+                        {t!("add")}
                     }
                 }
             } else {
-                p { class: "muted fine", "Only admins can change this." }
+                p { class: "muted fine", {t!("tags-admins-only")} }
             }
         }
     }

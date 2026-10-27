@@ -2,6 +2,8 @@
 //!
 //! `dx serve --web | --desktop | --android` (see docs/development.md).
 
+#[macro_use]
+mod i18n;
 mod icons;
 mod pages;
 mod store;
@@ -78,7 +80,15 @@ fn App() -> Element {
         let _prefs = PREFS.read();
         store::persist();
     });
+    // Follow a language change from Settings.
+    use_effect(|| {
+        let lang = i18n::resolve(PREFS.read().language);
+        if *i18n::LANG.peek() != lang {
+            *i18n::LANG.write() = lang;
+        }
+    });
     let prefs = PREFS.read();
+    let lang = i18n::LANG.read().code();
     rsx! {
         document::Title { "StarBooru" }
         document::Meta {
@@ -88,6 +98,7 @@ fn App() -> Element {
         document::Stylesheet { href: MAIN_CSS }
         div {
             class: "app",
+            lang,
             "data-theme": prefs.theme.as_str(),
             style: "--seed-hue: {prefs.accent_hue}",
             Router::<Route> {}

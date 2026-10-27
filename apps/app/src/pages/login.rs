@@ -41,7 +41,7 @@ pub fn Login() -> Element {
                 }
                 Err(e) => {
                     info.set(None);
-                    error.set(Some(format!("Cannot reach the server: {e}")));
+                    error.set(Some(t!("login-unreachable", error = e.to_string())));
                 }
             }
         });
@@ -71,7 +71,7 @@ pub fn Login() -> Element {
             match result {
                 Ok(auth) => store::sign_in(url, auth),
                 Err(e) if e.is_unauthorized() => {
-                    error.set(Some("Wrong username or password.".into()));
+                    error.set(Some(t!("login-wrong")));
                 }
                 Err(e) => error.set(Some(e.to_string())),
             }
@@ -88,16 +88,16 @@ pub fn Login() -> Element {
                     span { class: "logo", Ico { icon: Icon::Star, size: 32 } }
                     h1 { "StarBooru" }
                     p { class: "muted",
-                        if let Some(i) = info() { "{i.name} · v{i.version}" } else { "Your private image library" }
+                        if let Some(i) = info() { "{i.name} · v{i.version}" } else { {t!("login-tagline")} }
                     }
                 }
                 if first_user {
                     div { class: "banner info",
-                        "This server has no accounts yet. The account you create now becomes the administrator."
+                        {t!("login-first-user")}
                     }
                 }
                 label { class: "field",
-                    span { "Server" }
+                    span { {t!("login-server")} }
                     input {
                         r#type: "url",
                         inputmode: "url",
@@ -109,7 +109,7 @@ pub fn Login() -> Element {
                     }
                 }
                 label { class: "field",
-                    span { "Username" }
+                    span { {t!("login-username")} }
                     input {
                         autocomplete: "username",
                         required: true,
@@ -118,7 +118,7 @@ pub fn Login() -> Element {
                     }
                 }
                 label { class: "field",
-                    span { "Password" }
+                    span { {t!("login-password")} }
                     input {
                         r#type: "password",
                         autocomplete: if creating() { "new-password" } else { "current-password" },
@@ -133,13 +133,13 @@ pub fn Login() -> Element {
                 }
                 button { class: "btn wide", r#type: "submit", disabled: busy(),
                     if busy() {
-                        "Please wait…"
+                        {t!("login-wait")}
                     } else if first_user {
-                        "Create administrator account"
+                        {t!("login-create-admin")}
                     } else if creating() {
-                        "Create account"
+                        {t!("login-create")}
                     } else {
-                        "Sign in"
+                        {t!("login-sign-in")}
                     }
                 }
                 if can_register {
@@ -147,7 +147,7 @@ pub fn Login() -> Element {
                         class: "btn text wide",
                         r#type: "button",
                         onclick: move |_| creating.toggle(),
-                        if creating() { "I already have an account" } else { "Create an account" }
+                        if creating() { {t!("login-have-account")} } else { {t!("login-want-account")} }
                     }
                 }
                 LegalLinks {}

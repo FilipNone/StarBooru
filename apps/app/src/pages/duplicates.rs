@@ -11,12 +11,18 @@ use crate::icons::{Ico, Icon};
 use crate::store;
 use crate::util::{human_size, posts_count};
 
-/// Matching levels: label and the largest distance in bits.
-const LEVELS: [(&str, u32); 3] = [
-    ("Strict", 2),
-    ("Normal", DEFAULT_DUPLICATE_DISTANCE),
-    ("Loose", 10),
-];
+/// Matching levels: the largest distance in bits.
+const LEVELS: [u32; 3] = [2, DEFAULT_DUPLICATE_DISTANCE, 10];
+
+fn level_label(distance: u32) -> String {
+    if distance <= 2 {
+        t!("dup-strict")
+    } else if distance <= DEFAULT_DUPLICATE_DISTANCE {
+        t!("dup-normal")
+    } else {
+        t!("dup-loose")
+    }
+}
 const PAGE: u32 = 30;
 const MAX_LIMIT: u32 = 100;
 
@@ -63,11 +69,11 @@ pub fn Duplicates() -> Element {
     rsx! {
         div { class: "page",
             div { class: "page-head",
-                h1 { class: "page-title", "Duplicate finder" }
-                div { class: "segmented", role: "radiogroup", aria_label: "Matching",
-                    for (label, d) in LEVELS {
+                h1 { class: "page-title", {t!("dup-title")} }
+                div { class: "segmented", role: "radiogroup", aria_label: t!("dup-matching"),
+                    for d in LEVELS {
                         button {
-                            key: "{label}",
+                            key: "{d}",
                             role: "radio",
                             aria_checked: if distance() == d { "true" } else { "false" },
                             class: if distance() == d { "seg on" } else { "seg" },
@@ -75,17 +81,17 @@ pub fn Duplicates() -> Element {
                                 limit.set(PAGE);
                                 distance.set(d);
                             },
-                            "{label}"
+                            {level_label(d)}
                         }
                     }
                 }
             }
             p { class: "muted lead",
-                "Posts that look alike, closest matches first. Keep the best copy and the others go to the recycle bin."
+                {t!("dup-lead")}
             }
             if unhashed() > 0 {
                 div { class: "banner info",
-                    "{posts_count(u64::try_from(unhashed()).unwrap_or(0))} can't be compared yet: they have no thumbnail, or are still being fingerprinted."
+                    {t!("dup-unhashed", count = unhashed())}
                 }
             }
             if let Some(message) = error() {
@@ -96,13 +102,13 @@ pub fn Duplicates() -> Element {
             } else if shown == 0 && error().is_none() {
                 div { class: "card empty",
                     Ico { icon: Icon::Copy, size: 48 }
-                    h2 { "No duplicates found" }
+                    h2 { {t!("dup-none")} }
                     p { class: "muted",
-                        if distance() < 10 { "Try Loose matching to catch edited copies." } else { "Nothing here looks alike." }
+                        if distance() < 10 { {t!("dup-none-try-loose")} } else { {t!("dup-none-loose")} }
                     }
                 }
             } else {
-                p { class: "dup-count muted", "{groups_phrase(total())}" }
+                p { class: "dup-count muted", {groups_phrase(total())} }
                 div { class: "dup-groups",
                     for group in groups.read().iter().cloned() {
                         if let Some(key) = first_id(&group) {
@@ -115,7 +121,7 @@ pub fn Duplicates() -> Element {
                         if loading() {
                             Spinner {}
                         } else {
-                            button { class: "btn tonal", onclick: move |_| limit.set((limit() + PAGE).min(MAX_LIMIT)), "Show more" }
+                            button { class: "btn tonal", onclick: move |_| limit.set((limit() + PAGE).min(MAX_LIMIT)), {t!("show-more")} }
                         }
                     }
                 }
@@ -185,16 +191,16 @@ fn DupGroup(group: DuplicateGroup, ondone: EventHandler<i64>) -> Element {
     rsx! {
         section { class: "card dup-group",
             div { class: "dup-head",
-                h2 { class: "card-title", "{likeness(group.distance)}" }
+                h2 { class: "card-title", {likeness(group.distance)} }
                 span { class: "muted",
                     if group.size as usize > group.posts.len() {
-                        "{group.posts.len()} of {group.size} posts"
+                        {t!("dup-some-of", shown = group.posts.len(), count = group.size)}
                     } else {
-                        "{group.size} posts"
+                        {posts_count(u64::from(group.size))}
                     }
                 }
             }
-            div { class: "dup-items", role: "radiogroup", aria_label: "Post to keep",
+            div { class: "dup-items", role: "radiogroup", aria_label: t!("dup-keep-which"),
                 for post in group.posts.iter().cloned() {
                     DupItem {
                         key: "{post.id}",
@@ -215,13 +221,13 @@ fn DupGroup(group: DuplicateGroup, ondone: EventHandler<i64>) -> Element {
                         checked: merge(),
                         onchange: move |e| merge.set(e.checked()),
                     }
-                    "Copy their tags to the kept post"
+                    {t!("dup-merge")}
                 }
                 div { class: "dup-buttons",
-                    button { class: "btn text", disabled: busy(), onclick: dismiss, "Not duplicates" }
+                    button { class: "btn text", disabled: busy(), onclick: dismiss, {t!("dup-dismiss")} }
                     button { class: "btn", disabled: busy(), onclick: resolve,
                         Ico { icon: Icon::Delete }
-                        if others == 1 { "Keep one, bin the other" } else { "Keep one, bin {others} others" }
+                        {t!("dup-resolve", count = others)}
                     }
                 }
             }
@@ -239,12 +245,9 @@ fn DupItem(post: Post, group: i64, keep: i64, onpick: EventHandler<i64>) -> Elem
         .and_then(|u| store::client().map(|c| c.absolute(u)));
     let size = match (post.width, post.height) {
         (Some(w), Some(h)) => format!("{w}×{h}"),
-        _ => "Unknown size".to_owned(),
+        _ => t!("dup-unknown-size"),
     };
-    let tags = match post.tags.len() {
-        1 => "1 tag".to_owned(),
-        n => format!("{n} tags"),
-    };
+    let tags = t!("tags-count", count = post.tags.len());
     rsx! {
         div { class: if chosen { "dup-item on" } else { "dup-item" },
             label { class: "dup-pick",
@@ -257,12 +260,12 @@ fn DupItem(post: Post, group: i64, keep: i64, onpick: EventHandler<i64>) -> Elem
                 }
                 span { class: "thumb",
                     if let Some(src) = src {
-                        img { src, alt: "Post {id}", loading: "lazy", decoding: "async" }
+                        img { src, alt: t!("post-alt", id = id), loading: "lazy", decoding: "async" }
                     } else {
                         span { class: "thumb-placeholder", Ico { icon: Icon::Play, size: 40 } }
                     }
                     if chosen {
-                        span { class: "keep-badge", Ico { icon: Icon::Check, size: 16 } "Keep" }
+                        span { class: "keep-badge", Ico { icon: Icon::Check, size: 16 } {t!("dup-keep")} }
                     }
                 }
             }
@@ -276,20 +279,17 @@ fn DupItem(post: Post, group: i64, keep: i64, onpick: EventHandler<i64>) -> Elem
 }
 
 /// How alike a group looks, from its largest distance in bits.
-fn likeness(distance: u32) -> &'static str {
+fn likeness(distance: u32) -> String {
     match distance {
-        0 => "Look identical",
-        1..=2 => "Nearly identical",
-        3..=6 => "Very similar",
-        _ => "Similar",
+        0 => t!("dup-identical"),
+        1..=2 => t!("dup-nearly-identical"),
+        3..=6 => t!("dup-very-similar"),
+        _ => t!("dup-similar"),
     }
 }
 
 fn groups_phrase(total: u64) -> String {
-    match total {
-        1 => "1 group".to_owned(),
-        n => format!("{n} groups"),
-    }
+    t!("dup-groups", count = total)
 }
 
 #[cfg(test)]
@@ -304,7 +304,10 @@ mod tests {
         assert_eq!(likeness(10), "Similar");
         assert_eq!(groups_phrase(1), "1 group");
         assert_eq!(groups_phrase(12), "12 groups");
-        assert!(LEVELS.windows(2).all(|w| w[0].1 < w[1].1));
-        assert_eq!(LEVELS[2].1, starbooru_core::MAX_DUPLICATE_DISTANCE);
+        assert!(LEVELS.windows(2).all(|w| w[0] < w[1]));
+        assert_eq!(LEVELS[2], starbooru_core::MAX_DUPLICATE_DISTANCE);
+        assert_eq!(level_label(LEVELS[0]), "Strict");
+        assert_eq!(level_label(LEVELS[1]), "Normal");
+        assert_eq!(level_label(LEVELS[2]), "Loose");
     }
 }

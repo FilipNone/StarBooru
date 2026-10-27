@@ -90,18 +90,12 @@ pub fn Upload() -> Element {
             };
             push(Source::File(file), tags);
         }
-        notice.set(match skipped {
-            0 => None,
-            1 => Some("Skipped 1 file that is not an image or video.".to_owned()),
-            n => Some(format!("Skipped {n} files that are not images or videos.")),
-        });
+        notice.set((skipped > 0).then(|| t!("upload-skipped", count = skipped)));
     };
     let mut add_urls = move || {
         let found = parse_urls(&url_text());
         if found.is_empty() {
-            notice.set(Some(
-                "Enter addresses that start with http:// or https://.".into(),
-            ));
+            notice.set(Some(t!("upload-urls-only")));
             return;
         }
         notice.set(None);
@@ -147,7 +141,7 @@ pub fn Upload() -> Element {
     let show_url = url_import.read().unwrap_or(true);
     rsx! {
         div { class: "page narrow",
-            h1 { class: "page-title", "Upload" }
+            h1 { class: "page-title", {t!("nav-upload")} }
             label {
                 class: if dragging() { "dropzone over" } else { "dropzone" },
                 ondragover: move |e| {
@@ -161,8 +155,8 @@ pub fn Upload() -> Element {
                     add(e.data_transfer().files());
                 },
                 Ico { icon: Icon::Upload, size: 40 }
-                strong { "Drop images or videos here" }
-                span { class: "muted", "or click to choose files" }
+                strong { {t!("upload-drop")} }
+                span { class: "muted", {t!("upload-or-choose")} }
                 input {
                     r#type: "file",
                     multiple: true,
@@ -174,7 +168,7 @@ pub fn Upload() -> Element {
             div { class: "import-row",
                 label { class: "btn tonal",
                     Ico { icon: Icon::Folder }
-                    "Choose a folder"
+                    {t!("upload-folder")}
                     input {
                         r#type: "file",
                         directory: true,
@@ -192,7 +186,7 @@ pub fn Upload() -> Element {
                             folder_tags.set(e.checked());
                         },
                     }
-                    span { "Tag files with their folder name" }
+                    span { {t!("upload-folder-tags")} }
                 }
             }
             if show_url {
@@ -204,15 +198,15 @@ pub fn Upload() -> Element {
                     },
                     input {
                         r#type: "url",
-                        placeholder: "Paste image or video addresses",
-                        aria_label: "Image or video addresses",
+                        placeholder: t!("upload-urls-placeholder"),
+                        aria_label: t!("upload-urls-label"),
                         spellcheck: "false",
                         value: "{url_text}",
                         oninput: move |e| url_text.set(e.value()),
                     }
                     button { class: "btn tonal", r#type: "submit", disabled: url_text().trim().is_empty(),
                         Ico { icon: Icon::Link }
-                        "Add"
+                        {t!("add")}
                     }
                 }
             }
@@ -221,7 +215,7 @@ pub fn Upload() -> Element {
             }
             div { class: "card",
                 label { class: "field",
-                    span { "Tags for all files" }
+                    span { {t!("upload-shared-tags")} }
                     input {
                         placeholder: "artist_name landscape blue_sky",
                         spellcheck: "false",
@@ -230,7 +224,7 @@ pub fn Upload() -> Element {
                     }
                 }
                 div { class: "field",
-                    span { "Rating" }
+                    span { {t!("rating")} }
                     RatingPicker { value: rating(), onchange: move |r| rating.set(r) }
                 }
                 div { class: "row-end",
@@ -238,18 +232,17 @@ pub fn Upload() -> Element {
                         class: "btn text",
                         disabled: running() || items.read().is_empty(),
                         onclick: move |_| items.write().retain(|i| matches!(i.status, Status::Uploading)),
-                        "Clear list"
+                        {t!("upload-clear")}
                     }
                     button {
                         class: "btn",
                         disabled: running() || queued == 0,
                         onclick: start,
                         Ico { icon: Icon::Upload }
-                        match (running(), queued) {
-                            (true, _) => "Uploading…".to_owned(),
-                            (false, 0) => "Upload".to_owned(),
-                            (false, 1) => "Upload 1 file".to_owned(),
-                            (false, n) => format!("Upload {n} files"),
+                        if running() {
+                            {t!("upload-running")}
+                        } else {
+                            {t!("upload-start", count = queued)}
                         }
                     }
                 }
@@ -268,7 +261,7 @@ pub fn Upload() -> Element {
 fn QueueRow(items: Signal<Vec<Item>>, index: usize, item: Item) -> Element {
     let detail = match &item.source {
         Source::File(f) => human_size(f.size() as i64),
-        Source::Url(_) => "From the web".to_owned(),
+        Source::Url(_) => t!("upload-from-web"),
     };
     let queued = item.status == Status::Queued;
     rsx! {
@@ -279,12 +272,12 @@ fn QueueRow(items: Signal<Vec<Item>>, index: usize, item: Item) -> Element {
                     span { class: "muted", "{detail}" }
                 }
                 match &item.status {
-                    Status::Queued => rsx! { span { class: "pill", "Queued" } },
-                    Status::Uploading => rsx! { span { class: "pill busy", "Uploading" } },
+                    Status::Queued => rsx! { span { class: "pill", {t!("upload-queued")} } },
+                    Status::Uploading => rsx! { span { class: "pill busy", {t!("upload-uploading")} } },
                     Status::Done(id) => rsx! {
-                        Link { class: "pill ok", to: Route::PostView { id: *id, q: String::new() }, "Post #{id}" }
+                        Link { class: "pill ok", to: Route::PostView { id: *id, q: String::new() }, {t!("post-number", id = id.to_string())} }
                     },
-                    Status::Failed(_) => rsx! { span { class: "pill bad", "Failed" } },
+                    Status::Failed(_) => rsx! { span { class: "pill bad", {t!("upload-failed")} } },
                 }
             }
             if let Status::Failed(msg) = &item.status {
@@ -294,8 +287,8 @@ fn QueueRow(items: Signal<Vec<Item>>, index: usize, item: Item) -> Element {
                 label { class: "queue-tags",
                     Ico { icon: Icon::Label, size: 18 }
                     input {
-                        placeholder: "Tags for this file only",
-                        aria_label: "Tags for {item.name()}",
+                        placeholder: t!("upload-file-tags-placeholder"),
+                        aria_label: t!("upload-file-tags-label", name = item.name()),
                         spellcheck: "false",
                         value: "{item.tags}",
                         oninput: move |e| {
@@ -322,7 +315,7 @@ async fn send(
 ) -> Status {
     let result = match source {
         Source::File(file) => match file.read_bytes().await {
-            Err(e) => return Status::Failed(format!("cannot read file: {e}")),
+            Err(e) => return Status::Failed(t!("upload-unreadable", error = e.to_string())),
             Ok(bytes) => {
                 client
                     .upload(UploadRequest {

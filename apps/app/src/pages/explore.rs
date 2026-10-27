@@ -11,18 +11,27 @@ use crate::Route;
 use crate::icons::{Ico, Icon};
 use crate::store;
 
-/// Window choices: days and label.
-const WINDOWS: [(u32, &str); 4] = [(1, "Today"), (7, "Week"), (30, "Month"), (365, "Year")];
+/// Window choices in days.
+const WINDOWS: [u32; 4] = [1, 7, 30, 365];
+
+fn window_label(days: u32) -> String {
+    match days {
+        1 => t!("explore-today"),
+        7 => t!("explore-week"),
+        30 => t!("explore-month"),
+        _ => t!("explore-year"),
+    }
+}
 const RANDOM_COUNT: u32 = 12;
 
 /// "today", "this week", … for a window of `days`.
 fn window_phrase(days: u32) -> String {
     match days {
-        1 => "today".to_owned(),
-        7 => "this week".to_owned(),
-        30 => "this month".to_owned(),
-        365 => "this year".to_owned(),
-        n => format!("in the last {n} days"),
+        1 => t!("explore-phrase-today"),
+        7 => t!("explore-phrase-week"),
+        30 => t!("explore-phrase-month"),
+        365 => t!("explore-phrase-year"),
+        n => t!("explore-phrase-days", count = n),
     }
 }
 
@@ -37,7 +46,7 @@ pub fn Explore(q: String) -> Element {
     let data = use_resource(use_reactive!(|q| async move {
         let days = days();
         shuffled.set(None);
-        let client = store::client().ok_or_else(|| "Not signed in".to_owned())?;
+        let client = store::client().ok_or_else(|| t!("not-signed-in"))?;
         match client.explore(days, &q).await {
             Ok(found) => Ok(found),
             Err(e) if e.is_unauthorized() => {
@@ -76,17 +85,17 @@ pub fn Explore(q: String) -> Element {
             if random.is_empty() {
                 return rsx! {
                     div { class: "page explore",
-                        h1 { class: "page-title", "Explore" }
+                        h1 { class: "page-title", {t!("nav-explore")} }
                         div { class: "card empty",
                             Ico { icon: Icon::Explore, size: 48 }
                             if q.trim().is_empty() {
-                                h2 { "Nothing to explore yet" }
-                                p { class: "muted", "Upload images or videos, and the best of them show up here." }
-                                Link { class: "btn", to: Route::Upload {}, Ico { icon: Icon::Upload } "Upload" }
+                                h2 { {t!("explore-nothing")} }
+                                p { class: "muted", {t!("explore-nothing-body")} }
+                                Link { class: "btn", to: Route::Upload {}, Ico { icon: Icon::Upload } {t!("nav-upload")} }
                             } else {
-                                h2 { "No matches" }
-                                p { class: "muted", "Nothing matches “{q}”." }
-                                Link { class: "btn tonal", to: Route::Explore { q: String::new() }, "Explore everything" }
+                                h2 { {t!("no-matches")} }
+                                p { class: "muted", {t!("nothing-matches", query = q.clone())} }
+                                Link { class: "btn tonal", to: Route::Explore { q: String::new() }, {t!("explore-everything")} }
                             }
                         }
                     }
@@ -99,10 +108,10 @@ pub fn Explore(q: String) -> Element {
                 section { class: "explore-section", aria_labelledby: "trending",
                     div { class: "section-head",
                         Ico { icon: Icon::TrendingUp }
-                        h2 { id: "trending", "Trending" }
+                        h2 { id: "trending", {t!("explore-trending")} }
                     }
                     if trending.is_empty() {
-                        p { class: "muted", "No upvotes {phrase}. Vote on posts you like and they show up here." }
+                        p { class: "muted", {t!("explore-no-upvotes", when = phrase.clone())} }
                     } else {
                         div { class: "grid",
                             for (index, post) in trending.into_iter().enumerate() {
@@ -115,8 +124,8 @@ pub fn Explore(q: String) -> Element {
                     section { class: "explore-section", aria_labelledby: "popular-tags",
                         div { class: "section-head",
                             Ico { icon: Icon::Label }
-                            h2 { id: "popular-tags", "Popular tags" }
-                            span { class: "muted", "on posts added {phrase}" }
+                            h2 { id: "popular-tags", {t!("explore-popular-tags")} }
+                            span { class: "muted", {t!("explore-tags-note", when = phrase.clone())} }
                         }
                         div { class: "chips",
                             for trend in tags {
@@ -125,7 +134,7 @@ pub fn Explore(q: String) -> Element {
                                     class: "chip trend",
                                     to: Route::Gallery { q: format!("{} {}", q.trim(), trend.tag.name).trim().to_owned() },
                                     "{trend.tag.name}"
-                                    span { class: "trend-count", title: "Posts added {phrase}", "+{trend.recent}" }
+                                    span { class: "trend-count", title: t!("explore-added", when = phrase.clone()), "+{trend.recent}" }
                                 }
                             }
                         }
@@ -135,7 +144,7 @@ pub fn Explore(q: String) -> Element {
                     section { class: "explore-section", aria_labelledby: "on-this-day",
                         div { class: "section-head",
                             Ico { icon: Icon::History }
-                            h2 { id: "on-this-day", "On this day" }
+                            h2 { id: "on-this-day", {t!("explore-on-this-day")} }
                         }
                         div { class: "grid",
                             for (index, post) in on_this_day.into_iter().enumerate() {
@@ -150,12 +159,12 @@ pub fn Explore(q: String) -> Element {
                 section { class: "explore-section", aria_labelledby: "random-picks",
                     div { class: "section-head",
                         Ico { icon: Icon::Shuffle }
-                        h2 { id: "random-picks", "Random picks" }
+                        h2 { id: "random-picks", {t!("explore-random")} }
                         button {
                             class: "btn text small",
                             disabled: shuffling(),
                             onclick: shuffle,
-                            "Shuffle"
+                            {t!("explore-shuffle")}
                         }
                     }
                     div { class: "grid",
@@ -171,9 +180,9 @@ pub fn Explore(q: String) -> Element {
     rsx! {
         div { class: "page explore",
             div { class: "page-head",
-                h1 { class: "page-title", "Explore" }
-                div { class: "segmented", role: "radiogroup", aria_label: "Trending over",
-                    for (value, label) in WINDOWS {
+                h1 { class: "page-title", {t!("nav-explore")} }
+                div { class: "segmented", role: "radiogroup", aria_label: t!("explore-window"),
+                    for value in WINDOWS {
                         button {
                             key: "{value}",
                             r#type: "button",
@@ -181,7 +190,7 @@ pub fn Explore(q: String) -> Element {
                             aria_checked: if days() == value { "true" } else { "false" },
                             class: if days() == value { "seg on" } else { "seg" },
                             onclick: move |_| days.set(value),
-                            "{label}"
+                            {window_label(value)}
                         }
                     }
                 }
@@ -196,8 +205,8 @@ pub fn Explore(q: String) -> Element {
                     Ico { icon: Icon::Search, size: 20 }
                     input {
                         r#type: "search",
-                        placeholder: "Narrow down, e.g. -rating:e",
-                        aria_label: "Narrow down with a search",
+                        placeholder: t!("explore-filter-placeholder"),
+                        aria_label: t!("explore-filter-label"),
                         autocapitalize: "none",
                         spellcheck: false,
                         value: "{filter}",

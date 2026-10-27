@@ -88,10 +88,7 @@ pub fn Trash() -> Element {
                 Ok(done) => {
                     posts.write().clear();
                     has_more.set(false);
-                    notice.set(Some(match done.purged {
-                        1 => "Deleted 1 post for good.".to_owned(),
-                        n => format!("Deleted {n} posts for good."),
-                    }));
+                    notice.set(Some(t!("trash-purged", count = done.purged)));
                 }
                 Err(e) => error.set(Some(e.to_string())),
             }
@@ -108,7 +105,7 @@ pub fn Trash() -> Element {
     rsx! {
         div { class: "page",
             div { class: "page-head",
-                h1 { class: "page-title", "Recycle bin" }
+                h1 { class: "page-title", {t!("trash-title")} }
                 if is_admin && !posts.read().is_empty() {
                     button {
                         class: if confirm_empty() { "btn danger" } else { "btn tonal" },
@@ -116,13 +113,12 @@ pub fn Trash() -> Element {
                         onclick: empty_all,
                         onblur: move |_| confirm_empty.set(false),
                         Ico { icon: Icon::DeleteForever }
-                        if confirm_empty() { "Delete everything for good?" } else { "Empty recycle bin" }
+                        if confirm_empty() { {t!("trash-empty-confirm")} } else { {t!("trash-empty")} }
                     }
                 }
             }
             p { class: "muted lead",
-                "Deleted posts wait here until you restore them or delete them for good. "
-                "Deleting for good also removes the file from the server."
+                {t!("trash-lead")}
             }
             if let Some(message) = error() {
                 ErrorBanner { message }
@@ -133,8 +129,8 @@ pub fn Trash() -> Element {
             if is_empty {
                 div { class: "card empty",
                     Ico { icon: Icon::Delete, size: 48 }
-                    h2 { "The recycle bin is empty" }
-                    Link { class: "btn tonal", to: Route::Gallery { q: String::new() }, "Back to the gallery" }
+                    h2 { {t!("trash-none")} }
+                    Link { class: "btn tonal", to: Route::Gallery { q: String::new() }, {t!("notfound-back")} }
                 }
             }
             div { class: "trash-grid",
@@ -158,7 +154,7 @@ pub fn Trash() -> Element {
                     if loading() {
                         Spinner {}
                     } else {
-                        button { class: "btn tonal", onclick: move |_| load_more(), "Load more" }
+                        button { class: "btn tonal", onclick: move |_| load_more(), {t!("load-more")} }
                     }
                 }
             }
@@ -184,14 +180,14 @@ fn TrashItem(post: Post, onrestore: EventHandler<i64>, onpurge: EventHandler<i64
                 }
             }
             div { class: "trash-actions",
-                button { class: "icon-btn", title: "Restore", aria_label: "Restore post {id}",
+                button { class: "icon-btn", title: t!("trash-restore"), aria_label: t!("trash-restore-post", id = id),
                     onclick: move |_| onrestore.call(id),
                     Ico { icon: Icon::Restore }
                 }
                 button {
                     class: if confirm() { "btn danger small" } else { "icon-btn danger" },
-                    title: "Delete for good",
-                    aria_label: "Delete post {id} for good",
+                    title: t!("trash-purge"),
+                    aria_label: t!("trash-purge-post", id = id),
                     onblur: move |_| confirm.set(false),
                     onclick: move |_| {
                         if confirm() {
@@ -201,7 +197,7 @@ fn TrashItem(post: Post, onrestore: EventHandler<i64>, onpurge: EventHandler<i64
                         }
                     },
                     Ico { icon: Icon::DeleteForever }
-                    if confirm() { "Sure?" }
+                    if confirm() { {t!("sure")} }
                 }
             }
         }

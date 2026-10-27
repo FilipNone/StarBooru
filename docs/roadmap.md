@@ -38,7 +38,7 @@ _Status as of 2026-10-27. Scope comes from `docs/checklist.md`._
 | automatic tagging, AI features, OCR | ⬜ | M5 |
 | explore tab with trending | ✅ | An Explore tab: trending posts (net upvotes in the last day, week, month or year), popular tags on recent posts, *On this day* from earlier years, and shuffleable random picks. A search narrows it all. |
 | login system | 🟡 | Accounts, Argon2id, revocable tokens, first user becomes admin. Failed sign-ins are limited per account and address (429 with `Retry-After`). OAuth: M3. |
-| profile settings | ✅ | Theme and accent; password change (signs out other devices); a list of signed-in devices with last activity, sign-out per device and *Sign out everywhere else*. |
+| profile settings | ✅ | Theme, accent and language; password change (signs out other devices); a list of signed-in devices with last activity, sign-out per device and *Sign out everywhere else*. |
 | usage stats / usage limits | ⬜ | M3 |
 | automatic smart image compression | ⬜ | Originals are kept byte-exact by design. Compressed variants could be added. |
 | video reproduction offload to client | ✅ | Files are streamed with Range support. There is no server transcoding. |
@@ -51,7 +51,7 @@ _Status as of 2026-10-27. Scope comes from `docs/checklist.md`._
 | duplicate remover | ✅ | Exact duplicates are refused at upload (SHA-256). Settings › Duplicate finder groups near-duplicates (difference hash plus average colour, Strict/Normal/Loose), keeps the best copy with optional tag merge and bins the rest, or marks a group as not duplicates. |
 | api key | ⬜ | M3 (tokens exist; long-lived named keys don't) |
 | sweet animations | 🟡 | Spring transitions, staggered grid, reduced-motion aware |
-| language translation future proof | ⬜ | Strings are inline. Extract them in M2. |
+| language translation future proof | ✅ | Every UI string is in a Fluent catalogue (`apps/app/locales/*.ftl`), with English and Italian. Settings › Language picks one or follows the system. A test checks that every catalogue has every message with the same variables. Server error messages are still English. |
 
 ## Desktop app (Windows / Linux / macOS)
 
@@ -67,7 +67,7 @@ _Status as of 2026-10-27. Scope comes from `docs/checklist.md`._
 | sync | ⬜ | M4 |
 | all user side features present | ✅ | Same code as the web app |
 | dark / light theme, animations | ✅ | |
-| language translation | ⬜ | |
+| language translation | ✅ | English and Italian; same catalogues as the web app |
 
 ## Android app
 

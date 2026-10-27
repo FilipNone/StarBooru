@@ -81,6 +81,22 @@ cargo test -p starbooru-server --bins
 cargo clippy -p starbooru-app --target wasm32-unknown-unknown --no-default-features --features web -- -D warnings
 ```
 
+## UI text and translations
+
+Every string the app shows lives in `apps/app/locales/<code>.ftl` ([Fluent](https://projectfluent.org/) syntax) and is looked up with `t!`:
+
+```rust
+h2 { {t!("tags-category")} }
+p { {t!("upload-skipped", count = skipped)} }
+```
+
+- Add a new string to `en.ftl` and to every other catalogue in the same change. `cargo test -p starbooru-app --no-default-features --features desktop` fails if an id is missing from a catalogue, unused, or uses different variables between languages.
+- Plurals use Fluent selectors (`{ $count -> [one] … *[other] … }`). Don't build sentences from fragments in Rust.
+- To add a language, copy `en.ftl` to `<code>.ftl`, translate it, and add a `Lang` variant (code, name in that language, `include_str!`) in `apps/app/src/i18n.rs`.
+- Server error messages are English and are shown as they come.
+
+To check a language visually, set `"language": "it"` in the stored preferences or pick it in Settings › Appearance.
+
 ## Visual checks
 
 1. Build the web bundle.

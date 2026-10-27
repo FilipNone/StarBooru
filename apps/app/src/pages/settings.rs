@@ -1,9 +1,10 @@
 use chrono::Utc;
 use dioxus::prelude::*;
-use starbooru_core::SessionInfo;
+use starbooru_core::{Role, SessionInfo};
 
 use super::{ErrorBanner, Spinner};
 use crate::Route;
+use crate::i18n::Lang;
 use crate::icons::{Ico, Icon};
 use crate::store::{self, PREFS, SESSION, Theme};
 use crate::util::time_ago;
@@ -11,16 +12,20 @@ use crate::util::time_ago;
 const MIN_PASSWORD_CHARS: usize = 8;
 
 /// Accent presets (OKLCH hues).
-const SWATCHES: [(u16, &str); 8] = [
-    (285, "Violet"),
-    (330, "Pink"),
-    (20, "Coral"),
-    (65, "Amber"),
-    (140, "Green"),
-    (190, "Teal"),
-    (245, "Blue"),
-    (0, "Red"),
-];
+const SWATCHES: [u16; 8] = [285, 330, 20, 65, 140, 190, 245, 0];
+
+fn swatch_name(hue: u16) -> String {
+    match hue {
+        285 => t!("accent-violet"),
+        330 => t!("accent-pink"),
+        20 => t!("accent-coral"),
+        65 => t!("accent-amber"),
+        140 => t!("accent-green"),
+        190 => t!("accent-teal"),
+        245 => t!("accent-blue"),
+        _ => t!("accent-red"),
+    }
+}
 
 #[component]
 pub fn Settings() -> Element {
@@ -35,13 +40,13 @@ pub fn Settings() -> Element {
 
     rsx! {
         div { class: "page narrow",
-            h1 { class: "page-title", "Settings" }
+            h1 { class: "page-title", {t!("nav-settings")} }
 
             section { class: "card",
-                h2 { class: "card-title", "Appearance" }
+                h2 { class: "card-title", {t!("settings-appearance")} }
                 div { class: "field",
-                    span { "Theme" }
-                    div { class: "segmented", role: "radiogroup", aria_label: "Theme",
+                    span { {t!("settings-theme")} }
+                    div { class: "segmented", role: "radiogroup", aria_label: t!("settings-theme"),
                         for theme in Theme::ALL {
                             button {
                                 key: "{theme.as_str()}",
@@ -49,21 +54,44 @@ pub fn Settings() -> Element {
                                 aria_checked: if prefs.theme == theme { "true" } else { "false" },
                                 class: if prefs.theme == theme { "seg on" } else { "seg" },
                                 onclick: move |_| PREFS.write().theme = theme,
-                                "{theme.label()}"
+                                {theme.label()}
                             }
                         }
                     }
                 }
                 div { class: "field",
-                    span { "Accent colour" }
+                    span { {t!("settings-language")} }
+                    div { class: "segmented", role: "radiogroup", aria_label: t!("settings-language"),
+                        button {
+                            role: "radio",
+                            aria_checked: if prefs.language.is_none() { "true" } else { "false" },
+                            class: if prefs.language.is_none() { "seg on" } else { "seg" },
+                            onclick: move |_| PREFS.write().language = None,
+                            {t!("settings-language-system")}
+                        }
+                        for lang in Lang::ALL {
+                            button {
+                                key: "{lang.code()}",
+                                role: "radio",
+                                lang: lang.code(),
+                                aria_checked: if prefs.language == Some(lang) { "true" } else { "false" },
+                                class: if prefs.language == Some(lang) { "seg on" } else { "seg" },
+                                onclick: move |_| PREFS.write().language = Some(lang),
+                                "{lang.name()}"
+                            }
+                        }
+                    }
+                }
+                div { class: "field",
+                    span { {t!("settings-accent")} }
                     div { class: "swatches",
-                        for (hue, name) in SWATCHES {
+                        for hue in SWATCHES {
                             button {
                                 key: "{hue}",
                                 class: if prefs.accent_hue == hue { "swatch on" } else { "swatch" },
                                 style: "--swatch-hue: {hue}",
-                                aria_label: "{name}",
-                                title: "{name}",
+                                aria_label: swatch_name(hue),
+                                title: swatch_name(hue),
                                 onclick: move |_| PREFS.write().accent_hue = hue,
                                 if prefs.accent_hue == hue { Ico { icon: Icon::Check, size: 18 } }
                             }
@@ -73,7 +101,7 @@ pub fn Settings() -> Element {
                         r#type: "range",
                         min: "0",
                         max: "359",
-                        aria_label: "Custom accent hue",
+                        aria_label: t!("settings-accent-custom"),
                         value: "{prefs.accent_hue}",
                         oninput: move |e| {
                             if let Ok(h) = e.value().parse::<u16>() {
@@ -85,53 +113,53 @@ pub fn Settings() -> Element {
             }
 
             section { class: "card",
-                h2 { class: "card-title", "Library" }
+                h2 { class: "card-title", {t!("settings-library")} }
                 Link { class: "list-link", to: Route::Trash {},
                     Ico { icon: Icon::Delete }
-                    span { "Recycle bin" }
-                    span { class: "muted", "Restore or permanently delete posts" }
+                    span { {t!("trash-title")} }
+                    span { class: "muted", {t!("settings-trash-note")} }
                 }
                 Link { class: "list-link", to: Route::Duplicates {},
                     Ico { icon: Icon::Copy }
-                    span { "Duplicate finder" }
-                    span { class: "muted", "Find posts that look alike and keep the best copy" }
+                    span { {t!("dup-title")} }
+                    span { class: "muted", {t!("settings-dup-note")} }
                 }
             }
 
             section { class: "card",
-                h2 { class: "card-title", "Help and legal" }
+                h2 { class: "card-title", {t!("settings-help-legal")} }
                 Link { class: "list-link", to: Route::Help {},
                     Ico { icon: Icon::Help }
-                    span { "Search cheat sheet" }
-                    span { class: "muted", "Query syntax, examples and keyboard shortcuts" }
+                    span { {t!("help-title")} }
+                    span { class: "muted", {t!("settings-help-note")} }
                 }
                 Link { class: "list-link", to: Route::Privacy {},
                     Ico { icon: Icon::Shield }
-                    span { "Privacy Policy" }
-                    span { class: "muted", "What is stored, where, and for how long" }
+                    span { {t!("privacy-title")} }
+                    span { class: "muted", {t!("settings-privacy-note")} }
                 }
                 Link { class: "list-link", to: Route::Terms {},
                     Ico { icon: Icon::Article }
-                    span { "Terms of Service" }
-                    span { class: "muted", "The rules for using this server" }
+                    span { {t!("terms-title")} }
+                    span { class: "muted", {t!("settings-terms-note")} }
                 }
             }
 
             if let Some(s) = session {
                 section { class: "card",
-                    h2 { class: "card-title", "Account" }
+                    h2 { class: "card-title", {t!("settings-account")} }
                     dl { class: "meta",
-                        dt { "Signed in as" } dd { "{s.user.username}" }
-                        dt { "Role" } dd { "{s.user.role.as_str()}" }
-                        dt { "Server" } dd { class: "break", "{s.server}" }
+                        dt { {t!("settings-signed-in-as")} } dd { "{s.user.username}" }
+                        dt { {t!("settings-role")} } dd { {role_label(s.user.role)} }
+                        dt { {t!("login-server")} } dd { class: "break", "{s.server}" }
                         if let Some(Some(i)) = info.read().as_ref() {
-                            dt { "Server version" } dd { "{i.name} {i.version}" }
+                            dt { {t!("settings-server-version")} } dd { "{i.name} {i.version}" }
                         }
                     }
                     div { class: "row-end",
                         button { class: "btn tonal", onclick: move |_| store::sign_out(),
                             Ico { icon: Icon::Logout }
-                            "Sign out"
+                            {t!("settings-sign-out")}
                         }
                     }
                 }
@@ -139,6 +167,13 @@ pub fn Settings() -> Element {
                 SessionsCard { version: sessions_version() }
             }
         }
+    }
+}
+
+fn role_label(role: Role) -> String {
+    match role {
+        Role::Admin => t!("role-admin"),
+        Role::User => t!("role-user"),
     }
 }
 
@@ -185,10 +220,10 @@ fn PasswordCard(onchanged: EventHandler<()>) -> Element {
 
     rsx! {
         section { class: "card",
-            h2 { class: "card-title", "Password" }
+            h2 { class: "card-title", {t!("login-password")} }
             form { onsubmit: submit,
                 label { class: "field",
-                    span { "Current password" }
+                    span { {t!("password-current")} }
                     input {
                         r#type: "password",
                         autocomplete: "current-password",
@@ -197,7 +232,7 @@ fn PasswordCard(onchanged: EventHandler<()>) -> Element {
                     }
                 }
                 label { class: "field",
-                    span { "New password" }
+                    span { {t!("password-new")} }
                     input {
                         r#type: "password",
                         autocomplete: "new-password",
@@ -206,11 +241,11 @@ fn PasswordCard(onchanged: EventHandler<()>) -> Element {
                         oninput: move |e| new.set(e.value()),
                     }
                     if too_short {
-                        small { class: "field-error", "At least {MIN_PASSWORD_CHARS} characters." }
+                        small { class: "field-error", {t!("password-too-short", count = MIN_PASSWORD_CHARS)} }
                     }
                 }
                 label { class: "field",
-                    span { "Repeat the new password" }
+                    span { {t!("password-repeat")} }
                     input {
                         r#type: "password",
                         autocomplete: "new-password",
@@ -219,7 +254,7 @@ fn PasswordCard(onchanged: EventHandler<()>) -> Element {
                         oninput: move |e| confirm.set(e.value()),
                     }
                     if mismatch {
-                        small { class: "field-error", "The passwords don't match." }
+                        small { class: "field-error", {t!("password-mismatch")} }
                     }
                 }
                 if let Some(message) = error() {
@@ -227,12 +262,12 @@ fn PasswordCard(onchanged: EventHandler<()>) -> Element {
                 }
                 if done() {
                     div { class: "banner info", role: "status",
-                        "Password changed. Your other devices were signed out."
+                        {t!("password-changed")}
                     }
                 }
                 div { class: "row-end",
                     button { class: "btn", r#type: "submit", disabled: !ready,
-                        if busy() { "Changing…" } else { "Change password" }
+                        if busy() { {t!("password-changing")} } else { {t!("password-change")} }
                     }
                 }
             }
@@ -303,7 +338,7 @@ fn SessionsCard(version: u32) -> Element {
         .is_some_and(|l| l.iter().any(|s| !s.current));
     rsx! {
         section { class: "card",
-            h2 { class: "card-title", "Signed-in devices" }
+            h2 { class: "card-title", {t!("sessions-title")} }
             if let Some(message) = error() {
                 ErrorBanner { message }
             }
@@ -315,13 +350,13 @@ fn SessionsCard(version: u32) -> Element {
                             li { key: "{s.id}", class: "session",
                                 div { class: "session-main",
                                     strong {
-                                        if s.client.is_empty() { "Unknown client" } else { "{s.client}" }
+                                        if s.client.is_empty() { {t!("sessions-unknown")} } else { "{s.client}" }
                                     }
                                     if s.current {
-                                        span { class: "pill", "This device" }
+                                        span { class: "pill", {t!("sessions-this-device")} }
                                     }
                                     span { class: "muted",
-                                        "Active {time_ago(s.last_used_at, now)} · signed in {time_ago(s.created_at, now)}"
+                                        {t!("sessions-times", active = time_ago(s.last_used_at, now), created = time_ago(s.created_at, now))}
                                     }
                                 }
                                 if !s.current {
@@ -336,7 +371,7 @@ fn SessionsCard(version: u32) -> Element {
                 div { class: "row-end",
                     button { class: "btn tonal", disabled: busy(), onclick: revoke_others,
                         Ico { icon: Icon::Logout }
-                        "Sign out everywhere else"
+                        {t!("sessions-revoke-others")}
                     }
                 }
             }
@@ -349,8 +384,8 @@ fn SessionRevoke(id: i64, disabled: bool, onrevoke: EventHandler<i64>) -> Elemen
     rsx! {
         button {
             class: "icon-btn danger",
-            title: "Sign out this device",
-            aria_label: "Sign out this device",
+            title: t!("sessions-revoke"),
+            aria_label: t!("sessions-revoke"),
             disabled,
             onclick: move |_| onrevoke.call(id),
             Ico { icon: Icon::Logout }

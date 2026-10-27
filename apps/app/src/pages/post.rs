@@ -9,7 +9,7 @@ use super::{ErrorBanner, Spinner};
 use crate::Route;
 use crate::icons::{Ico, Icon};
 use crate::store;
-use crate::util::{format_duration, human_size};
+use crate::util::{format_duration, human_size, rating_label};
 use crate::zoom::{STEP, Zoom};
 
 /// Keys the viewer handles, sent from a page-wide listener. Typing in a
@@ -212,9 +212,9 @@ pub fn PostView(id: i64, q: String) -> Element {
                 }
                 if p.deleted {
                     div { class: "banner warn",
-                        span { "This post is in the recycle bin." }
+                        span { {t!("post-in-trash")} }
                         button { class: "btn tonal", disabled: busy(), onclick: move |_| act(Op::Restore),
-                            Ico { icon: Icon::Restore } "Restore"
+                            Ico { icon: Icon::Restore } {t!("trash-restore")}
                         }
                     }
                 }
@@ -222,7 +222,7 @@ pub fn PostView(id: i64, q: String) -> Element {
                     div { class: "vote",
                         button {
                             class: if p.my_vote > 0 { "icon-btn on" } else { "icon-btn" },
-                            aria_label: "Upvote",
+                            aria_label: t!("post-upvote"),
                             disabled: busy() || p.deleted,
                             onclick: move |_| act(Op::Vote(if p.my_vote > 0 { 0 } else { 1 })),
                             Ico { icon: Icon::ThumbUp }
@@ -230,21 +230,21 @@ pub fn PostView(id: i64, q: String) -> Element {
                         span { class: "score", "{p.score}" }
                         button {
                             class: if p.my_vote < 0 { "icon-btn on" } else { "icon-btn" },
-                            aria_label: "Downvote",
+                            aria_label: t!("post-downvote"),
                             disabled: busy() || p.deleted,
                             onclick: move |_| act(Op::Vote(if p.my_vote < 0 { 0 } else { -1 })),
                             Ico { icon: Icon::ThumbDown }
                         }
                     }
                     div { class: "row-actions",
-                        a { class: "icon-btn", href: "{file_url}", download: "{p.sha256}.{ext}", aria_label: "Download", title: "Download",
+                        a { class: "icon-btn", href: "{file_url}", download: "{p.sha256}.{ext}", aria_label: t!("post-download"), title: t!("post-download"),
                             Ico { icon: Icon::Download }
                         }
                         if !p.deleted {
-                            button { class: "icon-btn", aria_label: "Edit", title: "Edit tags", onclick: move |_| start_edit(),
+                            button { class: "icon-btn", aria_label: t!("post-edit"), title: t!("post-edit-tags"), onclick: move |_| start_edit(),
                                 Ico { icon: Icon::Edit }
                             }
-                            button { class: "icon-btn danger", aria_label: "Delete", title: "Move to recycle bin",
+                            button { class: "icon-btn danger", aria_label: t!("post-delete"), title: t!("post-delete-title"),
                                 disabled: busy(), onclick: move |_| act(Op::Delete),
                                 Ico { icon: Icon::Delete }
                             }
@@ -263,7 +263,7 @@ pub fn PostView(id: i64, q: String) -> Element {
                             }));
                         },
                         label { class: "field",
-                            span { "Tags" }
+                            span { {t!("post-tags")} }
                             textarea {
                                 rows: "5",
                                 spellcheck: "false",
@@ -273,15 +273,15 @@ pub fn PostView(id: i64, q: String) -> Element {
                         }
                         RatingPicker { value: rating() , onchange: move |r| rating.set(r) }
                         div { class: "row-end",
-                            button { class: "btn text", r#type: "button", onclick: move |_| editing.set(false), "Cancel" }
-                            button { class: "btn", r#type: "submit", disabled: busy(), Ico { icon: Icon::Check } "Save" }
+                            button { class: "btn text", r#type: "button", onclick: move |_| editing.set(false), {t!("cancel")} }
+                            button { class: "btn", r#type: "submit", disabled: busy(), Ico { icon: Icon::Check } {t!("save")} }
                         }
                     }
                 } else {
                     div { class: "card",
-                        h2 { class: "card-title", "Tags" }
+                        h2 { class: "card-title", {t!("post-tags")} }
                         if p.tags.is_empty() {
-                            p { class: "muted", "No tags yet." }
+                            p { class: "muted", {t!("post-no-tags")} }
                         }
                         div { class: "chips",
                             for tag in p.tags.iter() {
@@ -291,18 +291,18 @@ pub fn PostView(id: i64, q: String) -> Element {
                     }
                 }
                 div { class: "card",
-                    h2 { class: "card-title", "Details" }
+                    h2 { class: "card-title", {t!("post-details")} }
                     dl { class: "meta",
-                        dt { "Rating" } dd { "{p.rating.as_str()}" }
-                        dt { "Size" } dd { "{human_size(p.file_size)}" }
-                        dt { "Dimensions" } dd { "{dims}" }
+                        dt { {t!("rating")} } dd { {rating_label(p.rating)} }
+                        dt { {t!("post-size")} } dd { "{human_size(p.file_size)}" }
+                        dt { {t!("post-dimensions")} } dd { "{dims}" }
                         if let Some(d) = duration {
-                            dt { "Length" } dd { "{d}" }
+                            dt { {t!("post-length")} } dd { "{d}" }
                         }
-                        dt { "Type" } dd { "{p.mime}" }
-                        dt { "Added" } dd { "{added}" }
+                        dt { {t!("post-type")} } dd { "{p.mime}" }
+                        dt { {t!("post-added")} } dd { "{added}" }
                         if let Some(source) = &p.source {
-                            dt { "Source" } dd { class: "break", "{source}" }
+                            dt { {t!("post-source")} } dd { class: "break", "{source}" }
                         }
                     }
                 }
@@ -321,7 +321,7 @@ enum Op {
 #[component]
 pub fn RatingPicker(value: Rating, onchange: EventHandler<Rating>) -> Element {
     rsx! {
-        div { class: "segmented", role: "radiogroup", aria_label: "Rating",
+        div { class: "segmented", role: "radiogroup", aria_label: t!("rating"),
             for r in Rating::ALL {
                 button {
                     key: "{r.as_str()}",
@@ -330,7 +330,7 @@ pub fn RatingPicker(value: Rating, onchange: EventHandler<Rating>) -> Element {
                     aria_checked: if r == value { "true" } else { "false" },
                     class: if r == value { "seg on" } else { "seg" },
                     onclick: move |_| onchange.call(r),
-                    "{r.as_str()}"
+                    {rating_label(r)}
                 }
             }
         }
@@ -506,29 +506,29 @@ fn Stage(
                 },
             }
             if let Some(prev) = nav.prev {
-                button { class: "stage-btn stage-prev", title: "Previous (←)", aria_label: "Previous post",
+                button { class: "stage-btn stage-prev", title: t!("post-prev-title"), aria_label: t!("post-prev"),
                     onclick: move |_| onnav.call(prev),
                     Ico { icon: Icon::ChevronLeft, size: 32 }
                 }
             }
             if let Some(next) = nav.next {
-                button { class: "stage-btn stage-next", title: "Next (→)", aria_label: "Next post",
+                button { class: "stage-btn stage-next", title: t!("post-next-title"), aria_label: t!("post-next"),
                     onclick: move |_| onnav.call(next),
                     Ico { icon: Icon::ChevronRight, size: 32 }
                 }
             }
             div { class: "stage-tools",
                 if zoomable {
-                    button { class: "stage-btn", title: "Zoom out (−)", aria_label: "Zoom out",
+                    button { class: "stage-btn", title: t!("zoom-out-title"), aria_label: t!("zoom-out"),
                         disabled: !z.is_zoomed(),
                         onclick: move |_| zoom.set(zoom().zoom_at(1.0 / STEP, (0.0, 0.0), size_of(*rect.peek()))),
                         Ico { icon: Icon::ZoomOut }
                     }
-                    button { class: "stage-zoom", title: "Fit (0)", aria_label: "Reset zoom",
+                    button { class: "stage-zoom", title: t!("zoom-fit-title"), aria_label: t!("zoom-reset"),
                         onclick: move |_| zoom.set(Zoom::default()),
                         "{z.percent()}%"
                     }
-                    button { class: "stage-btn", title: "Zoom in (+)", aria_label: "Zoom in",
+                    button { class: "stage-btn", title: t!("zoom-in-title"), aria_label: t!("zoom-in"),
                         disabled: z.scale >= crate::zoom::MAX_SCALE,
                         onclick: move |_| zoom.set(zoom().zoom_at(STEP, (0.0, 0.0), size_of(*rect.peek()))),
                         Ico { icon: Icon::ZoomIn }
@@ -536,8 +536,8 @@ fn Stage(
                 }
                 button {
                     class: "stage-btn",
-                    title: if full() { "Exit fullscreen (F)" } else { "Fullscreen (F)" },
-                    aria_label: if full() { "Exit fullscreen" } else { "Fullscreen" },
+                    title: if full() { t!("fullscreen-exit-title") } else { t!("fullscreen-title") },
+                    aria_label: if full() { t!("fullscreen-exit") } else { t!("fullscreen") },
                     onclick: move |_| onfull.call(!full()),
                     Ico { icon: if full() { Icon::FullscreenExit } else { Icon::Fullscreen } }
                 }

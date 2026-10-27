@@ -22,12 +22,12 @@ pub fn Shell() -> Element {
                 span { "StarBooru" }
             }
             SearchBox { route: route.clone() }
-            nav { class: "nav-top", aria_label: "Main",
+            nav { class: "nav-top", aria_label: t!("nav-main"),
                 NavItems { route: route.clone() }
             }
         }
         main { class: "content", Outlet::<Route> {} }
-        nav { class: "nav-bottom glass", aria_label: "Main",
+        nav { class: "nav-bottom glass", aria_label: t!("nav-main"),
             NavItems { route }
         }
     }
@@ -39,16 +39,16 @@ fn NavItems(route: Route) -> Element {
         (
             Route::Gallery { q: String::new() },
             Icon::Gallery,
-            "Gallery",
+            t!("nav-gallery"),
         ),
         (
             Route::Explore { q: String::new() },
             Icon::Explore,
-            "Explore",
+            t!("nav-explore"),
         ),
-        (Route::Tags {}, Icon::Label, "Tags"),
-        (Route::Upload {}, Icon::Upload, "Upload"),
-        (Route::Settings {}, Icon::Tune, "Settings"),
+        (Route::Tags {}, Icon::Label, t!("nav-tags")),
+        (Route::Upload {}, Icon::Upload, t!("nav-upload")),
+        (Route::Settings {}, Icon::Tune, t!("nav-settings")),
     ];
     rsx! {
         for (to, icon, label) in items {
@@ -138,8 +138,8 @@ fn SearchBox(route: Route) -> Element {
             Ico { icon: Icon::Search }
             input {
                 r#type: "search",
-                placeholder: "Search tags, e.g. blue_sky -cloud rating:g",
-                aria_label: "Search tags",
+                placeholder: t!("search-placeholder"),
+                aria_label: t!("search-label"),
                 autocomplete: "off",
                 spellcheck: "false",
                 value: "{text}",

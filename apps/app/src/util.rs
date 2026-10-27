@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use chrono::{DateTime, Utc};
+use starbooru_core::Rating;
 
 /// `1536` → `1.5 KB`.
 pub fn human_size(bytes: i64) -> String {
@@ -97,32 +98,57 @@ pub fn split_tag_edit(text: &str) -> (Vec<String>, Vec<String>) {
     (add, remove)
 }
 
+/// A rating's name in the current language.
+pub fn rating_label(rating: Rating) -> String {
+    match rating {
+        Rating::General => t!("rating-general"),
+        Rating::Sensitive => t!("rating-sensitive"),
+        Rating::Questionable => t!("rating-questionable"),
+        Rating::Explicit => t!("rating-explicit"),
+    }
+}
+
 /// "1 post" or "N posts".
 pub fn posts_count(n: u64) -> String {
-    match n {
-        1 => "1 post".to_owned(),
-        n => format!("{n} posts"),
-    }
+    t!("posts-count", count = n)
 }
 
 /// "just now", "5 minutes ago", "yesterday", …, then a date.
 pub fn time_ago(then: DateTime<Utc>, now: DateTime<Utc>) -> String {
     let secs = (now - then).num_seconds();
-    let plural = |n: i64, unit: &str| {
-        if n == 1 {
-            format!("1 {unit} ago")
-        } else {
-            format!("{n} {unit}s ago")
-        }
-    };
     match secs {
-        ..60 => "just now".to_owned(),
-        60..3_600 => plural(secs / 60, "minute"),
-        3_600..86_400 => plural(secs / 3_600, "hour"),
-        86_400..172_800 => "yesterday".to_owned(),
-        172_800..2_592_000 => format!("{} days ago", secs / 86_400),
-        _ => then.format("%-d %b %Y").to_string(),
+        ..60 => t!("ago-now"),
+        60..3_600 => t!("ago-minutes", count = secs / 60),
+        3_600..86_400 => t!("ago-hours", count = secs / 3_600),
+        86_400..172_800 => t!("ago-yesterday"),
+        172_800..2_592_000 => t!("ago-days", count = secs / 86_400),
+        _ => short_date(then),
     }
+}
+
+/// "17 Sep 2026", with the month in the current language.
+pub fn short_date(date: DateTime<Utc>) -> String {
+    use chrono::Datelike;
+    let month = match date.month() {
+        1 => t!("month-1"),
+        2 => t!("month-2"),
+        3 => t!("month-3"),
+        4 => t!("month-4"),
+        5 => t!("month-5"),
+        6 => t!("month-6"),
+        7 => t!("month-7"),
+        8 => t!("month-8"),
+        9 => t!("month-9"),
+        10 => t!("month-10"),
+        11 => t!("month-11"),
+        _ => t!("month-12"),
+    };
+    t!(
+        "date-short",
+        day = date.day(),
+        month = month,
+        year = date.year()
+    )
 }
 
 #[cfg(test)]
