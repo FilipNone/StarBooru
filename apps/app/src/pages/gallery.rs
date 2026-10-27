@@ -6,6 +6,7 @@ use starbooru_core::{
     BulkEdit, MAX_BULK_POSTS, MediaKind, Order, Post, Rating, SavedSearch, parse_query, with_order,
 };
 
+use super::post::OPENING;
 use super::share::ShareSheet;
 use super::{ErrorBanner, Spinner};
 use crate::Route;
@@ -565,6 +566,7 @@ pub(super) fn Thumb(
     let media = rsx! {
         div {
             class: "thumb-media",
+            "data-post": "{post.id}",
             onpointerenter: move |e: PointerEvent| {
                 if video && e.pointer_type() == "mouse" {
                     hovered.set(true);
@@ -611,15 +613,57 @@ pub(super) fn Thumb(
             }
         };
     }
+    let nav = navigator();
+    let id = post.id;
+    let open = {
+        let q = q.clone();
+        move |_| {
+            *OPENING.write() = Some(post.clone());
+            let q = q.clone();
+            spawn(async move {
+                let mut hero = document::eval(HERO_START);
+                let _ = hero.send(id);
+                // Navigates once the old page is captured, or at once without a transition.
+                let _ = hero.recv::<bool>().await;
+                nav.push(Route::PostView { id, q });
+            });
+        }
+    };
     rsx! {
         Link {
             class: "thumb",
             style: "--delay: {delay}ms",
-            to: Route::PostView { id: post.id, q },
+            to: Route::PostView { id, q },
+            onclick: open,
+            onclick_only: true,
             {media}
         }
     }
 }
+
+/// Grows the clicked thumbnail into the viewer's image with a view
+/// transition, where the browser has them and motion isn't reduced. Sends
+/// `true` once the current page is captured (the page change must follow),
+/// or `false` at once when there is no transition.
+const HERO_START: &str = r#"
+const id = await dioxus.recv();
+const img = document.querySelector(`[data-post="${id}"] img`);
+if (!document.startViewTransition || !img || matchMedia("(prefers-reduced-motion: reduce)").matches) {
+  dioxus.send(false);
+  return;
+}
+const root = document.documentElement;
+img.style.viewTransitionName = "sb-hero";
+const t = document.startViewTransition(() => {
+  img.style.viewTransitionName = "";
+  root.classList.add("sb-hero");
+  dioxus.send(true);
+  // The viewer ends it when its image is in place; never wait long.
+  return new Promise((done) => { window.__sbHeroDone = done; setTimeout(done, 700); });
+});
+const end = () => { root.classList.remove("sb-hero"); window.__sbHeroDone = null; };
+t.finished.then(end, end);
+"#;
 
 #[cfg(test)]
 mod tests {

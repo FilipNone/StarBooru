@@ -51,6 +51,14 @@ fn browser_fullscreen(on: bool) {
     });
 }
 
+/// The post a gallery thumbnail is opening, so the viewer can show it
+/// before the server answers.
+pub static OPENING: GlobalSignal<Option<Post>> = Signal::global(|| None);
+
+/// Ends the view transition a gallery thumbnail started, once the viewer's
+/// image is in place.
+const HERO_DONE: &str = "window.__sbHeroDone?.()";
+
 #[component]
 pub fn PostView(id: i64, q: String) -> Element {
     let mut post = use_signal(|| None::<Post>);
@@ -90,8 +98,14 @@ pub fn PostView(id: i64, q: String) -> Element {
     let mut full = use_signal(|| false);
     // The props as signals, for the key handler, which outlives a render.
     let mut current = use_signal(|| (id, q.clone()));
+    // Neighbours fetched ahead, so previous/next shows at once.
+    let mut ahead = use_signal(HashMap::<i64, Post>::new);
+    // Which way the last previous/next went: `Some(true)` for next.
+    let mut entered = use_signal(|| None::<bool>);
     use_effect(use_reactive!(|id| {
-        post.set(None);
+        let known = ahead.peek().get(&id).cloned();
+        let opening = OPENING.write().take().filter(|p| p.id == id);
+        post.set(known.or(opening));
         editing.set(false);
         media_editing.set(false);
         zoom.set(Zoom::default());
@@ -106,13 +120,41 @@ pub fn PostView(id: i64, q: String) -> Element {
         client.neighbors(id, &q).await.ok()
     });
     let nav = move || (*neighbors.read()).flatten().unwrap_or_default();
+    use_effect(move || {
+        let n = nav();
+        let here = current.peek().0;
+        ahead
+            .write()
+            .retain(|k, _| *k == here || Some(*k) == n.prev || Some(*k) == n.next);
+        let Some(client) = store::client() else {
+            return;
+        };
+        for near in [n.prev, n.next].into_iter().flatten() {
+            if ahead.peek().contains_key(&near) {
+                continue;
+            }
+            let client = client.clone();
+            spawn(async move {
+                if let Ok(p) = client.post(near).await {
+                    if p.kind != MediaKind::Video {
+                        let url = client.absolute(shown_url(&p, false));
+                        let url = serde_json::to_string(&url).unwrap_or_default();
+                        document::eval(&format!("new Image().src = {url}"));
+                    }
+                    ahead.write().insert(near, p);
+                }
+            });
+        }
+    });
     // Trimming needs ffmpeg on the server.
     let video_editing = use_resource(|| async move {
         let client = store::client()?;
         client.info().await.ok().map(|i| i.video_editing)
     });
-    let go = move |to: Option<i64>| {
+    let mut go = move |to: Option<i64>| {
         if let Some(id) = to {
+            let n = (*neighbors.peek()).flatten().unwrap_or_default();
+            entered.set(Some(n.prev != Some(id)));
             let q = current.peek().1.clone();
             // Replace, so Back returns to the gallery rather than through every post.
             navigator().replace(Route::PostView { id, q });
@@ -208,6 +250,7 @@ pub fn PostView(id: i64, q: String) -> Element {
         .as_deref()
         .filter(|_| !original() && !store::PREFS.read().originals)
         .map(abs);
+    let thumb = p.thumb_url.as_deref().map(abs);
     let ext = p.mime.rsplit('/').next().unwrap_or("bin").to_owned();
     let alt = p.tags.join(" ");
     let added = p.created_at.format("%Y-%m-%d %H:%M").to_string();
@@ -226,8 +269,12 @@ pub fn PostView(id: i64, q: String) -> Element {
     rsx! {
         div { class: "page post-layout",
             Stage {
+                id: p.id,
                 kind: p.kind,
                 src: sample.clone().unwrap_or_else(|| file_url.clone()),
+                thumb,
+                size: p.width.zip(p.height),
+                enter: enter_class(entered()),
                 alt,
                 zoom,
                 full,
@@ -426,11 +473,98 @@ fn size_of(rect: Option<PixelsRect>) -> (f64, f64) {
 /// Swipe distance, in pixels, that turns the page.
 const SWIPE: f64 = 60.0;
 
+/// The URL the viewer shows: the sample when there is one, unless the
+/// original is wanted.
+fn shown_url(p: &Post, original: bool) -> &str {
+    match &p.sample_url {
+        Some(s) if !original && !store::PREFS.peek().originals => s,
+        _ => &p.file_url,
+    }
+}
+
+/// The entrance after previous/next: from the side the post came from.
+fn enter_class(next: Option<bool>) -> &'static str {
+    match next {
+        Some(true) => "from-next",
+        Some(false) => "from-prev",
+        None => "",
+    }
+}
+
+/// Sizes the image box to the fitted image before it loads, so the
+/// thumbnail can stand in and nothing jumps when the image arrives.
+/// `--fit-h` is the stage's height limit.
+fn fit_style(size: Option<(i32, i32)>) -> String {
+    match size {
+        Some((w, h)) if w > 0 && h > 0 => format!(
+            "; aspect-ratio: {w} / {h}; width: min(100%, calc(var(--fit-h) * {w} / {h}), {w}px)"
+        ),
+        _ => String::new(),
+    }
+}
+
+/// `url("…")` for inline CSS.
+fn css_url(url: &str) -> String {
+    format!(
+        "url(\"{}\")",
+        url.replace('\\', "\\\\").replace('"', "\\\"")
+    )
+}
+
+/// The viewer's image. Until it loads, the thumbnail stretched over its
+/// box stands in for it.
+#[component]
+fn StageImage(
+    src: String,
+    thumb: Option<String>,
+    alt: String,
+    size: Option<(i32, i32)>,
+    transform: String,
+    enter: &'static str,
+) -> Element {
+    let mut loaded = use_signal(|| false);
+    let mut style = transform;
+    style.push_str(&fit_style(size));
+    if let Some(t) = thumb.as_deref() {
+        style.push_str("; --thumb: ");
+        style.push_str(&css_url(t));
+    }
+    rsx! {
+        img {
+            id: "stage-img",
+            class: if loaded() { "{enter}" } else { "{enter} loading" },
+            src: "{src}",
+            alt: "{alt}",
+            draggable: "false",
+            style,
+            onload: move |_| loaded.set(true),
+            onmounted: move |_| {
+                document::eval(HERO_DONE);
+                // A cached image can finish before the listener exists.
+                spawn(async move {
+                    let complete = document::eval(
+                        "return document.getElementById('stage-img')?.complete === true",
+                    )
+                    .join::<bool>()
+                    .await;
+                    if complete.unwrap_or(false) {
+                        loaded.set(true);
+                    }
+                });
+            },
+        }
+    }
+}
+
 /// The media, with zoom and pan for images, previous/next and fullscreen.
 #[component]
 fn Stage(
+    id: i64,
     kind: MediaKind,
     src: String,
+    thumb: Option<String>,
+    size: Option<(i32, i32)>,
+    enter: &'static str,
     alt: String,
     zoom: Signal<Zoom>,
     full: Signal<bool>,
@@ -559,10 +693,12 @@ fn Stage(
             },
             match kind {
                 MediaKind::Video => rsx! {
-                    video { src: "{src}", controls: true, autoplay: true, r#loop: true, playsinline: true }
+                    video { key: "{id}", class: enter, src: "{src}", controls: true, autoplay: true, r#loop: true, playsinline: true,
+                        onmounted: move |_| { document::eval(HERO_DONE); },
+                    }
                 },
                 _ => rsx! {
-                    img { src: "{src}", alt: "{alt}", draggable: "false", style: z.css() }
+                    StageImage { key: "{id}", src, thumb, alt, size, transform: z.css(), enter }
                 },
             }
             if let Some(prev) = nav.prev {
@@ -603,5 +739,38 @@ fn Stage(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sizes_the_box_before_loading() {
+        assert_eq!(
+            fit_style(Some((3600, 2400))),
+            "; aspect-ratio: 3600 / 2400; width: min(100%, calc(var(--fit-h) * 3600 / 2400), 3600px)"
+        );
+        // Unknown or nonsense sizes leave the box to the image.
+        assert_eq!(fit_style(None), "");
+        assert_eq!(fit_style(Some((0, 10))), "");
+        assert_eq!(fit_style(Some((10, -1))), "");
+    }
+
+    #[test]
+    fn quotes_css_urls() {
+        assert_eq!(
+            css_url("/media/thumb/a.jpg?x=1"),
+            r#"url("/media/thumb/a.jpg?x=1")"#
+        );
+        assert_eq!(css_url(r#"a"b\c"#), r#"url("a\"b\\c")"#);
+    }
+
+    #[test]
+    fn enters_from_the_side_it_came_from() {
+        assert_eq!(enter_class(Some(true)), "from-next");
+        assert_eq!(enter_class(Some(false)), "from-prev");
+        assert_eq!(enter_class(None), "");
     }
 }
