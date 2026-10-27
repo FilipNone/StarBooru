@@ -26,7 +26,7 @@ _Status as of 2026-10-27. Scope comes from `docs/checklist.md`._
 | blazingly fast database | 🟡 | Tags as an `int[]` with a GIN index, partial indexes, counts kept in step. Not yet benchmarked at 1M posts. |
 | tag system | 🟡 | Normalisation, categories, autocomplete. Missing: aliases, implications, a tag page. |
 | score system | ✅ | Up/down votes, `order:score` |
-| feature rich and fast sorting | 🟡 | newest, oldest, score, random. Missing: by size, dimensions, tag count. |
+| feature rich and fast sorting | ✅ | Newest, oldest, score, file size, resolution, tag count, last edit and random, in either direction (`_asc`/`_desc`). Each sort has a partial index on live posts. A sort menu sits in the gallery header. |
 | grid view of media | ✅ | |
 | pages and infinite scroll | ✅ | Infinite scroll with a "Load more" fallback. No numbered pages yet. |
 | media viewer | 🟡 | Image, GIF, video. Missing: zoom/pan, previous/next, fullscreen. |

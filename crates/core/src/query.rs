@@ -4,7 +4,8 @@
 //!
 //! * `tag`: post must have the tag; `-tag`: post must not have it.
 //! * `rating:<g|s|q|e>`, `-rating:<..>`, `type:<image|animation|video>`.
-//! * `order:<new|old|score|random>`.
+//! * `order:<new|old|score|size|pixels|tags|updated|random>`, with an
+//!   optional `_asc` or `_desc` suffix.
 //! * `status:deleted`: search the recycle bin instead of live posts.
 //!
 //! Any other `name:value` term is treated as a plain tag, so tags with
@@ -17,13 +18,101 @@ use crate::tag::{TagError, normalize_tag};
 
 pub const MAX_QUERY_TERMS: usize = 40;
 
+/// What results are sorted by.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum Order {
+pub enum SortKey {
+    /// Upload order (the post id).
     #[default]
-    Newest,
-    Oldest,
+    Id,
     Score,
+    /// File size in bytes.
+    Size,
+    /// Width × height; posts without dimensions sort last.
+    Pixels,
+    TagCount,
+    /// Last edit of tags, rating or source.
+    Updated,
     Random,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Order {
+    pub key: SortKey,
+    pub descending: bool,
+}
+
+impl Default for Order {
+    fn default() -> Self {
+        Self {
+            key: SortKey::Id,
+            descending: true,
+        }
+    }
+}
+
+impl Order {
+    /// Parses the value of an `order:` term, e.g. `score`, `size_asc`, `old`.
+    pub fn parse(value: &str) -> Option<Self> {
+        let value = value.to_ascii_lowercase();
+        let (name, direction) = if let Some(n) = value.strip_suffix("_asc") {
+            (n, Some(false))
+        } else if let Some(n) = value.strip_suffix("_desc") {
+            (n, Some(true))
+        } else {
+            (value.as_str(), None)
+        };
+        let (key, descending) = match name {
+            "new" | "newest" => (SortKey::Id, true),
+            "id" | "old" | "oldest" => (SortKey::Id, false),
+            "score" | "top" => (SortKey::Score, true),
+            "size" | "filesize" => (SortKey::Size, true),
+            "pixels" | "resolution" | "dimensions" => (SortKey::Pixels, true),
+            "tags" | "tagcount" => (SortKey::TagCount, true),
+            "updated" | "edited" => (SortKey::Updated, true),
+            "random" if direction.is_none() => (SortKey::Random, true),
+            _ => return None,
+        };
+        Some(Self {
+            key,
+            descending: direction.unwrap_or(descending),
+        })
+    }
+
+    /// The canonical `order:` value, e.g. `size_asc`. Round-trips through `parse`.
+    pub fn as_value(self) -> &'static str {
+        match (self.key, self.descending) {
+            (SortKey::Id, true) => "new",
+            (SortKey::Id, false) => "old",
+            (SortKey::Score, true) => "score",
+            (SortKey::Score, false) => "score_asc",
+            (SortKey::Size, true) => "size",
+            (SortKey::Size, false) => "size_asc",
+            (SortKey::Pixels, true) => "pixels",
+            (SortKey::Pixels, false) => "pixels_asc",
+            (SortKey::TagCount, true) => "tags",
+            (SortKey::TagCount, false) => "tags_asc",
+            (SortKey::Updated, true) => "updated",
+            (SortKey::Updated, false) => "updated_asc",
+            (SortKey::Random, _) => "random",
+        }
+    }
+}
+
+/// Replaces the `order:`/`sort:` terms of a query string with `order`
+/// (or removes them for `None`), keeping every other term as typed.
+pub fn with_order(query: &str, order: Option<Order>) -> String {
+    let mut terms: Vec<String> = query
+        .split_whitespace()
+        .filter(|t| {
+            let lower = t.to_ascii_lowercase();
+            !(lower.starts_with("order:") || lower.starts_with("sort:"))
+        })
+        .map(str::to_owned)
+        .collect();
+    if let Some(order) = order.filter(|o| *o != Order::default()) {
+        terms.push(format!("order:{}", order.as_value()));
+    }
+    terms.join(" ")
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -48,7 +137,9 @@ pub enum QueryError {
     BadKind(String),
     #[error("unknown status `{0}` (use active or deleted)")]
     BadStatus(String),
-    #[error("unknown order `{0}` (use new, old, score or random)")]
+    #[error(
+        "unknown order `{0}` (use new, old, score, size, pixels, tags, updated or random; add _asc to reverse)"
+    )]
     BadOrder(String),
     #[error(transparent)]
     Tag(#[from] TagError),
@@ -95,13 +186,8 @@ pub fn parse_query(input: &str) -> Result<SearchQuery, QueryError> {
                     continue;
                 }
                 "order" | "sort" if !negated => {
-                    q.order = match value.to_ascii_lowercase().as_str() {
-                        "new" | "newest" | "id_desc" => Order::Newest,
-                        "old" | "oldest" | "id" | "id_asc" => Order::Oldest,
-                        "score" => Order::Score,
-                        "random" => Order::Random,
-                        _ => return Err(QueryError::BadOrder(value.to_owned())),
-                    };
+                    q.order = Order::parse(value)
+                        .ok_or_else(|| QueryError::BadOrder(value.to_owned()))?;
                     continue;
                 }
                 _ => {}
@@ -138,9 +224,56 @@ mod tests {
         assert_eq!(q.ratings, vec![Rating::General]);
         assert_eq!(q.exclude_ratings, vec![Rating::Explicit]);
         assert_eq!(q.kind, Some(MediaKind::Video));
-        assert_eq!(q.order, Order::Score);
+        assert_eq!(
+            q.order,
+            Order {
+                key: SortKey::Score,
+                descending: true
+            }
+        );
         assert!(!q.deleted);
         assert!(parse_query("status:deleted").unwrap().deleted);
+    }
+
+    #[test]
+    fn parses_orders() {
+        let o = |v: &str| Order::parse(v).map(|o| (o.key, o.descending));
+        assert_eq!(o("old"), Some((SortKey::Id, false)));
+        assert_eq!(o("ID_ASC"), Some((SortKey::Id, false)));
+        assert_eq!(o("id_desc"), Some((SortKey::Id, true)));
+        assert_eq!(o("size"), Some((SortKey::Size, true)));
+        assert_eq!(o("size_asc"), Some((SortKey::Size, false)));
+        assert_eq!(o("resolution"), Some((SortKey::Pixels, true)));
+        assert_eq!(o("tagcount_asc"), Some((SortKey::TagCount, false)));
+        assert_eq!(o("random"), Some((SortKey::Random, true)));
+        assert_eq!(o("random_asc"), None);
+        assert_eq!(o("_asc"), None);
+        assert_eq!(o(""), None);
+        for key in [
+            SortKey::Id,
+            SortKey::Score,
+            SortKey::Size,
+            SortKey::Pixels,
+            SortKey::TagCount,
+            SortKey::Updated,
+        ] {
+            for descending in [true, false] {
+                let order = Order { key, descending };
+                assert_eq!(Order::parse(order.as_value()), Some(order));
+            }
+        }
+    }
+
+    #[test]
+    fn rewrites_order_terms() {
+        let size = Order::parse("size").unwrap();
+        assert_eq!(
+            with_order("cat order:score -dog", Some(size)),
+            "cat -dog order:size"
+        );
+        assert_eq!(with_order("cat sort:old", None), "cat");
+        assert_eq!(with_order("cat", Some(Order::default())), "cat");
+        assert_eq!(with_order("", Some(size)), "order:size");
     }
 
     #[test]

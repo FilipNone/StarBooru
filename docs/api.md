@@ -64,7 +64,7 @@ Terms are separated by spaces, with at most 40 terms.
 | `-cloud` | must not have the tag |
 | `rating:g` / `-rating:e` | rating is (not) general, sensitive, questionable or explicit (`g s q e`); repeat to allow several, e.g. `rating:g rating:s` |
 | `type:image` / `type:animation` / `type:video` | media kind |
-| `order:newest` (default), `order:oldest`, `order:score`, `order:random` | sort (`sort:` works too) |
+| `order:newest` (default), `order:oldest`, `order:score`, `order:size`, `order:pixels`, `order:tags`, `order:updated`, `order:random` | sort (`sort:` works too). Add `_asc` or `_desc` to set the direction, e.g. `order:size_asc` for the smallest files first. `pixels` is width × height; `tags` is the tag count; `updated` is the last edit. |
 | `status:deleted` | browse the recycle bin |
 
 Tags are normalised: trimmed, lower-cased, spaces and underscores folded to one `_`, and at most 128 characters.

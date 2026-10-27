@@ -1,5 +1,5 @@
 use dioxus::prelude::*;
-use starbooru_core::{MediaKind, Post};
+use starbooru_core::{MediaKind, Order, Post, parse_query, with_order};
 
 use super::{ErrorBanner, Spinner};
 use crate::Route;
@@ -7,6 +7,20 @@ use crate::icons::{Ico, Icon};
 use crate::store;
 
 const PAGE_SIZE: u32 = 60;
+
+/// Sort menu entries: label and `order:` value.
+const SORTS: [(&str, &str); 10] = [
+    ("Newest", "new"),
+    ("Oldest", "old"),
+    ("Top score", "score"),
+    ("Recently edited", "updated"),
+    ("Largest file", "size"),
+    ("Smallest file", "size_asc"),
+    ("Highest resolution", "pixels"),
+    ("Most tags", "tags"),
+    ("Fewest tags", "tags_asc"),
+    ("Random", "random"),
+];
 
 #[component]
 pub fn Gallery(q: String) -> Element {
@@ -67,12 +81,17 @@ pub fn Gallery(q: String) -> Element {
         has_more.set(true);
         load_more();
     };
+    // The sort menu shows the order, so the title leaves it out.
+    let title = with_order(&q, None);
     let is_empty = posts.read().is_empty() && !loading() && error().is_none() && !has_more();
 
     rsx! {
         div { class: "page gallery",
-            if !q.is_empty() {
-                h1 { class: "page-title", "{q}" }
+            div { class: "page-head",
+                h1 { class: if title.is_empty() { "page-title visually-hidden" } else { "page-title" },
+                    if title.is_empty() { "Gallery" } else { "{title}" }
+                }
+                SortMenu { q: q.clone() }
             }
             if let Some(message) = error() {
                 ErrorBanner { message, onretry: retry }
@@ -107,6 +126,32 @@ pub fn Gallery(q: String) -> Element {
                         Spinner {}
                     } else {
                         button { class: "btn tonal", onclick: move |_| load_more(), "Load more" }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Rewrites the query's `order:` term and navigates to the result.
+#[component]
+fn SortMenu(q: String) -> Element {
+    let current = parse_query(&q).map(|p| p.order).unwrap_or_default();
+    rsx! {
+        label { class: "sort",
+            span { class: "muted", "Sort" }
+            select {
+                aria_label: "Sort by",
+                onchange: move |e| {
+                    let order = Order::parse(&e.value());
+                    navigator().push(Route::Gallery { q: with_order(&q, order) });
+                },
+                for (label, value) in SORTS {
+                    option {
+                        key: "{value}",
+                        value,
+                        selected: Order::parse(value) == Some(current),
+                        "{label}"
                     }
                 }
             }

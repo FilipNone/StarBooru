@@ -5,7 +5,7 @@ use axum::http::StatusCode;
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use sqlx::{FromRow, Postgres, QueryBuilder, Transaction};
-use starbooru_core::query::Order;
+use starbooru_core::query::SortKey;
 use starbooru_core::tag::normalize_tags;
 use starbooru_core::{
     DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT, MediaKind, Post, PostPage, PostUpdate, Rating, VoteRequest,
@@ -116,6 +116,19 @@ async fn tag_ids(state: &AppState, names: &[String]) -> AppResult<Vec<i64>> {
     )
 }
 
+/// Sort expression for a key; the id is always the tie-breaker. These match
+/// the partial indexes in migration 0002.
+fn sort_column(key: SortKey) -> Option<&'static str> {
+    match key {
+        SortKey::Id | SortKey::Random => None,
+        SortKey::Score => Some("p.score"),
+        SortKey::Size => Some("p.file_size"),
+        SortKey::Pixels => Some("(p.width::bigint * p.height)"),
+        SortKey::TagCount => Some("cardinality(p.tag_ids)"),
+        SortKey::Updated => Some("p.updated_at"),
+    }
+}
+
 #[derive(Deserialize)]
 pub struct SearchParams {
     #[serde(default)]
@@ -176,12 +189,24 @@ pub async fn search(
     if let Some(kind) = query.kind {
         qb.push(" AND p.kind = ").push_bind(kind.to_db());
     }
-    qb.push(match query.order {
-        Order::Newest => " ORDER BY p.id DESC",
-        Order::Oldest => " ORDER BY p.id ASC",
-        Order::Score => " ORDER BY p.score DESC, p.id DESC",
-        Order::Random => " ORDER BY random()",
-    });
+    if query.order.key == SortKey::Random {
+        qb.push(" ORDER BY random()");
+    } else {
+        let dir = if query.order.descending {
+            " DESC"
+        } else {
+            " ASC"
+        };
+        qb.push(" ORDER BY ");
+        if let Some(column) = sort_column(query.order.key) {
+            qb.push(column).push(dir);
+            if query.order.key == SortKey::Pixels {
+                qb.push(" NULLS LAST");
+            }
+            qb.push(", ");
+        }
+        qb.push("p.id").push(dir);
+    }
     let offset = i64::from(page - 1) * i64::from(limit);
     qb.push(" LIMIT ")
         .push_bind(i64::from(limit) + 1)
@@ -588,4 +613,86 @@ pub async fn purge_posts(state: &AppState, which: Purge) -> AppResult<u64> {
     })
     .await?;
     Ok(count)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::testing;
+
+    async fn order_of(app: &testing::TestApp, token: &str, q: &str) -> Vec<i64> {
+        let page = app.get(&format!("/api/v1/posts?q={q}"), token).await.json();
+        page["posts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p["id"].as_i64().unwrap())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn sorts_by_every_key() {
+        let Some(app) = testing::app().await else {
+            return;
+        };
+        let t = app.register("admin").await;
+        // Distinct sizes, dimensions and tag counts.
+        let small = app
+            .upload(&t, &testing::png(4, 4, 1), &[("tags", "a b c")])
+            .await
+            .json()["id"]
+            .as_i64()
+            .unwrap();
+        let big = app
+            .upload(&t, &testing::png(64, 64, 2), &[("tags", "a")])
+            .await
+            .json()["id"]
+            .as_i64()
+            .unwrap();
+        let mid = app
+            .upload(&t, &testing::png(16, 16, 3), &[("tags", "a b")])
+            .await
+            .json()["id"]
+            .as_i64()
+            .unwrap();
+
+        assert_eq!(order_of(&app, &t, "").await, vec![mid, big, small]);
+        assert_eq!(order_of(&app, &t, "order:old").await, vec![small, big, mid]);
+        assert_eq!(
+            order_of(&app, &t, "order:size").await,
+            vec![big, mid, small]
+        );
+        assert_eq!(
+            order_of(&app, &t, "order:size_asc").await,
+            vec![small, mid, big]
+        );
+        assert_eq!(
+            order_of(&app, &t, "order:pixels").await,
+            vec![big, mid, small]
+        );
+        assert_eq!(
+            order_of(&app, &t, "order:tags").await,
+            vec![small, mid, big]
+        );
+        assert_eq!(
+            order_of(&app, &t, "order:tags_asc").await,
+            vec![big, mid, small]
+        );
+        app.call(
+            axum::http::Method::PATCH,
+            &format!("/api/v1/posts/{small}"),
+            Some(&t),
+            Some(serde_json::json!({"rating": "sensitive"})),
+        )
+        .await;
+        assert_eq!(
+            order_of(&app, &t, "order:updated").await.first(),
+            Some(&small)
+        );
+        let mut random = order_of(&app, &t, "order:random").await;
+        random.sort_unstable();
+        assert_eq!(random.len(), 3);
+        let r = app.get("/api/v1/posts?q=order:sideways", &t).await;
+        assert_eq!(r.status, axum::http::StatusCode::BAD_REQUEST);
+        app.finish().await;
+    }
 }

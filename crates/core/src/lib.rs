@@ -8,7 +8,7 @@ pub mod query;
 pub mod tag;
 
 pub use model::*;
-pub use query::{Order, SearchQuery, parse_query};
+pub use query::{Order, SearchQuery, SortKey, parse_query, with_order};
 pub use tag::{normalize_tag, parse_tag_list};
 
 /// Path prefix of the versioned JSON API.
