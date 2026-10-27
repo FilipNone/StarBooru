@@ -17,6 +17,8 @@ services:
       STARBOORU_ALLOW_REGISTRATION: ${STARBOORU_ALLOW_REGISTRATION:-false}
       STARBOORU_MAX_UPLOAD_MB: ${STARBOORU_MAX_UPLOAD_MB:-512}
       STARBOORU_TRASH_DAYS: ${STARBOORU_TRASH_DAYS:-0}
+      # Behind Dokploy's Traefik the client address is in X-Forwarded-For.
+      STARBOORU_TRUST_PROXY: ${STARBOORU_TRUST_PROXY:-true}
     volumes:
       - media:/data
     expose:

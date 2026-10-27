@@ -33,6 +33,9 @@ pub struct Config {
     pub tools: Option<Tools>,
     /// Which addresses URL import may fetch. `None` turns it off.
     pub url_import: Option<Reach>,
+    /// Take the client address from the last `X-Forwarded-For` entry (set
+    /// it when a reverse proxy is in front), for the sign-in limits.
+    pub trust_proxy: bool,
 }
 
 const MIN_SECRET_LEN: usize = 32;
@@ -126,12 +129,8 @@ impl Config {
             web_dir,
             secret: secret.into_bytes(),
             max_upload_bytes: max_upload_mb.saturating_mul(1024 * 1024),
-            allow_registration: get("STARBOORU_ALLOW_REGISTRATION").is_some_and(|v| {
-                matches!(
-                    v.trim().to_ascii_lowercase().as_str(),
-                    "1" | "true" | "yes" | "on"
-                )
-            }),
+            allow_registration: flag(get("STARBOORU_ALLOW_REGISTRATION")),
+            trust_proxy: flag(get("STARBOORU_TRUST_PROXY")),
             instance_name: get("STARBOORU_NAME").unwrap_or_else(|| "StarBooru".into()),
             trash_days,
             tools,
@@ -153,8 +152,18 @@ impl Config {
             trash_days: 0,
             tools: None,
             url_import: Some(Reach::Public),
+            trust_proxy: false,
         }
     }
+}
+
+fn flag(value: Option<String>) -> bool {
+    value.is_some_and(|v| {
+        matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    })
 }
 
 #[cfg(test)]
@@ -188,6 +197,14 @@ mod tests {
         assert_eq!(tools.ffmpeg, std::path::Path::new("ffmpeg"));
         assert_eq!(tools.ffprobe, std::path::Path::new("ffprobe"));
         assert_eq!(c.url_import, Some(Reach::Public));
+        assert!(!c.trust_proxy);
+        let proxied = cfg(&[
+            ("DATABASE_URL", "x"),
+            ("STARBOORU_SECRET", SECRET),
+            ("STARBOORU_TRUST_PROXY", " True"),
+        ])
+        .unwrap();
+        assert!(proxied.trust_proxy);
     }
 
     #[test]

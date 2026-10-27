@@ -12,6 +12,7 @@ use crate::auth::{
 };
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
+use crate::throttle::{ClientAddr, account_key};
 
 type UserRow = (i64, String, String, DateTime<Utc>);
 
@@ -57,9 +58,19 @@ async fn start_session(
 /// `STARBOORU_ALLOW_REGISTRATION=true`.
 pub async fn register(
     State(state): State<AppState>,
+    ClientAddr(addr): ClientAddr,
     headers: HeaderMap,
     Json(creds): Json<Credentials>,
 ) -> AppResult<Json<AuthResponse>> {
+    if let Some(a) = &addr {
+        let now = Utc::now();
+        state
+            .guards
+            .signup
+            .check(a, now)
+            .map_err(|retry_after| AppError::TooManyRequests { retry_after })?;
+        state.guards.signup.hit(a, now);
+    }
     let username = creds.username.trim().to_owned();
     auth::validate_username(&username)?;
     auth::validate_password(&creds.password)?;
@@ -106,11 +117,17 @@ pub async fn register(
     start_session(&state, to_user(row)?, &headers).await
 }
 
+/// Wrong passwords count against the account and the client address (see
+/// `throttle`); a locked one answers 429 before the password is checked.
 pub async fn login(
     State(state): State<AppState>,
+    ClientAddr(addr): ClientAddr,
     headers: HeaderMap,
     Json(creds): Json<Credentials>,
 ) -> AppResult<Json<AuthResponse>> {
+    let now = Utc::now();
+    let account = account_key(&creds.username);
+    state.guards.check_login(&account, addr.as_deref(), now)?;
     let row: Option<(i64, String, String, DateTime<Utc>, String)> = sqlx::query_as(
         "SELECT id, username, role, created_at, password_hash FROM users \
          WHERE lower(username) = lower($1)",
@@ -119,12 +136,12 @@ pub async fn login(
     .fetch_optional(&state.db)
     .await?;
     let stored = row.as_ref().map(|r| r.4.clone());
-    if !verify_password(creds.password, stored).await? {
-        return Err(AppError::Unauthorized);
-    }
-    let Some((id, username, role, created_at, _)) = row else {
+    let verified = verify_password(creds.password, stored).await?;
+    let Some((id, username, role, created_at, _)) = row.filter(|_| verified) else {
+        state.guards.failed_login(&account, addr.as_deref(), now);
         return Err(AppError::Unauthorized);
     };
+    state.guards.account.clear(&account);
     sqlx::query("DELETE FROM sessions WHERE expires_at < now()")
         .execute(&state.db)
         .await?;
@@ -160,7 +177,15 @@ pub async fn change_password(
         .bind(user.id)
         .fetch_one(&state.db)
         .await?;
+    let now = Utc::now();
+    let key = format!("#{}", user.id);
+    state
+        .guards
+        .account
+        .check(&key, now)
+        .map_err(|retry_after| AppError::TooManyRequests { retry_after })?;
     if !verify_password(change.current, Some(stored)).await? {
+        state.guards.account.hit(&key, now);
         return Err(AppError::BadRequest("the current password is wrong".into()));
     }
     let hash = hash_password(change.new).await?;
@@ -247,7 +272,7 @@ pub async fn revoke_other_sessions(
 mod tests {
     use axum::body::Body;
     use axum::http::{Method, Request};
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     use super::*;
     use crate::testing::{self, TestApp};
@@ -398,6 +423,123 @@ mod tests {
         .await
         .unwrap();
         assert!(fresh);
+        app.finish().await;
+    }
+
+    async fn attempt(
+        app: &TestApp,
+        path: &str,
+        from: &str,
+        body: Value,
+        token: Option<&str>,
+    ) -> testing::Resp {
+        let mut req = Request::builder()
+            .method(if path.ends_with("password") {
+                Method::PUT
+            } else {
+                Method::POST
+            })
+            .uri(path)
+            .header(header::CONTENT_TYPE, "application/json")
+            .header("x-forwarded-for", format!("192.0.2.200, {from}"));
+        if let Some(t) = token {
+            req = req.header(header::AUTHORIZATION, format!("Bearer {t}"));
+        }
+        app.send(req.body(Body::from(body.to_string())).unwrap())
+            .await
+    }
+
+    #[tokio::test]
+    async fn throttles_password_guessing() {
+        let Some(app) = testing::app_with(|c| c.trust_proxy = true).await else {
+            return;
+        };
+        let alice = app.register("alice").await;
+        app.register("bob").await;
+        let login = "/api/v1/auth/login";
+        let guess = |user: &str, password: &str| json!({"username": user, "password": password});
+
+        for _ in 0..10 {
+            let r = attempt(
+                &app,
+                login,
+                "198.51.100.1",
+                guess("Alice", "wrong-guess"),
+                None,
+            )
+            .await;
+            assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+        }
+        // Locked: even the right password waits, from any address.
+        let r = attempt(
+            &app,
+            login,
+            "198.51.100.2",
+            guess("alice", testing::PASSWORD),
+            None,
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(r.json()["code"], "rate_limited");
+        let wait: u64 = r.headers[header::RETRY_AFTER]
+            .to_str()
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert!((1..=15 * 60).contains(&wait));
+        // Other accounts are unaffected.
+        let r = attempt(
+            &app,
+            login,
+            "198.51.100.1",
+            guess("bob", testing::PASSWORD),
+            None,
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::OK);
+
+        // Sign-ups: 10 per address per hour (alice and bob were 2).
+        for i in 0..8 {
+            let body = guess(&format!("user{i}"), testing::PASSWORD);
+            let r = attempt(&app, "/api/v1/auth/register", "203.0.113.7", body, None).await;
+            assert_eq!(r.status, StatusCode::OK);
+        }
+        let body = guess("one_too_many", testing::PASSWORD);
+        let r = attempt(
+            &app,
+            "/api/v1/auth/register",
+            "203.0.113.7",
+            body.clone(),
+            None,
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS);
+        let r = attempt(&app, "/api/v1/auth/register", "203.0.113.8", body, None).await;
+        assert_eq!(r.status, StatusCode::OK);
+
+        // A stolen session can't guess the current password either.
+        let change = json!({"current": "wrong-guess", "new": "a-new-password"});
+        for _ in 0..10 {
+            let r = attempt(
+                &app,
+                "/api/v1/auth/password",
+                "198.51.100.3",
+                change.clone(),
+                Some(&alice),
+            )
+            .await;
+            assert_eq!(r.status, StatusCode::BAD_REQUEST);
+        }
+        let change = json!({"current": testing::PASSWORD, "new": "a-new-password"});
+        let r = attempt(
+            &app,
+            "/api/v1/auth/password",
+            "198.51.100.3",
+            change,
+            Some(&alice),
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS);
         app.finish().await;
     }
 }

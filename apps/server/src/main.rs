@@ -12,6 +12,7 @@ mod state;
 mod storage;
 #[cfg(test)]
 mod testing;
+mod throttle;
 
 use std::process::ExitCode;
 use std::time::Duration;
@@ -68,9 +69,12 @@ async fn run() -> Result<(), StartupError> {
 
     let listener = tokio::net::TcpListener::bind(state.config.bind).await?;
     info!("StarBooru listening on http://{}", state.config.bind);
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await?;
     info!("shut down cleanly");
     Ok(())
 }

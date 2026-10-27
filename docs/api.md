@@ -30,11 +30,11 @@ All endpoints are under `/api/v1`. Bodies are JSON unless noted. The Rust types 
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
-| POST | `/auth/register` | `{username, password}` | `AuthResponse {token, user}`. The first account becomes admin. Later accounts need `STARBOORU_ALLOW_REGISTRATION`. |
-| POST | `/auth/login` | `{username, password}` | `AuthResponse` |
+| POST | `/auth/register` | `{username, password}` | `AuthResponse {token, user}`. The first account becomes admin. Later accounts need `STARBOORU_ALLOW_REGISTRATION`. 429 after 10 attempts from one address in an hour. |
+| POST | `/auth/login` | `{username, password}` | `AuthResponse`. 401 for a wrong username or password. 429 `rate_limited` with `Retry-After` once an account has 10 failures in 15 minutes (the right password waits too) or an address has 50. A successful sign-in resets the account's count. |
 | POST | `/auth/logout` | | 204; revokes this token |
 | GET | `/auth/me` | | `User` |
-| PUT | `/auth/password` | `PasswordChange {current, new}` | 204. Signs out every other session of the account. 400 if `current` is wrong or `new` breaks the password rules. |
+| PUT | `/auth/password` | `PasswordChange {current, new}` | 204. Signs out every other session of the account. 400 if `current` is wrong or `new` breaks the password rules. 429 after 10 wrong `current` passwords in 15 minutes. |
 | GET | `/auth/sessions` | | `SessionInfo[] {id, client, created_at, last_used_at, expires_at, current}`: the account's live sessions, this one first. `client` is a short description such as "Firefox on Linux", derived from the User-Agent at sign-in (the header itself is not stored). `last_used_at` is updated at most every 5 minutes. |
 | DELETE | `/auth/sessions/{id}` | | 204; signs that session out. 404 if it isn't one of yours. |
 | DELETE | `/auth/sessions` | | `RevokeResult {revoked}`; signs out every session but this one |

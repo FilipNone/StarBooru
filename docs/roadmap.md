@@ -14,7 +14,7 @@ _Status as of 2026-10-27. Scope comes from `docs/checklist.md`._
    - Clients: one Dioxus app for web, desktop and Android.
    - Docker image and a Dokploy-ready compose file.
 2. **M2, daily driver.** Video thumbnails, a recycle bin page, mass edit, saved searches, an explore/trending page, a duplicate finder, keyboard navigation, i18n scaffolding.
-3. **M3, admin and safety.** Admin settings, server stats, usage limits and stats, API keys, login rate limiting, OAuth, database backup from the UI.
+3. **M3, admin and safety.** Admin settings, server stats, usage limits and stats, API keys, OAuth (login rate limiting is done), database backup from the UI.
 4. **M4, native polish.** Caching and offline use, a keyring token store, Android dynamic colour, in-app updates, multiple booru backends, sync.
 5. **M5, AI.** Embeddings with pgvector for related media and similar-image search, automatic tagging, OCR, translation, upscaling and background removal (with a bring-your-own API key).
 
@@ -37,7 +37,7 @@ _Status as of 2026-10-27. Scope comes from `docs/checklist.md`._
 | saved search | ✅ | Star a search in the gallery header to save it, or tap it again to forget it. Saved searches show as chips on the unfiltered gallery. Per user, at most 200. |
 | automatic tagging, AI features, OCR | ⬜ | M5 |
 | explore tab with trending | ✅ | An Explore tab: trending posts (net upvotes in the last day, week, month or year), popular tags on recent posts, *On this day* from earlier years, and shuffleable random picks. A search narrows it all. |
-| login system | 🟡 | Accounts, Argon2id, revocable tokens, first user becomes admin. OAuth: M3. |
+| login system | 🟡 | Accounts, Argon2id, revocable tokens, first user becomes admin. Failed sign-ins are limited per account and address (429 with `Retry-After`). OAuth: M3. |
 | profile settings | ✅ | Theme and accent; password change (signs out other devices); a list of signed-in devices with last activity, sign-out per device and *Sign out everywhere else*. |
 | usage stats / usage limits | ⬜ | M3 |
 | automatic smart image compression | ⬜ | Originals are kept byte-exact by design. Compressed variants could be added. |
@@ -91,6 +91,5 @@ _Status as of 2026-10-27. Scope comes from `docs/checklist.md`._
 
 ## Known gaps and risks
 
-- **No login rate limiting.** Put the instance behind HTTPS and use strong passwords until M3.
 - **Plaintext token on desktop.** The token is stored in the user's config directory. Moving it to the OS keyring is M4.
 - **Orphan files.** Fixed for failed inserts (the files are removed unless another post owns them) and interrupted writes (`tmp/` is cleared at startup). Files left by a crash between the write and the insert are not swept yet.

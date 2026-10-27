@@ -25,6 +25,7 @@ pub fn Privacy() -> Element {
                 li { "Your account: username, role and a salted Argon2id hash of your password. The password itself is never stored." }
                 li { "Your sessions: a hash of each sign-in token, the kind of device it came from (for example “StarBooru app on Linux” or “Firefox on Android”), when it was created and last used, and when it expires." }
                 li { "What you add: uploaded files and their size, dimensions and checksum, tags, ratings, sources, votes and saved searches." }
+                li { "To slow down password guessing, the server counts failed sign-ins per account and per network address, and sign-ups per address. These counts are kept in memory for at most an hour and never written to disk." }
             }
             h2 { "What stays on your device" }
             p {

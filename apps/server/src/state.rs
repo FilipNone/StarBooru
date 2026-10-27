@@ -8,6 +8,7 @@ use crate::config::Config;
 use crate::fetch::Fetcher;
 use crate::media::Signer;
 use crate::storage::Storage;
+use crate::throttle::Guards;
 
 /// Cheap-to-clone handle shared by all handlers.
 #[derive(Clone)]
@@ -20,6 +21,8 @@ pub struct Inner {
     pub signer: Signer,
     /// URL import; `None` when it is off or the HTTP client failed to start.
     pub fetcher: Option<Fetcher>,
+    /// Sign-in and sign-up limits.
+    pub guards: Guards,
 }
 
 impl AppState {
@@ -40,6 +43,7 @@ impl AppState {
             storage,
             signer,
             fetcher,
+            guards: Guards::default(),
         }))
     }
 }

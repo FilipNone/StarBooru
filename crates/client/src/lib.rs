@@ -33,7 +33,7 @@ pub enum ClientError {
     Api { status: u16, error: ApiError },
     /// HTTP 429 that is still there after the automatic retries.
     /// `retry_after` is in seconds when the server sent one.
-    #[error("rate limited, retry later")]
+    #[error("{}", rate_limited_message(*.retry_after))]
     RateLimited { retry_after: Option<u64> },
 }
 
@@ -48,6 +48,14 @@ impl ClientError {
             ClientError::Api { error, .. } => Some(&error.code),
             _ => None,
         }
+    }
+}
+
+fn rate_limited_message(retry_after: Option<u64>) -> String {
+    match retry_after.map(|s| s.div_ceil(60)) {
+        None => "too many requests, try again later".to_owned(),
+        Some(0 | 1) => "too many attempts, try again in a minute".to_owned(),
+        Some(m) => format!("too many attempts, try again in {m} minutes"),
     }
 }
 
@@ -503,6 +511,16 @@ mod tests {
         assert_eq!(retry_delay(1, Some(30)), Some(MAX_RETRY_WAIT));
         assert_eq!(retry_delay(0, Some(31)), None);
         assert_eq!(retry_delay(u32::MAX, Some(1)), None);
+        let limited = |retry_after| ClientError::RateLimited { retry_after }.to_string();
+        assert_eq!(limited(None), "too many requests, try again later");
+        assert_eq!(
+            limited(Some(30)),
+            "too many attempts, try again in a minute"
+        );
+        assert_eq!(
+            limited(Some(840)),
+            "too many attempts, try again in 14 minutes"
+        );
     }
 
     /// Serves canned HTTP responses, one per connection, and counts them.

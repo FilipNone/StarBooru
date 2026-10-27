@@ -30,6 +30,7 @@ The desktop and Android apps are the same Dioxus code as the web app. Each one a
 | `config.rs` | Environment variables (see `deployment.md`) |
 | `routes/` | One file per resource: `auth`, `posts`, `tags`, `trash`, `duplicates`, and more. `mod.rs` builds the router and its layers (CORS, compression, tracing, panic catcher, SPA fallback). |
 | `auth.rs` | Bearer-token extractor; Argon2id password hashing (on the blocking pool) |
+| `throttle.rs` | Sign-in limits: failed attempts per account and per client address (IPv6 by /64) in fixed windows, in memory and capped at 10,000 keys each. The address is the socket peer, or the last `X-Forwarded-For` entry with `STARBOORU_TRUST_PROXY`. |
 | `storage.rs` | Format sniffing, content-addressed storage, thumbnails |
 | `similar.rs` | Duplicate finder fingerprints: a 64-bit difference hash (9×8 brightness grid) plus the average colour, and grouping by Hamming distance through a 4×16-bit multi-index, so it never compares every pair. Fine high-frequency patterns blur to flat at 9×8 and can match when their colours do. |
 | `fetch.rs` | URL import download: http(s) only, public addresses only (checked for literal IPs, on every redirect and in a filtering DNS resolver), no proxies, streaming size cap, timeouts |

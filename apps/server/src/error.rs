@@ -1,7 +1,7 @@
 //! The API error type: every handler returns `Result<_, AppError>`.
 
 use axum::Json;
-use axum::http::StatusCode;
+use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use starbooru_core::ApiError;
 use tracing::error;
@@ -22,6 +22,9 @@ pub enum AppError {
     PayloadTooLarge,
     #[error("{0}")]
     Unsupported(String),
+    /// Too many failed attempts; try again after `retry_after` seconds.
+    #[error("too many attempts, try again in {}", wait_phrase(*.retry_after))]
+    TooManyRequests { retry_after: u64 },
     /// A remote server failed during URL import.
     #[error("{0}")]
     Upstream(String),
@@ -45,6 +48,7 @@ impl AppError {
             AppError::Conflict { code, .. } => (StatusCode::CONFLICT, code),
             AppError::PayloadTooLarge => (StatusCode::PAYLOAD_TOO_LARGE, "too_large"),
             AppError::Unsupported(_) => (StatusCode::UNSUPPORTED_MEDIA_TYPE, "unsupported"),
+            AppError::TooManyRequests { .. } => (StatusCode::TOO_MANY_REQUESTS, "rate_limited"),
             AppError::Upstream(_) => (StatusCode::BAD_GATEWAY, "fetch_failed"),
             AppError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "internal"),
         }
@@ -61,14 +65,26 @@ impl IntoResponse for AppError {
         } else {
             self.to_string()
         };
-        (
+        let mut resp = (
             status,
             Json(ApiError {
                 code: code.to_owned(),
                 message,
             }),
         )
-            .into_response()
+            .into_response();
+        if let AppError::TooManyRequests { retry_after } = self {
+            resp.headers_mut()
+                .insert(header::RETRY_AFTER, HeaderValue::from(retry_after));
+        }
+        resp
+    }
+}
+
+fn wait_phrase(secs: u64) -> String {
+    match secs.div_ceil(60) {
+        0 | 1 => "a minute".to_owned(),
+        m => format!("{m} minutes"),
     }
 }
 
