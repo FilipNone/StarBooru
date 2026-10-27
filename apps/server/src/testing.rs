@@ -18,6 +18,9 @@ use crate::config::Config;
 use crate::state::AppState;
 use crate::storage::Storage;
 
+/// The password `register` gives every account.
+pub const PASSWORD: &str = "password123";
+
 pub struct TestApp {
     pub state: AppState,
     pub router: Router,
@@ -153,7 +156,7 @@ impl TestApp {
                 Method::POST,
                 "/api/v1/auth/register",
                 None,
-                Some(serde_json::json!({"username": username, "password": "password123"})),
+                Some(serde_json::json!({"username": username, "password": PASSWORD})),
             )
             .await;
         assert_eq!(r.status, StatusCode::OK, "register: {:?}", r.json());

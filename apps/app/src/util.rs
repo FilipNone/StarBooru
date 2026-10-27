@@ -1,5 +1,7 @@
 use std::path::Path;
 
+use chrono::{DateTime, Utc};
+
 /// `1536` → `1.5 KB`.
 pub fn human_size(bytes: i64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
@@ -103,9 +105,45 @@ pub fn posts_count(n: u64) -> String {
     }
 }
 
+/// "just now", "5 minutes ago", "yesterday", …, then a date.
+pub fn time_ago(then: DateTime<Utc>, now: DateTime<Utc>) -> String {
+    let secs = (now - then).num_seconds();
+    let plural = |n: i64, unit: &str| {
+        if n == 1 {
+            format!("1 {unit} ago")
+        } else {
+            format!("{n} {unit}s ago")
+        }
+    };
+    match secs {
+        ..60 => "just now".to_owned(),
+        60..3_600 => plural(secs / 60, "minute"),
+        3_600..86_400 => plural(secs / 3_600, "hour"),
+        86_400..172_800 => "yesterday".to_owned(),
+        172_800..2_592_000 => format!("{} days ago", secs / 86_400),
+        _ => then.format("%-d %b %Y").to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn says_how_long_ago() {
+        let now = DateTime::parse_from_rfc3339("2026-10-27T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let ago = |secs: i64| time_ago(now - chrono::Duration::seconds(secs), now);
+        assert_eq!(ago(-30), "just now");
+        assert_eq!(ago(59), "just now");
+        assert_eq!(ago(60), "1 minute ago");
+        assert_eq!(ago(7_199), "1 hour ago");
+        assert_eq!(ago(7_200), "2 hours ago");
+        assert_eq!(ago(90_000), "yesterday");
+        assert_eq!(ago(3 * 86_400), "3 days ago");
+        assert_eq!(ago(40 * 86_400), "17 Sep 2026");
+    }
 
     #[test]
     fn splits_tag_edits() {

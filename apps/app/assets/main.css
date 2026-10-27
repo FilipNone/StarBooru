@@ -421,6 +421,18 @@ button.thumb { width: 100%; padding: 0; border: 0; font: inherit; color: inherit
 }
 .sentinel { display: grid; place-items: center; padding: 32px 0; }
 
+/* ---------- settings ---------- */
+
+.field-error { color: var(--danger); font-size: 13px; }
+.field input[aria-invalid="true"] { border-color: var(--danger); }
+.sessions { list-style: none; margin: 0 0 12px; padding: 0; }
+.session { display: flex; align-items: center; gap: 12px; padding: 12px 0; }
+.session + .session { border-top: 1px solid oklch(from var(--outline) l c h / 0.4); }
+.session-main { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; flex: 1; min-width: 0; }
+.session-main .muted { flex-basis: 100%; font-size: 14px; }
+.session-main .pill { background: var(--primary-container); color: var(--on-primary-container); }
+.card form .banner { margin-bottom: 12px; }
+
 /* ---------- explore ---------- */
 
 .explore .page-head { margin-bottom: 8px; }

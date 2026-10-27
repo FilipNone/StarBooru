@@ -44,7 +44,7 @@ PostgreSQL schema: `apps/server/migrations/`.
 | Table | Contents |
 |---|---|
 | `users` | Usernames are case-insensitively unique. Roles are `admin` and `user`; the first account becomes admin. |
-| `sessions` | The SHA-256 of each bearer token (`sb_<64 hex>`) and its expiry, 90 days. The plain token is never stored. |
+| `sessions` | The SHA-256 of each bearer token (`sb_<64 hex>`) and its expiry, 90 days. The plain token is never stored. Also an `id` for the settings page, `last_used_at` (refreshed at most every 5 minutes) and `client`, a short description like "Firefox on Linux" (`starbooru_core::agent`); the raw User-Agent is not kept. Native apps send `StarBooru-app/<version> (<os>)`. |
 | `tags` | Normalised name, category (general / artist / character / copyright / meta) and a `post_count` kept in step inside the same transaction as post edits |
 | `posts` | One per file: `sha256` (unique, so duplicates are refused), format, size, dimensions, rating, source, score, `tag_ids BIGINT[]`, `deleted_at` (soft delete) |
 | `post_votes` | One vote per user and post, −1 or +1, with `voted_at` (set when the vote is cast or changed). `posts.score` is their sum. |

@@ -8,9 +8,9 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use starbooru_core::{
     API_PREFIX, AliasRequest, ApiError, AuthResponse, BulkEdit, BulkResult, Credentials, Explore,
-    ImplicationRequest, ImportRequest, Neighbors, Post, PostPage, PostUpdate, PurgeResult, Rating,
-    SaveSearchRequest, SavedSearch, ServerInfo, Tag, TagDetail, TagOrder, TagUpdate, User,
-    VoteRequest,
+    ImplicationRequest, ImportRequest, Neighbors, PasswordChange, Post, PostPage, PostUpdate,
+    PurgeResult, Rating, RevokeResult, SaveSearchRequest, SavedSearch, ServerInfo, SessionInfo,
+    Tag, TagDetail, TagOrder, TagUpdate, User, VoteRequest,
 };
 use thiserror::Error;
 use url::Url;
@@ -60,6 +60,24 @@ pub struct Client {
     token: Option<String>,
 }
 
+/// Native builds name themselves generically (app, version and OS) so the
+/// server can label the session; browsers send their own User-Agent.
+#[cfg(not(target_arch = "wasm32"))]
+fn http_client() -> Result<reqwest::Client> {
+    let agent = format!(
+        "{}/{} ({})",
+        starbooru_core::agent::APP_AGENT,
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::OS
+    );
+    Ok(reqwest::Client::builder().user_agent(agent).build()?)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn http_client() -> Result<reqwest::Client> {
+    Ok(reqwest::Client::new())
+}
+
 impl Client {
     /// `base_url` is the instance root, e.g. `https://booru.example.com`.
     pub fn new(base_url: &str) -> Result<Self> {
@@ -72,7 +90,7 @@ impl Client {
             )));
         }
         Ok(Self {
-            http: reqwest::Client::new(),
+            http: http_client()?,
             base,
             token: None,
         })
@@ -144,6 +162,28 @@ impl Client {
 
     pub async fn logout(&self) -> Result<()> {
         Self::send_empty(self.request(Method::POST, "/auth/logout")?).await
+    }
+
+    /// Needs the current password; signs out every other session.
+    pub async fn change_password(&self, current: &str, new: &str) -> Result<()> {
+        let body = PasswordChange {
+            current: current.to_owned(),
+            new: new.to_owned(),
+        };
+        Self::send_empty(self.request(Method::PUT, "/auth/password")?.json(&body)).await
+    }
+
+    pub async fn sessions(&self) -> Result<Vec<SessionInfo>> {
+        Self::send(self.request(Method::GET, "/auth/sessions")?).await
+    }
+
+    pub async fn revoke_session(&self, id: i64) -> Result<()> {
+        Self::send_empty(self.request(Method::DELETE, &format!("/auth/sessions/{id}"))?).await
+    }
+
+    /// Signs out everywhere but here.
+    pub async fn revoke_other_sessions(&self) -> Result<RevokeResult> {
+        Self::send(self.request(Method::DELETE, "/auth/sessions")?).await
     }
 
     pub async fn me(&self) -> Result<User> {

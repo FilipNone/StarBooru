@@ -38,7 +38,7 @@ _Status as of 2026-10-27. Scope comes from `docs/checklist.md`._
 | automatic tagging, AI features, OCR | ⬜ | M5 |
 | explore tab with trending | ✅ | An Explore tab: trending posts (net upvotes in the last day, week, month or year), popular tags on recent posts, *On this day* from earlier years, and shuffleable random picks. A search narrows it all. |
 | login system | 🟡 | Accounts, Argon2id, revocable tokens, first user becomes admin. OAuth: M3. |
-| profile settings | 🟡 | Theme and accent. No password change yet. |
+| profile settings | ✅ | Theme and accent; password change (signs out other devices); a list of signed-in devices with last activity, sign-out per device and *Sign out everywhere else*. |
 | usage stats / usage limits | ⬜ | M3 |
 | automatic smart image compression | ⬜ | Originals are kept byte-exact by design. Compressed variants could be added. |
 | video reproduction offload to client | ✅ | Files are streamed with Range support. There is no server transcoding. |

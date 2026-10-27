@@ -183,6 +183,33 @@ pub struct Credentials {
     pub password: String,
 }
 
+/// `PUT /auth/password`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PasswordChange {
+    pub current: String,
+    pub new: String,
+}
+
+/// One signed-in device or app (`GET /auth/sessions`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionInfo {
+    pub id: i64,
+    /// Like "Firefox on Linux"; empty for sessions from before this was kept.
+    pub client: String,
+    pub created_at: DateTime<Utc>,
+    /// Updated at most every few minutes.
+    pub last_used_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+    /// The session making this request.
+    pub current: bool,
+}
+
+/// `DELETE /auth/sessions`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RevokeResult {
+    pub revoked: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthResponse {
     pub token: String,

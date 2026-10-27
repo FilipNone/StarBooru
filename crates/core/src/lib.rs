@@ -3,11 +3,13 @@
 //! This crate does no I/O so it compiles everywhere the clients run
 //! (native, `wasm32-unknown-unknown`, Android).
 
+pub mod agent;
 pub mod model;
 pub mod query;
 pub mod saved;
 pub mod tag;
 
+pub use agent::describe_user_agent;
 pub use model::*;
 pub use query::{Order, SearchQuery, SortKey, parse_query, with_order};
 pub use saved::clean_saved_search;

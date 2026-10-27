@@ -13,6 +13,9 @@ use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 
 pub const SESSION_DAYS: i64 = 90;
+/// `sessions.last_used_at` is refreshed when it is older than this, so most
+/// requests don't write.
+const TOUCH_AFTER_SECS: i64 = 300;
 const MAX_PASSWORD_BYTES: usize = 1024;
 
 /// The caller, resolved from `Authorization: Bearer <token>`.
@@ -21,6 +24,7 @@ pub struct AuthUser {
     pub id: i64,
     pub role: Role,
     pub token_hash: Vec<u8>,
+    pub session_id: i64,
 }
 
 impl AuthUser {
@@ -42,19 +46,28 @@ impl FromRequestParts<AppState> for AuthUser {
             .filter(|t| !t.is_empty())
             .ok_or(AppError::Unauthorized)?;
         let token_hash = hash_token(token);
-        let (id, role): (i64, String) = sqlx::query_as(
-            "SELECT u.id, u.role FROM sessions s JOIN users u ON u.id = s.user_id \
+        let (id, role, session_id, stale): (i64, String, i64, bool) = sqlx::query_as(
+            "SELECT u.id, u.role, s.id, s.last_used_at < now() - make_interval(secs => $2) \
+             FROM sessions s JOIN users u ON u.id = s.user_id \
              WHERE s.token_hash = $1 AND s.expires_at > now()",
         )
         .bind(&token_hash)
+        .bind(TOUCH_AFTER_SECS as f64)
         .fetch_optional(&state.db)
         .await?
         .ok_or(AppError::Unauthorized)?;
         let role = Role::from_db(&role).ok_or_else(|| AppError::internal("bad role in db"))?;
+        if stale {
+            sqlx::query("UPDATE sessions SET last_used_at = now() WHERE id = $1")
+                .bind(session_id)
+                .execute(&state.db)
+                .await?;
+        }
         Ok(Self {
             id,
             role,
             token_hash,
+            session_id,
         })
     }
 }

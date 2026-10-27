@@ -38,6 +38,15 @@ pub fn router(state: AppState) -> Router {
         .route("/auth/login", post(auth::login))
         .route("/auth/logout", post(auth::logout))
         .route("/auth/me", get(auth::me))
+        .route("/auth/password", put(auth::change_password))
+        .route(
+            "/auth/sessions",
+            get(auth::sessions).delete(auth::revoke_other_sessions),
+        )
+        .route(
+            "/auth/sessions/{id}",
+            axum::routing::delete(auth::revoke_session),
+        )
         .route(
             "/posts",
             get(posts::search)
