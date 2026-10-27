@@ -71,8 +71,9 @@ Tags are stored on each post as a `BIGINT[]` with a GIN index. A query like `blu
 1. The tag names are resolved to ids, following aliases. If an included tag doesn't exist, the result is empty, with no scan.
 2. The SQL is `tag_ids @> {include} AND NOT tag_ids && {exclude} AND rating = ANY(...)`.
 3. Rows are ordered by id, score or random, and paginated by limit and offset (at most 200 per page).
+4. The ordered, paginated query selects only post ids. The full rows, with tag names and the caller's vote, are built for the ids on the page (`select_page` in `routes/posts.rs`). So rows an `OFFSET` skips cost nothing extra.
 
-Partial indexes cover live posts, so the recycle bin doesn't slow normal browsing. The query syntax is in `api.md`.
+Partial indexes cover live posts, so the recycle bin doesn't slow normal browsing. Explore runs its four sections in parallel. Its random picks come from a sample of the table's pages (`TABLESAMPLE SYSTEM`) once the collection has more than 20,000 posts. When the sample has too few matches for a rare search, all the matches are sorted instead. Timings at a million posts are in `development.md` › *Speed at scale*. The query syntax is in `api.md`.
 
 ## Media storage
 

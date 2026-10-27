@@ -212,6 +212,10 @@ impl TestApp {
     }
 
     /// Drops the test database. Call at the end of each test.
+    pub fn db_name(&self) -> &str {
+        &self.db_name
+    }
+
     pub async fn finish(self) {
         let TestApp {
             state,

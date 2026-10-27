@@ -11,7 +11,7 @@ use starbooru_core::{
     DEFAULT_EXPLORE_DAYS, Explore, MAX_EXPLORE_DAYS, Post, TagTrend, parse_query,
 };
 
-use super::posts::{PostRow, push_filters, select_posts, tag_ids, to_post};
+use super::posts::{PostRow, end_page, push_filters, select_page, tag_ids, to_post};
 use super::tags::{TagRow, to_tag};
 use crate::auth::AuthUser;
 use crate::error::AppResult;
@@ -21,6 +21,9 @@ const TRENDING_LIMIT: i64 = 24;
 const TAGS_LIMIT: i64 = 20;
 const ON_THIS_DAY_LIMIT: i64 = 12;
 const RANDOM_LIMIT: i64 = 12;
+/// Random picks are drawn from about this many posts: a sample of the
+/// table's pages, so a big collection is not sorted whole.
+const RANDOM_SAMPLE: f32 = 5_000.0;
 
 #[derive(Deserialize)]
 pub struct ExploreParams {
@@ -64,19 +67,22 @@ pub async fn explore(
         }
     };
 
-    let mut qb = select_posts(user.id);
+    // The sections are independent, so they run at the same time.
+    let mut qb = select_page(user.id);
     qb.push(" JOIN (SELECT post_id, sum(value) AS heat FROM post_votes WHERE voted_at >= ")
         .push_bind(since)
         .push(" GROUP BY post_id HAVING sum(value) > 0) h ON h.post_id = p.id");
     push_filters(&mut qb, &query, include.clone(), exclude.clone());
     qb.push(" ORDER BY h.heat DESC, p.score DESC, p.id DESC LIMIT ")
         .push_bind(TRENDING_LIMIT);
-    let trending = fetch_posts(qb).await?;
+    end_page(&mut qb);
+    let trending = fetch_posts(qb);
 
+    // Counted by id first, so only the top tags are joined.
     let mut qb = QueryBuilder::new(
-        "SELECT t.id, t.name, t.category, t.post_count, count(*) AS recent \
-         FROM posts p CROSS JOIN LATERAL unnest(p.tag_ids) AS u(tag_id) \
-         JOIN tags t ON t.id = u.tag_id",
+        "SELECT t.id, t.name, t.category, t.post_count, c.recent FROM \
+         (SELECT u.tag_id, count(*) AS recent \
+          FROM posts p CROSS JOIN LATERAL unnest(p.tag_ids) AS u(tag_id)",
     );
     push_filters(&mut qb, &query, include.clone(), exclude.clone());
     qb.push(" AND p.created_at >= ").push_bind(since);
@@ -86,18 +92,22 @@ pub async fn explore(
             .push_bind(include.clone())
             .push("))");
     }
-    qb.push(" GROUP BY t.id ORDER BY recent DESC, t.name LIMIT ")
+    qb.push(" GROUP BY u.tag_id) c JOIN tags t ON t.id = c.tag_id ORDER BY c.recent DESC, t.name LIMIT ")
         .push_bind(TAGS_LIMIT);
-    let rows: Vec<(i64, String, i16, i32, i64)> = qb.build_query_as().fetch_all(&state.db).await?;
-    let tags = rows
-        .into_iter()
-        .map(|(id, name, category, post_count, recent)| TagTrend {
-            tag: to_tag((id, name, category, post_count) as TagRow),
-            recent,
-        })
-        .collect();
+    let tags = async {
+        let rows: Vec<(i64, String, i16, i32, i64)> =
+            qb.build_query_as().fetch_all(&state.db).await?;
+        AppResult::Ok(
+            rows.into_iter()
+                .map(|(id, name, category, post_count, recent)| TagTrend {
+                    tag: to_tag((id, name, category, post_count) as TagRow),
+                    recent,
+                })
+                .collect::<Vec<TagTrend>>(),
+        )
+    };
 
-    let mut qb = select_posts(user.id);
+    let mut qb = select_page(user.id);
     push_filters(&mut qb, &query, include.clone(), exclude.clone());
     qb.push(" AND EXTRACT(MONTH FROM p.created_at AT TIME ZONE 'UTC')::int = ")
         .push_bind(i32::try_from(now.month()).unwrap_or(1))
@@ -107,13 +117,34 @@ pub async fn explore(
         .push_bind(start_of_year(now))
         .push(" ORDER BY p.created_at DESC, p.id DESC LIMIT ")
         .push_bind(ON_THIS_DAY_LIMIT);
-    let on_this_day = fetch_posts(qb).await?;
+    end_page(&mut qb);
+    let on_this_day = fetch_posts(qb);
 
-    let mut qb = select_posts(user.id);
-    push_filters(&mut qb, &query, include, exclude);
-    qb.push(" ORDER BY random() LIMIT ").push_bind(RANDOM_LIMIT);
-    let random = fetch_posts(qb).await?;
+    let random = async {
+        let random_from = |percent: Option<f32>| {
+            let mut qb = select_page(user.id);
+            if let Some(percent) = percent {
+                qb.push(" TABLESAMPLE SYSTEM (")
+                    .push_bind(percent)
+                    .push(")");
+            }
+            push_filters(&mut qb, &query, include.clone(), exclude.clone());
+            qb.push(" ORDER BY random() LIMIT ").push_bind(RANDOM_LIMIT);
+            end_page(&mut qb);
+            fetch_posts(qb)
+        };
+        let percent = sample_percent(&state).await?;
+        let picks = random_from(percent).await?;
+        // A sample can miss a rare search; then sort all of its matches.
+        if percent.is_some() && picks.len() < usize::try_from(RANDOM_LIMIT).unwrap_or(0) {
+            random_from(None).await
+        } else {
+            Ok(picks)
+        }
+    };
 
+    let (trending, tags, on_this_day, random) =
+        tokio::try_join!(trending, tags, on_this_day, random)?;
     Ok(Json(Explore {
         days,
         trending,
@@ -121,6 +152,22 @@ pub async fn explore(
         on_this_day,
         random,
     }))
+}
+
+/// The share of the posts table's pages that holds about `RANDOM_SAMPLE`
+/// posts, from the planner's row estimate. `None` when the table is small
+/// enough to sort whole.
+async fn sample_percent(state: &AppState) -> AppResult<Option<f32>> {
+    let (rows,): (f32,) =
+        sqlx::query_as("SELECT reltuples FROM pg_class WHERE oid = 'posts'::regclass")
+            .fetch_one(&state.db)
+            .await?;
+    Ok(sample_share(rows))
+}
+
+fn sample_share(rows: f32) -> Option<f32> {
+    // `reltuples` is -1 before the first `ANALYZE`.
+    (rows > RANDOM_SAMPLE * 4.0).then(|| RANDOM_SAMPLE / rows * 100.0)
 }
 
 /// Midnight UTC on 1 January of `now`'s year.
@@ -137,6 +184,14 @@ mod tests {
 
     use super::*;
     use crate::testing;
+
+    #[test]
+    fn samples_only_big_collections() {
+        assert_eq!(sample_share(-1.0), None);
+        assert_eq!(sample_share(f32::NAN), None);
+        assert_eq!(sample_share(20_000.0), None);
+        assert_eq!(sample_share(1_000_000.0), Some(0.5));
+    }
 
     #[test]
     fn year_starts_at_midnight_utc() {

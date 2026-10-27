@@ -23,7 +23,7 @@ _Status as of 2026-10-27. Scope comes from `docs/checklist.md`._
 | Item | Status | Notes |
 |---|---|---|
 | docker | ✅ | `Dockerfile`, `docker-compose.yml` for Dokploy, healthcheck, non-root user |
-| blazingly fast database | 🟡 | Tags as an `int[]` with a GIN index, partial indexes, counts kept in step. Not yet benchmarked at 1M posts. |
+| blazingly fast database | ✅ | Tags as an `int[]` with a GIN index, partial indexes, counts kept in step. Pages build full rows only for their own ids. Benchmarked at a million posts: browsing and tag searches take 3–19 ms, Explore 72–116 ms (`development.md` › *Speed at scale*). |
 | tag system | ✅ | Normalisation, categories, autocomplete (also by alias), aliases (adding one merges an existing tag), transitive implications applied to old and new posts, cycle detection. A Tags tab lists tags by use or name, and each tag has a page to edit its category, aliases and implications. |
 | score system | ✅ | Up/down votes, `order:score` |
 | feature rich and fast sorting | ✅ | Newest, oldest, score, file size, resolution, tag count, last edit and random, in either direction (`_asc`/`_desc`). Each sort has a partial index on live posts. A sort menu sits in the gallery header. |

@@ -81,6 +81,37 @@ cargo test -p starbooru-server --bins
 cargo clippy -p starbooru-app --target wasm32-unknown-unknown --no-default-features --features web -- -D warnings
 ```
 
+## Speed at scale
+
+`apps/server/src/bench.rs` is an ignored test. It seeds generated posts straight into a test database (one million by default):
+- 5 to 24 tags a post, taken from 5,000 tags, with popularity falling off steeply;
+- 2% of the posts in the bin;
+- votes on 5%.
+
+It then times the API calls the clients make most, through the real router, and fails if any median is over 400 ms. Run it in release:
+
+```sh
+STARBOORU_BENCH_POSTS=1000000 cargo test --release -p starbooru-server search_at_scale -- --ignored --nocapture
+```
+
+Set `STARBOORU_BENCH_KEEP=1` to keep the seeded database for `EXPLAIN ANALYZE` (the name is printed; drop it afterwards).
+
+Results at 1,000,000 posts (Ryzen 9 5900X, PostgreSQL 17 in Docker, default settings; median of 5 runs; seeding took 50 s). In the call column, `page=1000` is 60,000 posts deep, and `tag_1` is on half the posts.
+
+| Call | Median |
+|---|---|
+| `/posts`, `/posts?page=50`, every `order:` but random | 2.5–2.8 ms |
+| `/posts?page=1000` | 5.4 ms |
+| `/posts?q=tag_1`, `tag_1 tag_2 tag_3`, `tag_2 -tag_1`, `rating:e type:video` | 3.2–4.0 ms |
+| `/posts?q=tag_4000` (a rare tag) | 18.8 ms |
+| `/posts?q=order:random` | 141 ms |
+| `/posts/{id}`, `/posts/{id}/neighbors`, tag search | under 1.2 ms |
+| `/explore` | 72 ms |
+| `/explore?q=tag_1` | 116 ms |
+| `/admin/stats` | 112 ms |
+
+`order:random` sorts every match by `random()`, so it grows with the collection. The admin stats count the whole table.
+
 ## UI text and translations
 
 Every string the app shows lives in `apps/app/locales/<code>.ftl` ([Fluent](https://projectfluent.org/) syntax) and is looked up with `t!`:

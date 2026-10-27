@@ -45,8 +45,8 @@ pub(super) struct PostRow {
     my_vote: i16,
 }
 
-/// `SELECT <post columns> FROM posts p` with the caller's vote resolved.
-pub(super) fn select_posts(user_id: i64) -> QueryBuilder<Postgres> {
+/// `SELECT <post columns>` with the caller's vote resolved, for `posts p`.
+fn post_columns(user_id: i64) -> QueryBuilder<Postgres> {
     let mut qb = QueryBuilder::new(
         "SELECT p.id, p.sha256, p.ext, p.mime, p.kind, p.file_size, p.width, p.height, \
          p.duration_ms, p.has_thumb, p.rating, p.source, p.score, p.created_at, p.deleted_at, \
@@ -56,8 +56,30 @@ pub(super) fn select_posts(user_id: i64) -> QueryBuilder<Postgres> {
                    WHERE v.post_id = p.id AND v.user_id = ",
     );
     qb.push_bind(user_id);
-    qb.push("), 0::smallint) AS my_vote FROM posts p");
+    qb.push("), 0::smallint) AS my_vote");
     qb
+}
+
+/// `SELECT <post columns> FROM posts p` with the caller's vote resolved.
+pub(super) fn select_posts(user_id: i64) -> QueryBuilder<Postgres> {
+    let mut qb = post_columns(user_id);
+    qb.push(" FROM posts p");
+    qb
+}
+
+/// Starts a query for a page of posts in two steps: the caller pushes the
+/// rest of `SELECT p.id FROM posts p …` (filters, order, limit, offset),
+/// then `end_page` turns those ids into posts in the same order. Only the
+/// rows on the page are built, not every row an `OFFSET` skips or a sort
+/// looks at, which keeps deep pages and big sorts fast.
+pub(super) fn select_page(user_id: i64) -> QueryBuilder<Postgres> {
+    let mut qb = post_columns(user_id);
+    qb.push(" FROM unnest(ARRAY(SELECT p.id FROM posts p");
+    qb
+}
+
+pub(super) fn end_page(qb: &mut QueryBuilder<Postgres>) {
+    qb.push(")) WITH ORDINALITY AS page(id, n) JOIN posts p ON p.id = page.id ORDER BY page.n");
 }
 
 /// Signed URLs of a post's original and, if it has one, its thumbnail.
@@ -215,7 +237,7 @@ pub async fn search(
     }
     let (exclude, _) = tag_ids(&state, &query.exclude).await?;
 
-    let mut qb = select_posts(user.id);
+    let mut qb = select_page(user.id);
     push_filters(&mut qb, &query, include, exclude);
     if query.order.key == SortKey::Random {
         qb.push(" ORDER BY random()");
@@ -240,6 +262,7 @@ pub async fn search(
         .push_bind(i64::from(limit) + 1)
         .push(" OFFSET ")
         .push_bind(offset);
+    end_page(&mut qb);
 
     let mut rows = qb.build_query_as::<PostRow>().fetch_all(&state.db).await?;
     let has_more = rows.len() > limit as usize;

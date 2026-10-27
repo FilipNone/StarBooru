@@ -2,6 +2,8 @@
 
 mod auth;
 mod backup;
+#[cfg(test)]
+mod bench;
 mod config;
 mod edit;
 mod error;
