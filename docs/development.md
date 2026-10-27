@@ -61,6 +61,8 @@ dx bundle --android --release -p starbooru-app    # .apk / .aab
 
 The bundle identifier, publisher and category are in `apps/app/Dioxus.toml`.
 
+Without a phone, [Waydroid](https://waydro.id) works as the device: `adb connect <its IP>:5555`, then `dx build --android -p starbooru-app --target x86_64-linux-android` and `adb install -r` the APK under `target/dx/starbooru-app/debug/android/app/app/build/outputs/apk/debug/`. `adb reverse tcp:8080 tcp:8080` lets the app reach a server on your machine at `http://127.0.0.1:8080`. Debug builds expose the WebView to DevTools: forward `localabstract:webview_devtools_remote_<pid>` with `adb forward` and open `chrome://inspect`. Typing with `adb shell input text` drops characters in the WebView. Clippy for Android needs the NDK's clang: set `CC_x86_64_linux_android` and `AR_x86_64_linux_android` to `x86_64-linux-android24-clang` and `llvm-ar` from `$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin`.
+
 The web app keeps the API at its own origin by default. The native apps ask for the server URL at sign-in. Set `STARBOORU_SERVER` to prefill the sign-in page. Native apps read it at run time; the web and Android builds read it at compile time, so set it in the environment `dx serve` runs in. The API allows any origin (it uses bearer tokens, not cookies), so `dx serve --web` on another port works.
 
 ## Tests and lints

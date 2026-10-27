@@ -5013,6 +5013,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "robius-android-env"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "087fcb3061ccc432658a605cb868edd44e0efb08e7a159b486f02804a7616bef"
+dependencies = [
+ "jni 0.21.1",
+ "ndk-context",
+]
+
+[[package]]
 name = "rustc-hash"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5751,6 +5761,8 @@ dependencies = [
  "directories",
  "fluent-bundle",
  "fluent-syntax",
+ "jni 0.21.1",
+ "robius-android-env",
  "serde",
  "serde_json",
  "starbooru-client",
@@ -5768,6 +5780,8 @@ version = "0.1.0"
 dependencies = [
  "gloo-timers",
  "reqwest 0.13.5",
+ "rustls-pki-types",
+ "rustls-webpki",
  "serde",
  "serde_json",
  "starbooru-core",

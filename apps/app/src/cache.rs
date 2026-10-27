@@ -156,8 +156,12 @@ mod native {
 
     fn dir() -> Option<&'static Path> {
         DIR.get_or_init(|| {
-            directories::ProjectDirs::from("eu", "filipnone", "StarBooru")
-                .map(|d| d.cache_dir().join("media"))
+            #[cfg(target_os = "android")]
+            let dir = crate::system::android::cache_dir();
+            #[cfg(not(target_os = "android"))]
+            let dir = directories::ProjectDirs::from("eu", "filipnone", "StarBooru")
+                .map(|d| d.cache_dir().to_path_buf());
+            dir.map(|d| d.join("media"))
         })
         .as_deref()
     }

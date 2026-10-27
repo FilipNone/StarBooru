@@ -73,11 +73,11 @@ _Status as of 2026-10-27. Scope comes from `docs/checklist.md`._
 
 | Item | Status | Notes |
 |---|---|---|
-| builds and runs | 🟡 | Same code. To be tested. |
-| login | 🟡 | Works in the UI. Session persistence on Android is unverified. |
+| builds and runs | ✅ | Same code. Built with `dx build --android` and run on Android 13 (Waydroid, x86_64): sign-in, gallery, viewer, settings. HTTPS uses the system's trusted CAs; it used to panic on the first request. |
+| login | ✅ | Session and settings are kept in the app's private files dir and survive a restart (verified on Android 13). They were lost before, because Android apps have no home directory for `directories` to use. The media cache uses the app's cache dir. |
 | mobile optimised layout | ✅ | Bottom navigation, 3-column grid, stacked viewer |
 | tablet layout, left/right hand modes, ppi optimisation | ✅ | Between phone and desktop widths (761–1100 px, tablets) the navigation is a rail at the side with its items centred, within reach of a thumb. A *Hand* setting (either, left, right) puts the rail, the viewer's panel and its zoom tools on that side. The viewer shows the smaller copy of a big image only while it has every pixel the screen can show: on a dense or big screen (fullscreen on 4K, a 3× phone) it loads the original. Same layout on the web and desktop. |
-| dynamic material you colors | ⬜ | M4 (needs a JNI bridge to read the wallpaper palette) |
+| dynamic material you colors | ✅ | On Android 12+ the palette follows the wallpaper's accent (`system_accent1_500`, read through JNI) by default, and it is re-read when the app comes back to the front. *Accent colour* shows it as a *Wallpaper* choice beside the fixed swatches. |
 | battery optimizations | ✅ | *Battery saver* setting (Automatic, Always, Never). While it's on, videos don't autoplay, the next post isn't prefetched, gallery hover previews and the screen-density swap to originals are skipped, and animations are cut short. Automatic follows the Battery API (≤20% and not charging) and `navigator.connection.saveData`. Videos pause whenever the app is hidden. |
 | everything else | | Same as desktop |
 

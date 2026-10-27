@@ -3,6 +3,9 @@
 //! Works on native targets (rustls) and on `wasm32-unknown-unknown`
 //! (browser `fetch`), so the web, desktop and Android apps share it.
 
+#[cfg(not(target_arch = "wasm32"))]
+mod roots;
+
 use reqwest::{Method, RequestBuilder, StatusCode, header};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -96,7 +99,12 @@ fn http_client() -> Result<reqwest::Client> {
         env!("CARGO_PKG_VERSION"),
         std::env::consts::OS
     );
-    Ok(reqwest::Client::builder().user_agent(agent).build()?)
+    let builder = reqwest::Client::builder().user_agent(agent);
+    // Android's platform verifier needs JNI setup the app doesn't do;
+    // trust the system's CA folder instead (see `roots`).
+    #[cfg(target_os = "android")]
+    let builder = builder.tls_certs_only(roots::first_store(&roots::ANDROID_CA_DIRS));
+    Ok(builder.build()?)
 }
 
 #[cfg(target_arch = "wasm32")]

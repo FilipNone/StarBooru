@@ -776,3 +776,8 @@ settings-saver-now = On now: the battery is low or the device is saving data.
 saver-auto = Automatic
 saver-always = Always
 saver-never = Never
+
+## Wallpaper colour
+
+accent-system = Wallpaper
+accent-system-hint = Follow the colours Android takes from your wallpaper

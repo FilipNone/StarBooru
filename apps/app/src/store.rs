@@ -1,6 +1,7 @@
 //! App-wide state (session, preferences) and its persistence.
 //!
-//! Web: `localStorage`. Desktop/Android: `state.json` in the platform config dir.
+//! Web: `localStorage`. Desktop: `state.json` in the platform config dir.
+//! Android: `state.json` in the app's private files dir.
 
 use std::cell::RefCell;
 
@@ -120,6 +121,9 @@ pub struct Prefs {
     pub theme: Theme,
     /// OKLCH hue (0–360) the whole palette is derived from.
     pub accent_hue: u16,
+    /// Follow the wallpaper's colour where the system has one (Android 12+)
+    /// instead of `accent_hue`.
+    pub system_accent: bool,
     pub last_server: String,
     /// `None` follows the system language.
     pub language: Option<Lang>,
@@ -136,6 +140,7 @@ impl Default for Prefs {
         Self {
             theme: Theme::System,
             accent_hue: 285,
+            system_accent: true,
             last_server: String::new(),
             language: None,
             originals: false,
@@ -175,6 +180,10 @@ pub fn persist() {
 
 thread_local! {
     // Reuse one HTTP client (and its connection pool) per session.
+    #[cfg_attr(
+        target_os = "android",
+        allow(clippy::missing_const_for_thread_local, reason = "false positive: it is const")
+    )]
     static CLIENT: RefCell<Option<(String, String, Client)>> = const { RefCell::new(None) };
 }
 
@@ -265,8 +274,12 @@ mod backend {
     use std::path::PathBuf;
 
     fn path() -> Option<PathBuf> {
-        directories::ProjectDirs::from("eu", "filipnone", "StarBooru")
-            .map(|d| d.config_dir().join("state.json"))
+        #[cfg(target_os = "android")]
+        let dir = crate::system::android::files_dir();
+        #[cfg(not(target_os = "android"))]
+        let dir = directories::ProjectDirs::from("eu", "filipnone", "StarBooru")
+            .map(|d| d.config_dir().to_path_buf());
+        dir.map(|d| d.join("state.json"))
     }
 
     pub fn read() -> Option<String> {

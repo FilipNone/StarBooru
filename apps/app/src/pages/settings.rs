@@ -12,12 +12,24 @@ use crate::icons::{Ico, Icon};
 use crate::oidc::{self, Done};
 use crate::power;
 use crate::store::{self, Hand, PREFS, SESSION, Saver, Theme};
+use crate::system::SYSTEM_HUE;
 use crate::util::{human_size, time_ago};
 
 const MIN_PASSWORD_CHARS: usize = 8;
 
 /// Accent presets (OKLCH hues).
 const SWATCHES: [u16; 8] = [285, 330, 20, 65, 140, 190, 245, 0];
+
+/// Whether `hue` is the colour in use, not overridden by the wallpaper's.
+fn picked(prefs: &store::Prefs, hue: u16) -> bool {
+    prefs.accent_hue == hue && !(prefs.system_accent && SYSTEM_HUE.peek().is_some())
+}
+
+fn pick(hue: u16) {
+    let mut prefs = PREFS.write();
+    prefs.accent_hue = hue;
+    prefs.system_accent = false;
+}
 
 fn swatch_name(hue: u16) -> String {
     match hue {
@@ -113,15 +125,26 @@ pub fn Settings() -> Element {
                 div { class: "field",
                     span { {t!("settings-accent")} }
                     div { class: "swatches",
+                        if let Some(hue) = SYSTEM_HUE() {
+                            button {
+                                class: if prefs.system_accent { "swatch system on" } else { "swatch system" },
+                                style: "--swatch-hue: {hue}",
+                                aria_pressed: if prefs.system_accent { "true" } else { "false" },
+                                title: t!("accent-system-hint"),
+                                onclick: move |_| PREFS.write().system_accent = true,
+                                if prefs.system_accent { Ico { icon: Icon::Check, size: 18 } }
+                                {t!("accent-system")}
+                            }
+                        }
                         for hue in SWATCHES {
                             button {
                                 key: "{hue}",
-                                class: if prefs.accent_hue == hue { "swatch on" } else { "swatch" },
+                                class: if picked(&prefs, hue) { "swatch on" } else { "swatch" },
                                 style: "--swatch-hue: {hue}",
                                 aria_label: swatch_name(hue),
                                 title: swatch_name(hue),
-                                onclick: move |_| PREFS.write().accent_hue = hue,
-                                if prefs.accent_hue == hue { Ico { icon: Icon::Check, size: 18 } }
+                                onclick: move |_| pick(hue),
+                                if picked(&prefs, hue) { Ico { icon: Icon::Check, size: 18 } }
                             }
                         }
                     }
@@ -133,7 +156,7 @@ pub fn Settings() -> Element {
                         value: "{prefs.accent_hue}",
                         oninput: move |e| {
                             if let Ok(h) = e.value().parse::<u16>() {
-                                PREFS.write().accent_hue = h.min(359);
+                                pick(h.min(359));
                             }
                         },
                     }

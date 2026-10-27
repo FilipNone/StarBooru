@@ -776,3 +776,8 @@ settings-saver-now = Attivo ora: la batteria è scarica o il dispositivo sta ris
 saver-auto = Automatico
 saver-always = Sempre
 saver-never = Mai
+
+## Wallpaper colour
+
+accent-system = Sfondo
+accent-system-hint = Segui i colori che Android prende dallo sfondo

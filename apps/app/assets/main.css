@@ -201,6 +201,11 @@ input[type="range"] { width: 100%; accent-color: var(--primary); margin-top: 12p
 }
 .swatch:hover { transform: scale(1.1); }
 .swatch.on { outline: 3px solid var(--on-surface); }
+/* the wallpaper's colour (Android 12+): a labelled pill, darker for legible text */
+.swatch.system {
+  display: inline-flex; gap: 4px; width: auto; padding: 0 14px 0 12px; border-radius: 20px;
+  background: oklch(0.48 0.15 var(--swatch-hue)); font: inherit; font-size: 14px; font-weight: 600;
+}
 
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .chip {
