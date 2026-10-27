@@ -164,6 +164,9 @@ pub struct ServerInfo {
     pub has_users: bool,
     pub registration_open: bool,
     pub max_upload_bytes: u64,
+    /// Whether `POST /posts/import` is enabled.
+    #[serde(default)]
+    pub url_import: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -219,6 +222,19 @@ pub struct PostPage {
     pub page: u32,
     pub limit: u32,
     pub has_more: bool,
+}
+
+/// `POST /posts/import`: the server downloads `url` and adds it like an upload.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ImportRequest {
+    pub url: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub rating: Rating,
+    /// Defaults to `url`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }
 
 /// Partial update: fields left `None` stay unchanged.

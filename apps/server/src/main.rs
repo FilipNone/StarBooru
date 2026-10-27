@@ -3,6 +3,7 @@
 mod auth;
 mod config;
 mod error;
+mod fetch;
 mod media;
 mod probe;
 mod routes;

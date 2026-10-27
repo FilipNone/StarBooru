@@ -31,6 +31,7 @@ The desktop and Android apps are the same Dioxus code as the web app. Each one a
 | `routes/` | One file per resource: `auth`, `posts`, `tags`, `trash`. `mod.rs` builds the router and its layers (CORS, compression, tracing, panic catcher, SPA fallback). |
 | `auth.rs` | Bearer-token extractor; Argon2id password hashing (on the blocking pool) |
 | `storage.rs` | Format sniffing, content-addressed storage, thumbnails |
+| `fetch.rs` | URL import download: http(s) only, public addresses only (checked for literal IPs, on every redirect and in a filtering DNS resolver), no proxies, streaming size cap, timeouts |
 | `probe.rs` | Size, length and a still frame through `ffprobe`/`ffmpeg` child processes (time-limited, local files only, capped output) |
 | `media.rs` | HMAC-signed media URLs and the file handler (supports Range for video seeking) |
 | `error.rs` | `AppError` → JSON `{code, message}` with the right status |

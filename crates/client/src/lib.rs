@@ -7,9 +7,9 @@ use reqwest::{Method, RequestBuilder, StatusCode, header};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use starbooru_core::{
-    API_PREFIX, AliasRequest, ApiError, AuthResponse, Credentials, ImplicationRequest, Neighbors,
-    Post, PostPage, PostUpdate, PurgeResult, Rating, ServerInfo, Tag, TagDetail, TagOrder,
-    TagUpdate, User, VoteRequest,
+    API_PREFIX, AliasRequest, ApiError, AuthResponse, Credentials, ImplicationRequest,
+    ImportRequest, Neighbors, Post, PostPage, PostUpdate, PurgeResult, Rating, ServerInfo, Tag,
+    TagDetail, TagOrder, TagUpdate, User, VoteRequest,
 };
 use thiserror::Error;
 use url::Url;
@@ -212,6 +212,11 @@ impl Client {
             form = form.text("source", source);
         }
         Self::send(self.request(Method::POST, "/posts")?.multipart(form)).await
+    }
+
+    /// Asks the server to download `request.url` and add it as a post.
+    pub async fn import_url(&self, request: &ImportRequest) -> Result<Post> {
+        self.json(Method::POST, "/posts/import", request).await
     }
 
     /// Tag autocomplete: tags starting with `prefix`, most used first.

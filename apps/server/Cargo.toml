@@ -27,6 +27,9 @@ sha2 = "0.11"
 hex = "0.4"
 rand = "0.10"
 infer = "0.19"
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "http2"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+url = "2"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp", "tiff", "rayon"] }
 
 [dev-dependencies]

@@ -48,6 +48,7 @@ pub fn router(state: AppState) -> Router {
                 .patch(posts::update)
                 .delete(posts::delete),
         )
+        .route("/posts/import", post(posts::import))
         .route("/posts/{id}/neighbors", get(posts::neighbors))
         .route("/posts/{id}/restore", post(posts::restore))
         .route("/posts/{id}/purge", post(posts::purge))
@@ -121,6 +122,7 @@ async fn info(State(state): State<AppState>) -> AppResult<Json<ServerInfo>> {
         has_users,
         registration_open: !has_users || state.config.allow_registration,
         max_upload_bytes: state.config.max_upload_bytes as u64,
+        url_import: state.fetcher.is_some(),
     }))
 }
 

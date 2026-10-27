@@ -494,11 +494,27 @@ button.chip:disabled { cursor: default; }
 .dropzone:hover, .dropzone.over { border-color: var(--primary); background: var(--primary-container); color: var(--on-primary-container); }
 .dropzone.over { transform: scale(1.02); }
 .queue { list-style: none; margin: 16px 0 0; padding: 0; display: grid; gap: 8px; }
+.import-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.import-row .btn { cursor: pointer; }
+.check { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; cursor: pointer; }
+.check input { width: 18px; height: 18px; margin: 0; accent-color: var(--primary); }
+.url-add { margin: 12px 0 0; }
+.url-add .btn { flex: none; }
+.import-row + .banner, .url-add + .banner { margin-top: 12px; }
+.import-row + .card, .url-add + .card { margin-top: 16px; }
 .queue-item {
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  padding: 12px 16px; background: var(--surface); border-radius: var(--radius-m);
+  display: grid; gap: 8px; padding: 12px 16px;
+  background: var(--surface); border-radius: var(--radius-m);
   animation: slide-in var(--med) var(--ease);
 }
+.queue-main { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; }
+.queue-error { margin: 0; font-size: 14px; color: var(--danger); overflow-wrap: anywhere; }
+.queue-tags { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--on-surface-2); font-size: 14px; }
+.queue-tags input {
+  flex: 1; min-width: 0; min-height: 34px; padding: 0 12px; border: 1px solid var(--outline);
+  border-radius: 999px; background: var(--canvas); color: var(--on-surface); font: inherit;
+}
+.queue-tags input:focus { outline: none; border-color: var(--primary); }
 .queue-name { display: grid; min-width: 0; }
 .queue-name strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pill {

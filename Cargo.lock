@@ -5728,6 +5728,8 @@ dependencies = [
  "image",
  "infer",
  "rand 0.10.3",
+ "reqwest 0.13.5",
+ "rustls",
  "serde",
  "serde_json",
  "sha2 0.11.1",
@@ -5740,6 +5742,7 @@ dependencies = [
  "tower-http 0.7.1",
  "tracing",
  "tracing-subscriber",
+ "url",
 ]
 
 [[package]]

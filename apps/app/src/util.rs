@@ -1,3 +1,5 @@
+use std::path::Path;
+
 /// `1536` → `1.5 KB`.
 pub fn human_size(bytes: i64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
@@ -37,9 +39,44 @@ pub fn escape_attr(text: &str) -> String {
         .replace('>', "&gt;")
 }
 
+/// File types the server accepts, to skip other files in an imported folder.
+const MEDIA_EXTENSIONS: [&str; 16] = [
+    "jpg", "jpeg", "jfif", "png", "gif", "webp", "bmp", "tif", "tiff", "avif", "jxl", "mp4", "m4v",
+    "webm", "mkv", "mov",
+];
+
+/// An image or video by its name; hidden files (`.DS_Store`, `._x.jpg`) are not.
+pub fn is_media_name(name: &str) -> bool {
+    !name.starts_with('.')
+        && name
+            .rsplit_once('.')
+            .is_some_and(|(_, ext)| MEDIA_EXTENSIONS.iter().any(|m| m.eq_ignore_ascii_case(ext)))
+}
+
+/// The name of the folder holding `path`, as a tag (`Summer 2024/a.jpg` →
+/// `summer_2024`).
+pub fn folder_tag(path: &Path) -> Option<String> {
+    let folder = path.parent()?.file_name()?.to_str()?;
+    starbooru_core::normalize_tag(folder).ok()
+}
+
+/// The `http(s)://` addresses in pasted text, one per word, without repeats.
+pub fn parse_urls(text: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for word in text.split_whitespace() {
+        let lower = word.to_ascii_lowercase();
+        if (lower.starts_with("http://") || lower.starts_with("https://"))
+            && !out.iter().any(|u| u == word)
+        {
+            out.push(word.to_owned());
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{escape_attr, format_duration, human_size};
+    use super::*;
 
     #[test]
     fn formats_sizes() {
@@ -64,5 +101,41 @@ mod tests {
     fn escapes_attributes() {
         assert_eq!(escape_attr("/m.mp4?a=1&b=2"), "/m.mp4?a=1&amp;b=2");
         assert_eq!(escape_attr("\"><script>"), "&quot;&gt;&lt;script&gt;");
+    }
+
+    #[test]
+    fn recognises_media_names() {
+        assert!(is_media_name("a.JPG"));
+        assert!(is_media_name("clip.final.webm"));
+        assert!(!is_media_name("notes.txt"));
+        assert!(!is_media_name("README"));
+        assert!(!is_media_name("._a.jpg"));
+        assert!(!is_media_name(".DS_Store"));
+    }
+
+    #[test]
+    fn tags_from_folder_names() {
+        assert_eq!(
+            folder_tag(Path::new("Summer 2024/a.jpg")).as_deref(),
+            Some("summer_2024")
+        );
+        assert_eq!(
+            folder_tag(Path::new("/home/me/Pics/Cats/a.jpg")).as_deref(),
+            Some("cats")
+        );
+        assert_eq!(folder_tag(Path::new("a.jpg")), None);
+        assert_eq!(folder_tag(Path::new("")), None);
+        assert_eq!(folder_tag(Path::new("-x/a.jpg")), None);
+    }
+
+    #[test]
+    fn finds_urls_in_text() {
+        assert_eq!(
+            parse_urls(
+                " https://a.example/1.png\nftp://x  HTTP://b.example/2 https://a.example/1.png word"
+            ),
+            ["https://a.example/1.png", "HTTP://b.example/2"]
+        );
+        assert!(parse_urls("").is_empty());
     }
 }

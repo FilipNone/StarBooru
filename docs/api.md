@@ -17,12 +17,13 @@ All endpoints are under `/api/v1`. Bodies are JSON unless noted. The Rust types 
 | 415 | unsupported file type |
 | 429 | rate limited; the client honours `Retry-After` |
 | 500 | internal error (details only in the server log) |
+| 502 | `fetch_failed`: URL import could not download the address |
 
 ## Server
 
 | Method | Path | |
 |---|---|---|
-| GET | `/info` | `ServerInfo`: `name`, `version`, `has_users`, `registration_open`, `max_upload_bytes` |
+| GET | `/info` | `ServerInfo`: `name`, `version`, `has_users`, `registration_open`, `max_upload_bytes`, `url_import` (whether `POST /posts/import` is on) |
 | GET | `/healthz` (not under `/api/v1`) | `ok` when the database answers |
 
 ## Accounts
@@ -45,6 +46,7 @@ Account rules:
 |---|---|---|---|
 | GET | `/posts?q=&page=&limit=` | | `PostPage {posts, page, limit, has_more}`. `page` starts at 1 (at most 10000); `limit` is at most 200, default 60. |
 | POST | `/posts` | multipart: `file` (required), `tags` (space-separated), `rating` (`g`/`s`/`q`/`e`), `source` | `Post`, or 409 `duplicate` if the same file exists |
+| POST | `/posts/import` | `ImportRequest {url, tags?, rating?, source?}`. `tags` is a list; `source` defaults to `url`. | `Post`, like an upload. 400 for a non-http(s) address, credentials in the URL, a private-network address (unless the server allows them) or import turned off; 413 over the upload limit; 409 `duplicate`; 502 `fetch_failed` when the remote server errors, times out or redirects more than 5 times. |
 | GET | `/posts/{id}` | | `Post` |
 | GET | `/posts/{id}/neighbors?q=` | | `Neighbors {prev, next}`: the ids just before and after the post in the results of search `q` (same filters and order), or null at either end. Both are null for `order:random` or when `q` matches nothing. |
 | PATCH | `/posts/{id}` | `PostUpdate {tags?, rating?, source?}` | `Post`. `tags` replaces the whole list. |

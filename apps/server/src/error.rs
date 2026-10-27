@@ -22,6 +22,9 @@ pub enum AppError {
     PayloadTooLarge,
     #[error("{0}")]
     Unsupported(String),
+    /// A remote server failed during URL import.
+    #[error("{0}")]
+    Upstream(String),
     #[error("internal error: {0}")]
     Internal(String),
 }
@@ -42,6 +45,7 @@ impl AppError {
             AppError::Conflict { code, .. } => (StatusCode::CONFLICT, code),
             AppError::PayloadTooLarge => (StatusCode::PAYLOAD_TOO_LARGE, "too_large"),
             AppError::Unsupported(_) => (StatusCode::UNSUPPORTED_MEDIA_TYPE, "unsupported"),
+            AppError::Upstream(_) => (StatusCode::BAD_GATEWAY, "fetch_failed"),
             AppError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "internal"),
         }
     }

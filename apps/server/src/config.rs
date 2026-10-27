@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use thiserror::Error;
 
+use crate::fetch::Reach;
 use crate::probe::Tools;
 
 #[derive(Debug, Error)]
@@ -30,6 +31,8 @@ pub struct Config {
     pub trash_days: u32,
     /// ffmpeg and ffprobe, for video, AVIF and JPEG XL thumbnails. `None` turns them off.
     pub tools: Option<Tools>,
+    /// Which addresses URL import may fetch. `None` turns it off.
+    pub url_import: Option<Reach>,
 }
 
 const MIN_SECRET_LEN: usize = 32;
@@ -95,6 +98,21 @@ impl Config {
                 .into(),
         });
 
+        let url_import = match get("STARBOORU_URL_IMPORT")
+            .map(|v| v.trim().to_ascii_lowercase())
+            .as_deref()
+        {
+            None | Some("" | "on" | "true" | "1" | "public") => Some(Reach::Public),
+            Some("off" | "false" | "0") => None,
+            Some("private" | "lan") => Some(Reach::Any),
+            Some(other) => {
+                return Err(ConfigError::Invalid {
+                    name: "STARBOORU_URL_IMPORT",
+                    reason: format!("`{other}` is not on, off or private"),
+                });
+            }
+        };
+
         let web_dir = get("STARBOORU_WEB_DIR")
             .filter(|s| !s.trim().is_empty())
             .map(PathBuf::from);
@@ -117,6 +135,7 @@ impl Config {
             instance_name: get("STARBOORU_NAME").unwrap_or_else(|| "StarBooru".into()),
             trash_days,
             tools,
+            url_import,
         })
     }
 
@@ -133,6 +152,7 @@ impl Config {
             instance_name: "StarBooru".into(),
             trash_days: 0,
             tools: None,
+            url_import: Some(Reach::Public),
         }
     }
 }
@@ -167,6 +187,23 @@ mod tests {
         let tools = c.tools.unwrap();
         assert_eq!(tools.ffmpeg, std::path::Path::new("ffmpeg"));
         assert_eq!(tools.ffprobe, std::path::Path::new("ffprobe"));
+        assert_eq!(c.url_import, Some(Reach::Public));
+    }
+
+    #[test]
+    fn url_import() {
+        let with = |v: &str| {
+            cfg(&[
+                ("DATABASE_URL", "x"),
+                ("STARBOORU_SECRET", SECRET),
+                ("STARBOORU_URL_IMPORT", v),
+            ])
+            .map(|c| c.url_import)
+        };
+        assert_eq!(with("off").unwrap(), None);
+        assert_eq!(with(" Private ").unwrap(), Some(Reach::Any));
+        assert_eq!(with("on").unwrap(), Some(Reach::Public));
+        assert!(with("sometimes").is_err());
     }
 
     #[test]

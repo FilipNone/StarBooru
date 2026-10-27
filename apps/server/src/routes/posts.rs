@@ -1,4 +1,5 @@
 use axum::Json;
+use axum::body::Bytes;
 use axum::extract::multipart::MultipartError;
 use axum::extract::{Multipart, Path, Query, State};
 use axum::http::StatusCode;
@@ -8,13 +9,14 @@ use sqlx::{FromRow, Postgres, QueryBuilder, Transaction};
 use starbooru_core::query::{SearchQuery, SortKey};
 use starbooru_core::tag::normalize_tags;
 use starbooru_core::{
-    DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT, MediaKind, Neighbors, Post, PostPage, PostUpdate, Rating,
-    VoteRequest, parse_query, parse_tag_list,
+    DEFAULT_PAGE_LIMIT, ImportRequest, MAX_PAGE_LIMIT, MediaKind, Neighbors, Post, PostPage,
+    PostUpdate, Rating, VoteRequest, parse_query, parse_tag_list,
 };
 use tracing::warn;
 
 use crate::auth::AuthUser;
 use crate::error::{AppError, AppResult};
+use crate::fetch::FetchError;
 use crate::state::AppState;
 use crate::storage::{Ingested, Storage, Variant};
 
@@ -367,6 +369,52 @@ pub async fn upload(
         }
     }
     let bytes = file.ok_or_else(|| AppError::BadRequest("missing `file` field".into()))?;
+    create_post(&state, &user, bytes, rating, source, &tags)
+        .await
+        .map(Json)
+}
+
+/// `POST /posts/import`: downloads a URL and adds it like an upload.
+pub async fn import(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Json(req): Json<ImportRequest>,
+) -> AppResult<Json<Post>> {
+    let fetcher = state
+        .fetcher
+        .as_ref()
+        .ok_or_else(|| AppError::BadRequest("URL import is turned off on this server".into()))?;
+    let tags = normalize_tags(req.tags.iter().map(String::as_str))?;
+    let source = clean_source(req.source.unwrap_or_else(|| req.url.clone()))?;
+    let fetched = fetcher
+        .get(&req.url, state.config.max_upload_bytes)
+        .await
+        .map_err(|e| match e {
+            FetchError::BadUrl | FetchError::Blocked => AppError::BadRequest(e.to_string()),
+            FetchError::TooLarge => AppError::PayloadTooLarge,
+            _ => AppError::Upstream(e.to_string()),
+        })?;
+    create_post(
+        &state,
+        &user,
+        Bytes::from(fetched),
+        req.rating,
+        source,
+        &tags,
+    )
+    .await
+    .map(Json)
+}
+
+/// Stores `bytes` and inserts the post, refusing exact duplicates.
+async fn create_post(
+    state: &AppState,
+    user: &AuthUser,
+    bytes: Bytes,
+    rating: Rating,
+    source: Option<String>,
+    tags: &[String],
+) -> AppResult<Post> {
     let file_size = i64::try_from(bytes.len()).map_err(AppError::internal)?;
 
     let worker = state.clone();
@@ -380,10 +428,10 @@ pub async fn upload(
         return Err(duplicate(id));
     }
 
-    match insert_post(&state, &user, &info, file_size, rating, source, &tags).await {
-        Ok(id) => Ok(Json(load(&state, user.id, id).await?)),
+    match insert_post(state, user, &info, file_size, rating, source, tags).await {
+        Ok(id) => load(state, user.id, id).await,
         Err(e) => {
-            discard_orphan(&state, &info).await;
+            discard_orphan(state, &info).await;
             Err(e)
         }
     }
@@ -788,6 +836,8 @@ pub async fn purge_posts(state: &AppState, which: Purge) -> AppResult<u64> {
 
 #[cfg(test)]
 mod tests {
+    use axum::http::{Method, StatusCode};
+
     use crate::testing;
 
     async fn order_of(app: &testing::TestApp, token: &str, q: &str) -> Vec<i64> {
@@ -976,5 +1026,151 @@ mod tests {
         let thumb = app.get(p["thumb_url"].as_str().unwrap(), &t).await;
         assert_eq!(thumb.status, axum::http::StatusCode::OK);
         app.finish().await;
+    }
+
+    /// Serves a PNG, a redirect to it, a redirect loop, a 404 and a big file.
+    async fn remote_server() -> String {
+        use axum::response::Redirect;
+        use axum::routing::get;
+        let png = testing::png(16, 12, 7);
+        let app = axum::Router::new()
+            .route("/a.png", get(move || async move { png.clone() }))
+            .route("/hop", get(|| async { Redirect::temporary("/a.png") }))
+            .route("/loop", get(|| async { Redirect::temporary("/loop") }))
+            .route("/big", get(|| async { vec![0u8; 2 * 1024 * 1024] }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        format!("http://{addr}")
+    }
+
+    #[tokio::test]
+    async fn imports_from_a_url() {
+        let Some(app) = testing::app_with(|c| {
+            c.url_import = Some(crate::fetch::Reach::Any);
+            c.max_upload_bytes = 1024 * 1024;
+        })
+        .await
+        else {
+            return;
+        };
+        let t = app.register("admin").await;
+        let base = remote_server().await;
+        let import = |url: String, tags: &[&str]| serde_json::json!({ "url": url, "tags": tags, "rating": "sensitive" });
+
+        let r = app
+            .call(
+                Method::POST,
+                "/api/v1/posts/import",
+                Some(&t),
+                Some(import(format!("{base}/hop"), &["Blue Sky", "x"])),
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::OK, "{:?}", r.json());
+        let p = r.json();
+        assert_eq!(p["width"], 16);
+        assert_eq!(p["rating"], "sensitive");
+        assert_eq!(p["source"], format!("{base}/hop"));
+        assert_eq!(p["tags"], serde_json::json!(["blue_sky", "x"]));
+
+        let again = app
+            .call(
+                Method::POST,
+                "/api/v1/posts/import",
+                Some(&t),
+                Some(import(format!("{base}/a.png"), &[])),
+            )
+            .await;
+        assert_eq!(again.status, StatusCode::CONFLICT);
+        assert_eq!(again.json()["code"], "duplicate");
+
+        for (path, status, code) in [
+            ("/missing", StatusCode::BAD_GATEWAY, "fetch_failed"),
+            ("/loop", StatusCode::BAD_GATEWAY, "fetch_failed"),
+            ("/big", StatusCode::PAYLOAD_TOO_LARGE, "too_large"),
+        ] {
+            let r = app
+                .call(
+                    Method::POST,
+                    "/api/v1/posts/import",
+                    Some(&t),
+                    Some(import(format!("{base}{path}"), &[])),
+                )
+                .await;
+            assert_eq!(
+                (r.status, r.json()["code"].as_str()),
+                (status, Some(code)),
+                "{path}"
+            );
+        }
+        let bad = app
+            .call(
+                Method::POST,
+                "/api/v1/posts/import",
+                Some(&t),
+                Some(import("ftp://x/y".into(), &[])),
+            )
+            .await;
+        assert_eq!(bad.status, StatusCode::BAD_REQUEST);
+        let no_auth = app
+            .call(
+                Method::POST,
+                "/api/v1/posts/import",
+                None,
+                Some(import(format!("{base}/a.png"), &[])),
+            )
+            .await;
+        assert_eq!(no_auth.status, StatusCode::UNAUTHORIZED);
+        app.finish().await;
+    }
+
+    #[tokio::test]
+    async fn import_refuses_private_addresses_by_default() {
+        let Some(app) = testing::app().await else {
+            return;
+        };
+        let t = app.register("admin").await;
+        let base = remote_server().await;
+        assert_eq!(app.get("/api/v1/info", &t).await.json()["url_import"], true);
+        for url in [
+            format!("{base}/a.png"),
+            base.replace("127.0.0.1", "localhost") + "/a.png",
+        ] {
+            let r = app
+                .call(
+                    Method::POST,
+                    "/api/v1/posts/import",
+                    Some(&t),
+                    Some(serde_json::json!({ "url": url })),
+                )
+                .await;
+            assert_eq!(r.status, StatusCode::BAD_REQUEST, "{url}");
+            assert!(
+                r.json()["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("private network")
+            );
+        }
+        app.finish().await;
+
+        let Some(off) = testing::app_with(|c| c.url_import = None).await else {
+            return;
+        };
+        let t = off.register("admin").await;
+        assert_eq!(
+            off.get("/api/v1/info", &t).await.json()["url_import"],
+            false
+        );
+        let r = off
+            .call(
+                Method::POST,
+                "/api/v1/posts/import",
+                Some(&t),
+                Some(serde_json::json!({ "url": "https://example.com/a.png" })),
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::BAD_REQUEST);
+        off.finish().await;
     }
 }
