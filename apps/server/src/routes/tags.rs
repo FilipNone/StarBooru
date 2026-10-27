@@ -28,11 +28,11 @@ pub struct TagQuery {
     order: TagOrder,
 }
 
-type TagRow = (i64, String, i16, i32);
+pub(super) type TagRow = (i64, String, i16, i32);
 
 const TAG_COLUMNS: &str = "id, name, category, post_count";
 
-fn to_tag((id, name, category, post_count): TagRow) -> Tag {
+pub(super) fn to_tag((id, name, category, post_count): TagRow) -> Tag {
     Tag {
         id,
         name,

@@ -25,7 +25,7 @@ const MAX_PAGE: u32 = 10_000;
 const MAX_SOURCE_CHARS: usize = 2048;
 
 #[derive(FromRow)]
-struct PostRow {
+pub(super) struct PostRow {
     id: i64,
     sha256: Vec<u8>,
     ext: String,
@@ -46,7 +46,7 @@ struct PostRow {
 }
 
 /// `SELECT <post columns> FROM posts p` with the caller's vote resolved.
-fn select_posts(user_id: i64) -> QueryBuilder<Postgres> {
+pub(super) fn select_posts(user_id: i64) -> QueryBuilder<Postgres> {
     let mut qb = QueryBuilder::new(
         "SELECT p.id, p.sha256, p.ext, p.mime, p.kind, p.file_size, p.width, p.height, \
          p.duration_ms, p.has_thumb, p.rating, p.source, p.score, p.created_at, p.deleted_at, \
@@ -60,7 +60,7 @@ fn select_posts(user_id: i64) -> QueryBuilder<Postgres> {
     qb
 }
 
-fn to_post(state: &AppState, row: PostRow) -> Post {
+pub(super) fn to_post(state: &AppState, row: PostRow) -> Post {
     let sha = hex::encode(&row.sha256);
     let now = Utc::now().timestamp();
     let file_url = state.signer.url(
@@ -111,7 +111,7 @@ async fn load(state: &AppState, user_id: i64, id: i64) -> AppResult<Post> {
 
 /// Ids of the tags `names` refer to (aliases resolved), and how many distinct
 /// tags were asked for.
-async fn tag_ids(state: &AppState, names: &[String]) -> AppResult<(Vec<i64>, usize)> {
+pub(super) async fn tag_ids(state: &AppState, names: &[String]) -> AppResult<(Vec<i64>, usize)> {
     let names = super::tags::canonical_names(&state.db, names).await?;
     if names.is_empty() {
         return Ok((Vec::new(), 0));
@@ -137,7 +137,7 @@ fn sort_column(key: SortKey) -> Option<&'static str> {
 }
 
 /// ` WHERE ...` for a parsed search, given its resolved tag ids.
-fn push_filters(
+pub(super) fn push_filters(
     qb: &mut QueryBuilder<Postgres>,
     query: &SearchQuery,
     include: Vec<i64>,
@@ -845,7 +845,9 @@ pub async fn vote(
     } else {
         sqlx::query(
             "INSERT INTO post_votes (post_id, user_id, value) VALUES ($1, $2, $3) \
-             ON CONFLICT (post_id, user_id) DO UPDATE SET value = EXCLUDED.value",
+             ON CONFLICT (post_id, user_id) DO UPDATE SET value = EXCLUDED.value, \
+             voted_at = CASE WHEN post_votes.value = EXCLUDED.value \
+                             THEN post_votes.voted_at ELSE now() END",
         )
         .bind(id)
         .bind(user.id)

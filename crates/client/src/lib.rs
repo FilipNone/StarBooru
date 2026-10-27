@@ -7,7 +7,7 @@ use reqwest::{Method, RequestBuilder, StatusCode, header};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use starbooru_core::{
-    API_PREFIX, AliasRequest, ApiError, AuthResponse, BulkEdit, BulkResult, Credentials,
+    API_PREFIX, AliasRequest, ApiError, AuthResponse, BulkEdit, BulkResult, Credentials, Explore,
     ImplicationRequest, ImportRequest, Neighbors, Post, PostPage, PostUpdate, PurgeResult, Rating,
     SaveSearchRequest, SavedSearch, ServerInfo, Tag, TagDetail, TagOrder, TagUpdate, User,
     VoteRequest,
@@ -240,6 +240,14 @@ impl Client {
 
     pub async fn delete_search(&self, id: i64) -> Result<()> {
         Self::send_empty(self.request(Method::DELETE, &format!("/searches/{id}"))?).await
+    }
+
+    /// Trending posts and tags over the last `days`, narrowed by `query`.
+    pub async fn explore(&self, days: u32, query: &str) -> Result<Explore> {
+        let req = self
+            .request(Method::GET, "/explore")?
+            .query(&[("days", days.to_string()), ("q", query.to_owned())]);
+        Self::send(req).await
     }
 
     /// Tag autocomplete: tags starting with `prefix`, most used first.

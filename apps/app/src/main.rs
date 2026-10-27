@@ -10,7 +10,9 @@ mod zoom;
 
 use dioxus::prelude::*;
 
-use crate::pages::{Gallery, NotFound, PostView, Settings, Shell, TagPage, Tags, Trash, Upload};
+use crate::pages::{
+    Explore, Gallery, NotFound, PostView, Settings, Shell, TagPage, Tags, Trash, Upload,
+};
 use crate::store::{PREFS, SESSION};
 
 const MAIN_CSS: Asset = asset!("/assets/main.css");
@@ -21,6 +23,8 @@ pub enum Route {
     #[layout(Shell)]
         #[route("/?:q")]
         Gallery { q: String },
+        #[route("/explore?:q")]
+        Explore { q: String },
         #[route("/post/:id?:q")]
         PostView { id: i64, q: String },
         #[route("/tags")]

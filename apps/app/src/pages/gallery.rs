@@ -489,7 +489,7 @@ fn SortMenu(q: String) -> Element {
 /// A post in the grid. With `selected` set (selection mode), a click
 /// toggles it instead of opening it.
 #[component]
-fn Thumb(
+pub(super) fn Thumb(
     post: Post,
     index: usize,
     q: String,

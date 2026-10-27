@@ -1,3 +1,4 @@
+mod explore;
 mod gallery;
 mod login;
 mod post;
@@ -9,6 +10,7 @@ mod upload;
 
 use dioxus::prelude::*;
 
+pub use explore::Explore;
 pub use gallery::Gallery;
 pub use post::PostView;
 pub use settings::Settings;

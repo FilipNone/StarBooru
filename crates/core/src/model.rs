@@ -304,6 +304,31 @@ pub struct Tag {
     pub post_count: i32,
 }
 
+/// Default and longest window of the explore page, in days.
+pub const DEFAULT_EXPLORE_DAYS: u32 = 7;
+pub const MAX_EXPLORE_DAYS: u32 = 365;
+
+/// `GET /explore`: what is popular lately, and ways to rediscover the
+/// collection.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Explore {
+    pub days: u32,
+    /// Most net upvotes cast in the window.
+    pub trending: Vec<Post>,
+    /// Most used on posts added in the window.
+    pub tags: Vec<TagTrend>,
+    /// Added on today's date (UTC) in earlier years, newest first.
+    pub on_this_day: Vec<Post>,
+    pub random: Vec<Post>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TagTrend {
+    pub tag: Tag,
+    /// Posts added in the window that carry the tag.
+    pub recent: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TagUpdate {
     pub category: TagCategory,

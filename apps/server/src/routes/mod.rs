@@ -1,6 +1,7 @@
 //! HTTP routing. API reference: `docs/api.md`.
 
 mod auth;
+mod explore;
 mod posts;
 mod searches;
 mod tags;
@@ -58,6 +59,7 @@ pub fn router(state: AppState) -> Router {
         .route("/posts/{id}/vote", put(posts::vote))
         .route("/searches", get(searches::list).post(searches::create))
         .route("/searches/{id}", axum::routing::delete(searches::delete))
+        .route("/explore", get(explore::explore))
         .route("/tags", get(tags::list))
         .route("/tags/{name}", get(tags::detail).patch(tags::update))
         .route("/tags/{name}/aliases", post(tags::add_alias))

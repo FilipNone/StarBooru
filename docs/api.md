@@ -95,6 +95,12 @@ Browse the bin with `GET /posts?q=status:deleted`. `STARBOORU_TRASH_DAYS` purges
 
 Tags are resolved the same way everywhere: an alias in a post's tags or in a search means its tag, and implied tags are added whenever tags are set on a post. Implied tags are stored on the post, so they show up in its tag list and in searches. Path segments are percent-encoded.
 
+## Explore
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| GET | `/explore?days=&q=` | | `Explore {days, trending, tags, on_this_day, random}`. `days` is the window, 1 to 365 (default 7). `trending`: up to 24 posts with the most net upvotes cast or changed in the window (only those above zero). `tags`: up to 20 `TagTrend {tag, recent}`, the tags most used on posts added in the window, without the tags `q` requires. `on_this_day`: up to 12 posts added on today's month and day (UTC) in earlier years, newest first. `random`: 12 random posts. `q` uses the search syntax and narrows every section; its `order:` and `status:` are ignored. 400 for a bad query. |
+
 ## Saved searches
 
 Each user's own list; other users never see it.

@@ -36,7 +36,7 @@ _Status as of 2026-10-27. Scope comes from `docs/checklist.md`._
 | media importer / upload tab | ✅ | Multi-file drag and drop; folder import (only images and videos, optionally tagged with the folder name); import from URLs (downloaded by the server, public addresses only by default); shared tags and rating plus tags per file. |
 | saved search | ✅ | Star a search in the gallery header to save it, or tap it again to forget it. Saved searches show as chips on the unfiltered gallery. Per user, at most 200. |
 | automatic tagging, AI features, OCR | ⬜ | M5 |
-| explore tab with trending | ⬜ | M2 |
+| explore tab with trending | ✅ | An Explore tab: trending posts (net upvotes in the last day, week, month or year), popular tags on recent posts, *On this day* from earlier years, and shuffleable random picks. A search narrows it all. |
 | login system | 🟡 | Accounts, Argon2id, revocable tokens, first user becomes admin. OAuth: M3. |
 | profile settings | 🟡 | Theme and accent. No password change yet. |
 | usage stats / usage limits | ⬜ | M3 |
