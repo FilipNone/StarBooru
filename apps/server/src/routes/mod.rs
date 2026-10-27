@@ -1,13 +1,14 @@
 //! HTTP routing. API reference: `docs/api.md`.
 
 mod auth;
+mod duplicates;
 mod explore;
 mod posts;
 mod searches;
 mod tags;
 mod trash;
 
-pub use posts::backfill_media;
+pub use posts::{backfill_hashes, backfill_media};
 pub use trash::auto_purge;
 
 use std::any::Any;
@@ -69,6 +70,9 @@ pub fn router(state: AppState) -> Router {
         .route("/searches", get(searches::list).post(searches::create))
         .route("/searches/{id}", axum::routing::delete(searches::delete))
         .route("/explore", get(explore::explore))
+        .route("/duplicates", get(duplicates::list))
+        .route("/duplicates/resolve", post(duplicates::resolve))
+        .route("/duplicates/dismiss", post(duplicates::dismiss))
         .route("/tags", get(tags::list))
         .route("/tags/{name}", get(tags::detail).patch(tags::update))
         .route("/tags/{name}/aliases", post(tags::add_alias))

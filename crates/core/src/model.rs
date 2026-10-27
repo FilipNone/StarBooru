@@ -356,6 +356,50 @@ pub struct TagTrend {
     pub recent: i64,
 }
 
+/// Bits (of 64) two fingerprints may differ by and still count as
+/// duplicates.
+pub const DEFAULT_DUPLICATE_DISTANCE: u32 = 6;
+pub const MAX_DUPLICATE_DISTANCE: u32 = 10;
+/// Most posts listed per group, and accepted by resolve and dismiss.
+pub const MAX_DUPLICATE_GROUP: usize = 50;
+
+/// `GET /duplicates`: groups of posts that look alike.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Duplicates {
+    pub distance: u32,
+    /// Groups found; only the first `limit` are listed.
+    pub total: u64,
+    /// Live posts without a fingerprint yet (no thumbnail, or not hashed).
+    pub unhashed: i64,
+    pub groups: Vec<DuplicateGroup>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DuplicateGroup {
+    /// Largest difference, in bits, between two linked posts.
+    pub distance: u32,
+    /// Posts in the group, which may exceed `posts.len()`.
+    pub size: u32,
+    /// Best first: most pixels, then the largest file, then the oldest.
+    pub posts: Vec<Post>,
+}
+
+/// `POST /duplicates/resolve`: keep one post, move the others to the bin.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResolveDuplicates {
+    pub keep: i64,
+    pub remove: Vec<i64>,
+    /// Copy the removed posts' tags (and a missing source) to the kept one.
+    #[serde(default)]
+    pub merge_tags: bool,
+}
+
+/// `POST /duplicates/dismiss`: these posts are not duplicates of each other.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DismissDuplicates {
+    pub ids: Vec<i64>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TagUpdate {
     pub category: TagCategory,

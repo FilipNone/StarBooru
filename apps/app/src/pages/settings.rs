@@ -91,6 +91,11 @@ pub fn Settings() -> Element {
                     span { "Recycle bin" }
                     span { class: "muted", "Restore or permanently delete posts" }
                 }
+                Link { class: "list-link", to: Route::Duplicates {},
+                    Ico { icon: Icon::Copy }
+                    span { "Duplicate finder" }
+                    span { class: "muted", "Find posts that look alike and keep the best copy" }
+                }
             }
 
             section { class: "card",

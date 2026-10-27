@@ -105,7 +105,7 @@ async fn load_row(state: &AppState, user_id: i64, id: i64) -> AppResult<PostRow>
         .ok_or(AppError::NotFound)
 }
 
-async fn load(state: &AppState, user_id: i64, id: i64) -> AppResult<Post> {
+pub(super) async fn load(state: &AppState, user_id: i64, id: i64) -> AppResult<Post> {
     Ok(to_post(state, load_row(state, user_id, id).await?))
 }
 
@@ -464,8 +464,8 @@ async fn insert_post(
     let mut tx = state.db.begin().await?;
     let id: i64 = sqlx::query_scalar(
         "INSERT INTO posts (sha256, ext, mime, kind, file_size, width, height, duration_ms, \
-         has_thumb, rating, source, uploader_id) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id",
+         has_thumb, rating, source, uploader_id, phash, pcolor) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING id",
     )
     .bind(info.sha256.as_slice())
     .bind(info.ext)
@@ -479,6 +479,8 @@ async fn insert_post(
     .bind(rating.to_db())
     .bind(source)
     .bind(user.id)
+    .bind(info.print.map(|p| p.hash_db()))
+    .bind(info.print.map(|p| p.color_db()))
     .fetch_one(&mut *tx)
     .await
     .map_err(|e| match AppError::from(e) {
@@ -543,14 +545,16 @@ pub async fn backfill_media(state: AppState) {
             }
             let updated = sqlx::query(
                 "UPDATE posts SET has_thumb = has_thumb OR $2, width = COALESCE(width, $3), \
-                 height = COALESCE(height, $4), duration_ms = COALESCE(duration_ms, $5) \
-                 WHERE id = $1",
+                 height = COALESCE(height, $4), duration_ms = COALESCE(duration_ms, $5), \
+                 phash = COALESCE(phash, $6), pcolor = COALESCE(pcolor, $7) WHERE id = $1",
             )
             .bind(id)
             .bind(derived.has_thumb)
             .bind(derived.width)
             .bind(derived.height)
             .bind(derived.duration_ms)
+            .bind(derived.print.map(|p| p.hash_db()))
+            .bind(derived.print.map(|p| p.color_db()))
             .execute(&state.db)
             .await;
             match updated {
@@ -561,6 +565,74 @@ pub async fn backfill_media(state: AppState) {
     }
     if done > 0 {
         tracing::info!("media backfill: updated {done} posts");
+    }
+}
+
+/// Fingerprints posts that have a thumbnail but no hash yet (uploaded
+/// before the duplicate finder existed). Runs once at startup.
+pub async fn backfill_hashes(state: AppState) {
+    let mut after = 0i64;
+    let mut done = 0u64;
+    loop {
+        let batch: Result<Vec<(i64, Vec<u8>, String)>, _> = sqlx::query_as(
+            "SELECT id, sha256, ext FROM posts \
+             WHERE (phash IS NULL OR pcolor IS NULL) AND has_thumb AND id > $1 \
+             ORDER BY id LIMIT 200",
+        )
+        .bind(after)
+        .fetch_all(&state.db)
+        .await;
+        let batch = match batch {
+            Ok(b) if !b.is_empty() => b,
+            Ok(_) => break,
+            Err(e) => {
+                warn!("hash backfill stopped: {e}");
+                return;
+            }
+        };
+        let Some(&(last, ..)) = batch.last() else {
+            break;
+        };
+        after = last;
+        let st = state.clone();
+        let hashed = tokio::task::spawn_blocking(move || {
+            batch
+                .into_iter()
+                .filter_map(|(id, sha, ext)| {
+                    st.storage
+                        .thumb_print(&hex::encode(sha), &ext)
+                        .map(|p| (id, p.hash_db(), p.color_db()))
+                })
+                .collect::<Vec<(i64, i64, i32)>>()
+        })
+        .await;
+        let Ok(hashed) = hashed else {
+            warn!("hash backfill stopped: worker failed");
+            return;
+        };
+        let ids: Vec<i64> = hashed.iter().map(|h| h.0).collect();
+        let hashes: Vec<i64> = hashed.iter().map(|h| h.1).collect();
+        let colors: Vec<i32> = hashed.iter().map(|h| h.2).collect();
+        let updated = sqlx::query(
+            "UPDATE posts p SET phash = h.phash, pcolor = h.pcolor \
+             FROM UNNEST($1::bigint[], $2::bigint[], $3::int[]) AS h(id, phash, pcolor) \
+             WHERE p.id = h.id",
+        )
+        .bind(&ids)
+        .bind(&hashes)
+        .bind(&colors)
+        .execute(&state.db)
+        .await;
+        match updated {
+            Ok(r) => done += r.rows_affected(),
+            Err(e) => {
+                warn!("hash backfill stopped: {e}");
+                return;
+            }
+        }
+    }
+    if done > 0 {
+        tracing::info!("hash backfill: fingerprinted {done} posts");
     }
 }
 
@@ -588,7 +660,7 @@ fn clean_source(raw: String) -> AppResult<Option<String>> {
 
 /// Replaces a live post's tags (aliases resolved, implications added),
 /// creating missing tags and keeping `tags.post_count` in step.
-async fn set_tags(
+pub(super) async fn set_tags(
     tx: &mut Transaction<'_, Postgres>,
     post_id: i64,
     names: &[String],
@@ -621,7 +693,7 @@ async fn set_tags(
     adjust_counts(tx, &removed, -1).await
 }
 
-async fn adjust_counts(
+pub(super) async fn adjust_counts(
     tx: &mut Transaction<'_, Postgres>,
     ids: &[i64],
     delta: i32,

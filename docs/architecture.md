@@ -28,9 +28,10 @@ The desktop and Android apps are the same Dioxus code as the web app. Each one a
 | Module | What it does |
 |---|---|
 | `config.rs` | Environment variables (see `deployment.md`) |
-| `routes/` | One file per resource: `auth`, `posts`, `tags`, `trash`. `mod.rs` builds the router and its layers (CORS, compression, tracing, panic catcher, SPA fallback). |
+| `routes/` | One file per resource: `auth`, `posts`, `tags`, `trash`, `duplicates`, and more. `mod.rs` builds the router and its layers (CORS, compression, tracing, panic catcher, SPA fallback). |
 | `auth.rs` | Bearer-token extractor; Argon2id password hashing (on the blocking pool) |
 | `storage.rs` | Format sniffing, content-addressed storage, thumbnails |
+| `similar.rs` | Duplicate finder fingerprints: a 64-bit difference hash (9×8 brightness grid) plus the average colour, and grouping by Hamming distance through a 4×16-bit multi-index, so it never compares every pair. Fine high-frequency patterns blur to flat at 9×8 and can match when their colours do. |
 | `fetch.rs` | URL import download: http(s) only, public addresses only (checked for literal IPs, on every redirect and in a filtering DNS resolver), no proxies, streaming size cap, timeouts |
 | `probe.rs` | Size, length and a still frame through `ffprobe`/`ffmpeg` child processes (time-limited, local files only, capped output) |
 | `media.rs` | HMAC-signed media URLs and the file handler (supports Range for video seeking) |
@@ -46,7 +47,8 @@ PostgreSQL schema: `apps/server/migrations/`.
 | `users` | Usernames are case-insensitively unique. Roles are `admin` and `user`; the first account becomes admin. |
 | `sessions` | The SHA-256 of each bearer token (`sb_<64 hex>`) and its expiry, 90 days. The plain token is never stored. Also an `id` for the settings page, `last_used_at` (refreshed at most every 5 minutes) and `client`, a short description like "Firefox on Linux" (`starbooru_core::agent`); the raw User-Agent is not kept. Native apps send `StarBooru-app/<version> (<os>)`. |
 | `tags` | Normalised name, category (general / artist / character / copyright / meta) and a `post_count` kept in step inside the same transaction as post edits |
-| `posts` | One per file: `sha256` (unique, so duplicates are refused), format, size, dimensions, rating, source, score, `tag_ids BIGINT[]`, `deleted_at` (soft delete) |
+| `posts` | One per file: `sha256` (unique, so duplicates are refused), format, size, dimensions, rating, source, score, `tag_ids BIGINT[]`, `deleted_at` (soft delete), and `phash`/`pcolor`, the duplicate finder's fingerprint of the thumbnail |
+| `duplicate_dismissals` | Pairs of posts (`post_a < post_b`) marked as not duplicates |
 | `post_votes` | One vote per user and post, −1 or +1, with `voted_at` (set when the vote is cast or changed). `posts.score` is their sum. |
 | `tag_aliases` | `alias → tag_id`. Aliases are resolved when tagging, searching and in autocomplete. |
 | `saved_searches` | Per user: a name (unique per user, case-insensitively) and a query string |

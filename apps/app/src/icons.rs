@@ -10,6 +10,7 @@ pub enum Icon {
     ChevronLeft,
     ChevronRight,
     Close,
+    Copy,
     Delete,
     DeleteForever,
     Download,
@@ -52,6 +53,9 @@ impl Icon {
             Icon::ChevronRight => "M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z",
             Icon::Close => {
                 "M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"
+            }
+            Icon::Copy => {
+                "M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"
             }
             Icon::Delete => {
                 "M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"

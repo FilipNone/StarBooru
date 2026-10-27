@@ -7,10 +7,11 @@ use reqwest::{Method, RequestBuilder, StatusCode, header};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use starbooru_core::{
-    API_PREFIX, AliasRequest, ApiError, AuthResponse, BulkEdit, BulkResult, Credentials, Explore,
-    ImplicationRequest, ImportRequest, Neighbors, PasswordChange, Post, PostPage, PostUpdate,
-    PurgeResult, Rating, RevokeResult, SaveSearchRequest, SavedSearch, ServerInfo, SessionInfo,
-    Tag, TagDetail, TagOrder, TagUpdate, User, VoteRequest,
+    API_PREFIX, AliasRequest, ApiError, AuthResponse, BulkEdit, BulkResult, Credentials,
+    DismissDuplicates, Duplicates, Explore, ImplicationRequest, ImportRequest, Neighbors,
+    PasswordChange, Post, PostPage, PostUpdate, PurgeResult, Rating, ResolveDuplicates,
+    RevokeResult, SaveSearchRequest, SavedSearch, ServerInfo, SessionInfo, Tag, TagDetail,
+    TagOrder, TagUpdate, User, VoteRequest,
 };
 use thiserror::Error;
 use url::Url;
@@ -288,6 +289,28 @@ impl Client {
             .request(Method::GET, "/explore")?
             .query(&[("days", days.to_string()), ("q", query.to_owned())]);
         Self::send(req).await
+    }
+
+    /// Groups of posts that look alike, within `distance` bits.
+    pub async fn duplicates(&self, distance: u32, limit: u32) -> Result<Duplicates> {
+        let req = self
+            .request(Method::GET, "/duplicates")?
+            .query(&[("distance", distance), ("limit", limit)]);
+        Self::send(req).await
+    }
+
+    /// Keeps one post of a group and moves the others to the recycle bin.
+    pub async fn resolve_duplicates(&self, req: &ResolveDuplicates) -> Result<Post> {
+        self.json(Method::POST, "/duplicates/resolve", req).await
+    }
+
+    /// Marks posts as not duplicates of each other.
+    pub async fn dismiss_duplicates(&self, ids: Vec<i64>) -> Result<()> {
+        Self::send_empty(
+            self.request(Method::POST, "/duplicates/dismiss")?
+                .json(&DismissDuplicates { ids }),
+        )
+        .await
     }
 
     /// Tag autocomplete: tags starting with `prefix`, most used first.

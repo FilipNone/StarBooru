@@ -1,3 +1,4 @@
+mod duplicates;
 mod explore;
 mod gallery;
 mod help;
@@ -12,6 +13,7 @@ mod upload;
 
 use dioxus::prelude::*;
 
+pub use duplicates::Duplicates;
 pub use explore::Explore;
 pub use gallery::Gallery;
 pub use help::Help;

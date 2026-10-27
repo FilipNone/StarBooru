@@ -655,6 +655,35 @@ button.chip:disabled { cursor: default; }
 }
 .login-card .btn + .btn { margin-top: 8px; }
 
+/* ---------- duplicates ---------- */
+.dup-count { margin: 0 0 12px; font-size: 14px; }
+.dup-groups { display: grid; gap: 16px; }
+.dup-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.dup-head .card-title { margin-bottom: 12px; }
+.dup-head .muted { font-size: 14px; }
+.dup-items { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 12px; }
+.dup-item { display: grid; gap: 6px; min-width: 0; }
+.dup-pick { display: block; cursor: pointer; border-radius: var(--radius-m); }
+.dup-pick .thumb { outline: 3px solid transparent; outline-offset: 2px; transition: outline-color var(--fast) var(--ease); }
+.dup-item.on .dup-pick .thumb { outline-color: var(--primary); }
+.dup-pick:has(input:focus-visible) .thumb { outline-color: var(--on-surface); }
+.keep-badge {
+  position: absolute; left: 8px; top: 8px; display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px 2px 6px; border-radius: 999px; font-size: 12px; font-weight: 600;
+  background: var(--primary); color: var(--on-primary);
+}
+.dup-meta { display: grid; font-size: 13px; line-height: 1.4; min-width: 0; }
+.dup-dims { font-weight: 600; }
+.dup-open { color: var(--primary); text-decoration: none; justify-self: start; }
+.dup-open:hover { text-decoration: underline; }
+.dup-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-top: 16px; }
+.dup-buttons { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }
+@media (max-width: 520px) {
+  .dup-items { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .dup-buttons { width: 100%; }
+  .dup-buttons .btn { flex: 1 1 auto; }
+}
+
 /* ---------- help and legal ---------- */
 .try-query { display: flex; gap: 8px; margin-bottom: 12px; }
 .try-query input {

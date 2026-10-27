@@ -85,6 +85,18 @@ Tags are normalised: trimmed, lower-cased, spaces and underscores folded to one 
 
 Browse the bin with `GET /posts?q=status:deleted`. `STARBOORU_TRASH_DAYS` purges old posts automatically.
 
+## Duplicates
+
+Finds posts that look alike even when the files differ (resized, re-encoded, lightly edited). Each post with a thumbnail has a fingerprint: a 64-bit difference hash of its brightness and its average colour. Two posts match when their hashes differ in at most `distance` bits and each colour channel is within 24 of the other's. Groups are transitive: A and C are grouped when both match B.
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| GET | `/duplicates?distance=&limit=` | | `Duplicates {distance, total, unhashed, groups}`. `distance` is 0–10 (default 6). `limit` is how many groups to return, 1–100 (default 30). `total` counts every group; `unhashed` counts posts that can't be compared yet (no thumbnail, or not fingerprinted yet). Each `DuplicateGroup {distance, size, posts}` gives the largest distance linking it, its size, and up to 50 posts, best first (most pixels, then largest file). Closest groups come first. Pairs marked "not duplicates" are never linked. |
+| POST | `/duplicates/resolve` | `ResolveDuplicates {keep, remove, merge_tags}` | `Post` (the kept one). Moves `remove` to the recycle bin in one transaction. With `merge_tags` the kept post also gets their tags, and their source if it has none. 404 if any post is missing or already in the bin; 403 unless the caller may delete each removed post. 400 if `keep` is in `remove` or `remove` is empty or over 50. |
+| POST | `/duplicates/dismiss` | `DismissDuplicates {ids}` | 204. Marks every pair among 2–50 posts as not duplicates. |
+
+Fingerprints for posts uploaded before this feature are computed in the background at startup.
+
 ## Tags
 
 | Method | Path | Body | Returns |

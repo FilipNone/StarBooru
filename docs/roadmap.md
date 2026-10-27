@@ -48,7 +48,7 @@ _Status as of 2026-10-27. Scope comes from `docs/checklist.md`._
 | recycle bin to recover files | ✅ | Soft delete and restore, a recycle bin page, permanent delete per post, *Empty recycle bin* (admin), optional automatic purge (`STARBOORU_TRASH_DAYS`) |
 | dark / light theme, custom main colour | ✅ | System, light and dark themes. Accent from swatches or a hue slider. |
 | share system | ⬜ | |
-| duplicate remover | 🟡 | Exact duplicates are refused at upload (SHA-256). No near-duplicate detection. |
+| duplicate remover | ✅ | Exact duplicates are refused at upload (SHA-256). Settings › Duplicate finder groups near-duplicates (difference hash plus average colour, Strict/Normal/Loose), keeps the best copy with optional tag merge and bins the rest, or marks a group as not duplicates. |
 | api key | ⬜ | M3 (tokens exist; long-lived named keys don't) |
 | sweet animations | 🟡 | Spring transitions, staggered grid, reduced-motion aware |
 | language translation future proof | ⬜ | Strings are inline. Extract them in M2. |

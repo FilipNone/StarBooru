@@ -14,6 +14,7 @@ use starbooru_core::MediaKind;
 
 use crate::error::{AppError, AppResult};
 use crate::probe::Tools;
+use crate::similar::Fingerprint;
 
 pub const THUMB_SIZE: u32 = 512;
 const THUMB_EXT: &str = "jpg";
@@ -55,6 +56,8 @@ pub struct Ingested {
     pub height: Option<i32>,
     pub duration_ms: Option<i64>,
     pub has_thumb: bool,
+    /// The thumbnail's fingerprint for the duplicate finder.
+    pub print: Option<Fingerprint>,
 }
 
 /// What ffmpeg found in a file `image` can't decode.
@@ -64,6 +67,7 @@ pub struct Derived {
     pub height: Option<i32>,
     pub duration_ms: Option<i64>,
     pub has_thumb: bool,
+    pub print: Option<Fingerprint>,
 }
 
 /// Accepted formats: (mime, ext, kind, decodable by `image` for thumbnails).
@@ -179,6 +183,7 @@ impl Storage {
             height,
             duration_ms: None,
             has_thumb: thumb.is_some(),
+            print: thumb.as_deref().and_then(fingerprint_jpeg),
         };
         if !decodable {
             derived = self.derive(&sha_hex, ext, kind)?;
@@ -193,6 +198,7 @@ impl Storage {
             height: derived.height,
             duration_ms: derived.duration_ms,
             has_thumb: derived.has_thumb,
+            print: derived.print,
         })
     }
 
@@ -223,7 +229,19 @@ impl Storage {
             height: probed.height,
             duration_ms: probed.duration_ms,
             has_thumb: thumb.is_some(),
+            print: thumb.as_deref().and_then(fingerprint_jpeg),
         })
+    }
+
+    /// The fingerprint of a stored thumbnail, or `None` without a readable
+    /// one. Call from a blocking thread.
+    pub fn thumb_print(&self, sha_hex: &str, ext: &str) -> Option<Fingerprint> {
+        let path = self.path_for_file(
+            Variant::Thumb,
+            &Self::file_name(Variant::Thumb, sha_hex, ext),
+        )?;
+        let bytes = std::fs::read(path).ok()?;
+        fingerprint_jpeg(&bytes)
     }
 
     fn write_thumb(&self, sha_hex: &str, ext: &str, jpeg: &[u8]) -> AppResult<()> {
@@ -282,6 +300,10 @@ fn decode(bytes: &[u8]) -> AppResult<DynamicImage> {
         .map_err(|e| AppError::BadRequest(format!("cannot decode image: {e}")))
 }
 
+fn fingerprint_jpeg(bytes: &[u8]) -> Option<Fingerprint> {
+    decode(bytes).ok().map(|img| Fingerprint::of(&img))
+}
+
 /// Fits the image in `THUMB_SIZE`² (never enlarging it), flattens
 /// transparency onto white, JPEG.
 fn make_thumbnail(img: &DynamicImage) -> AppResult<Vec<u8>> {
@@ -322,7 +344,10 @@ mod tests {
         assert_eq!(info.ext, "png");
         assert_eq!((info.width, info.height), (Some(1024), Some(300)));
         assert!(info.has_thumb);
+        assert!(info.print.is_some());
         let sha = hex::encode(info.sha256);
+        assert_eq!(storage.thumb_print(&sha, "png"), info.print);
+        assert_eq!(storage.thumb_print(&"0".repeat(64), "png"), None);
         let thumb = storage
             .path_for_file(
                 Variant::Thumb,

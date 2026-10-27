@@ -7,6 +7,7 @@ mod fetch;
 mod media;
 mod probe;
 mod routes;
+mod similar;
 mod state;
 mod storage;
 #[cfg(test)]
@@ -59,7 +60,11 @@ async fn run() -> Result<(), StartupError> {
     let state = AppState::new(config, db, storage);
     let app = routes::router(state.clone());
     tokio::spawn(routes::auto_purge(state.clone()));
-    tokio::spawn(routes::backfill_media(state.clone()));
+    let backfill = state.clone();
+    tokio::spawn(async move {
+        routes::backfill_media(backfill.clone()).await;
+        routes::backfill_hashes(backfill).await;
+    });
 
     let listener = tokio::net::TcpListener::bind(state.config.bind).await?;
     info!("StarBooru listening on http://{}", state.config.bind);
