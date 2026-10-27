@@ -9,11 +9,11 @@ use serde::de::DeserializeOwned;
 use starbooru_core::{
     API_PREFIX, AdminUser, AliasRequest, ApiError, ApiKey, AuthResponse, Backup, BackupSchedule,
     Backups, BulkEdit, BulkResult, CreatedApiKey, Credentials, DismissDuplicates, Duplicates,
-    Explore, Identity, ImplicationRequest, ImportRequest, Neighbors, NewApiKey, NewShare,
-    OidcBegin, OidcFinish, OidcStart, PasswordChange, PasswordReset, Post, PostPage, PostUpdate,
-    PurgeResult, Rating, ResolveDuplicates, RevokeResult, SaveSearchRequest, SavedSearch,
-    ServerInfo, ServerSettings, ServerStats, SessionInfo, Share, SharedView, SignInMethods, Tag,
-    TagDetail, TagOrder, TagUpdate, Usage, User, UserUpdate, VoteRequest,
+    Explore, Identity, ImplicationRequest, ImportRequest, MediaEdit, Neighbors, NewApiKey,
+    NewShare, OidcBegin, OidcFinish, OidcStart, PasswordChange, PasswordReset, Post, PostPage,
+    PostUpdate, PurgeResult, Rating, ResolveDuplicates, RevokeResult, SaveSearchRequest,
+    SavedSearch, ServerInfo, ServerSettings, ServerStats, SessionInfo, Share, SharedView,
+    SignInMethods, Tag, TagDetail, TagOrder, TagUpdate, Usage, User, UserUpdate, VoteRequest,
 };
 use std::time::Duration;
 use thiserror::Error;
@@ -392,6 +392,12 @@ impl Client {
         Self::send(self.request(Method::POST, "/trash/empty")?).await
     }
 
+    /// Saves a turned, flipped, cropped or trimmed copy as a new post.
+    pub async fn edit_post(&self, id: i64, edit: &MediaEdit) -> Result<Post> {
+        self.json(Method::POST, &format!("/posts/{id}/edit"), edit)
+            .await
+    }
+
     pub async fn vote(&self, id: i64, value: i16) -> Result<Post> {
         self.json(
             Method::PUT,
@@ -690,6 +696,7 @@ mod tests {
             max_upload_bytes: 1,
             url_import: false,
             oidc: None,
+            video_editing: false,
         })
         .unwrap();
         format!(

@@ -709,3 +709,29 @@ shared-empty = Nothing here any more.
 shared-open = Item { $n }
 shared-previous = Previous
 shared-next = Next
+
+## Media editor
+
+editor-open = Edit image or video
+editor-title-image = Edit image
+editor-title-video = Trim video
+editor-tools = Image tools
+editor-turn-left = Turn left
+editor-turn-right = Turn right
+editor-flip-h = Flip left to right
+editor-flip-v = Flip top to bottom
+editor-reset = Undo all changes
+editor-crop-hint = Drag the corners to crop, or drag inside the box to move it.
+editor-start = Start (seconds)
+editor-end = End (seconds)
+editor-now = Use current time
+editor-now-title = Take the time the video is at now
+editor-keeps = Keeps { $length } of { $total }.
+editor-keyframe-hint = The original quality is kept where the video allows it; otherwise the clip is re-encoded, which can take a while.
+editor-bad-time = Enter a start before the end, within the video.
+editor-too-short = The clip must be at least a tenth of a second long.
+editor-no-change = Make a change first.
+editor-bin-original = Move the original to the recycle bin
+editor-copy-hint = The result is saved as a new post with the same tags, rating and source.
+editor-save = Save as new post
+editor-saving = Saving…

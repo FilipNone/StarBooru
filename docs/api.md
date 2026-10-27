@@ -23,7 +23,7 @@ All endpoints are under `/api/v1`. Bodies are JSON unless noted. The Rust types 
 
 | Method | Path | |
 |---|---|---|
-| GET | `/info` | `ServerInfo`: `name`, `version`, `has_users`, `registration_open`, `max_upload_bytes`, `url_import` (whether `POST /posts/import` is on), `oidc` (the identity provider's name for a "Sign in with …" button, `null` when OpenID Connect sign-in is off) |
+| GET | `/info` | `ServerInfo`: `name`, `version`, `has_users`, `registration_open`, `max_upload_bytes`, `url_import` (whether `POST /posts/import` is on), `oidc` (the identity provider's name for a "Sign in with …" button, `null` when OpenID Connect sign-in is off), `video_editing` (whether `POST /posts/{id}/edit` can trim videos: the server has ffmpeg) |
 | GET | `/healthz` (not under `/api/v1`) | `ok` when the database answers |
 
 `name` and `registration_open` follow the admin settings (see [Administration](#administration)).
@@ -130,9 +130,19 @@ A `Backup`'s `url` is a signed path relative to the server, valid for an hour. F
 | POST | `/posts/{id}/restore` | | `Post` |
 | POST | `/posts/{id}/purge` | | 204; permanently deletes a post that is in the recycle bin, with its files (admin or uploader). 409 `not_deleted` if the post is live. |
 | POST | `/posts/bulk` | `BulkEdit {ids, add_tags?, remove_tags?, rating?, delete?}` | `BulkResult {updated, skipped}`. Up to 500 distinct ids. Edits run in one transaction: tags in `remove_tags` (aliases resolve) come off, then `add_tags` go on with their implications. With `delete: true` (and no edits) each post moves to the recycle bin; posts you may not delete are skipped. Missing posts, and posts in the recycle bin when editing, are skipped. 400 for no ids, too many, an invalid tag, a post over the tag limit, no change, or delete combined with edits. |
+| POST | `/posts/{id}/edit` | `MediaEdit {rotate?, flip_h?, flip_v?, crop?, trim?, bin_original?}` | `Post`: a new post with the edited file and the original's tags, rating and source. See [Editing media](#editing-media). |
 | PUT | `/posts/{id}/vote` | `{value: -1 \| 0 \| 1}` | `Post` with the new `score` and `my_vote` |
 
 A `Post` carries `file_url` and `thumb_url`. These are signed paths relative to the server, valid for at least 6 hours. Fetch them without the bearer token. `thumb_url` is null when no thumbnail exists. `duration_ms` is the length of a video, or null.
+
+### Editing media
+
+`POST /posts/{id}/edit` never changes a file: originals are immutable, so the result is a new post. Anyone who can see the post may edit it; `bin_original: true` also moves the original to the recycle bin and needs the rights to delete it (403 otherwise, checked before anything is made).
+
+- **Images** (JPEG, PNG, WebP, BMP, TIFF; not GIF, AVIF or JPEG XL): `rotate` is clockwise degrees (0, 90, 180, 270), then `flip_h`/`flip_v` mirror the turned image, then `crop {x, y, width, height}` cuts a rectangle in pixels of the turned and flipped image. The result keeps the format (JPEG at quality 92, WebP lossless) and drops metadata, with EXIF orientation applied.
+- **Videos**: only `trim {start_ms, end_ms}`, inside the video and at least 100 ms long. The server first copies the streams, which is lossless but starts at a keyframe; when that lands more than half a second early it re-encodes the cut (H.264/AAC, or VP9/Opus for WebM). Needs ffmpeg (`/info` → `video_editing`), otherwise 400.
+
+400 for an edit that changes nothing, a crop outside the image, a bad angle, a trim on an image (or a turn on a video), a post in the recycle bin or a type that can't be edited; 413 when the result is over the upload limit; 409 `duplicate` when the result is a file that already exists.
 
 ### Search syntax (`q`)
 

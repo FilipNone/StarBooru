@@ -37,7 +37,8 @@ The desktop and Android apps are the same Dioxus code as the web app. Each one a
 | `storage.rs` | Format sniffing, content-addressed storage, thumbnails |
 | `similar.rs` | Duplicate finder fingerprints: a 64-bit difference hash (9×8 brightness grid) plus the average colour, and grouping by Hamming distance through a 4×16-bit multi-index, so it never compares every pair. Fine high-frequency patterns blur to flat at 9×8 and can match when their colours do. |
 | `fetch.rs` | URL import download: http(s) only, public addresses only (checked for literal IPs, on every redirect and in a filtering DNS resolver), no proxies, streaming size cap, timeouts |
-| `probe.rs` | Size, length and a still frame through `ffprobe`/`ffmpeg` child processes (time-limited, local files only, capped output) |
+| `probe.rs` | Size, length and a still frame through `ffprobe`/`ffmpeg` child processes (time-limited, local files only, capped output); video trims (stream copy, re-encoded when the copy would start too early) |
+| `edit.rs` | Image edits for `POST /posts/{id}/edit`: turn, flip and crop, written back in the original format. `routes/edit.rs` makes the result a new post through the normal upload path. |
 | `media.rs` | HMAC-signed media URLs and the file handler (supports Range for video seeking) |
 | `error.rs` | `AppError` → JSON `{code, message}` with the right status |
 | `testing.rs` | Test-only harness: a fresh database per test and the real router |
@@ -89,7 +90,7 @@ Uploads are sniffed by content, not by name. Accepted formats:
 | GIF | animation |
 | MP4, WebM, MKV, MOV | video |
 
-Thumbnails are JPEGs at most 512px on the long side. The `image` crate decodes the common formats. For video, AVIF and JPEG XL the server asks ffmpeg for a frame (10% into a video, at most 5 s) and ffprobe for the size and length (`posts.duration_ms`). Without ffmpeg those posts have no thumbnail and the client shows a placeholder. At each start a background task retries posts that are still missing one. The gallery plays a muted preview of a video while the mouse is over it.
+Thumbnails are JPEGs at most 512px on the long side. The `image` crate decodes the common formats. For video, AVIF and JPEG XL the server asks ffmpeg for a frame (10% into a video, at most 5 s) and ffprobe for the size and length (`posts.duration_ms`). Without ffmpeg those posts have no thumbnail and the client shows a placeholder. Images are decoded with their EXIF orientation applied, so thumbnails, sizes and edits match what a browser shows. At each start a background task retries posts that are still missing one. The gallery plays a muted preview of a video while the mouse is over it.
 
 Media URLs look like `/media/thumb/<sha>.jpg?exp=…&sig=…`:
 - The signature is an HMAC-SHA256 keyed by `STARBOORU_SECRET`.
@@ -105,5 +106,5 @@ Media URLs look like `/media/thumb/<sha>.jpg?exp=…&sig=…`:
 | `locales/*.ftl` | One Fluent catalogue per language, compiled in with `include_str!`. `en.ftl` is the reference. |
 | `oidc.rs` | Provider sign-in. Web: the page goes to the provider and comes back to the `/oidc` route, with the handle kept in `sessionStorage`. Desktop and Android: the system browser opens the provider (`webbrowser`), and a one-off listener on `127.0.0.1` receives the result. |
 | `store.rs` | The session (server URL, token, user) and preferences (theme, accent hue, language) in global signals. They persist to `localStorage` on the web and to `<config dir>/StarBooru/state.json` on native. |
-| `pages/` | `shell` (top bar, search with tag autocomplete, navigation; bottom bar on phones), `login`, `gallery` (infinite scroll), `post` (viewer with zoom, pan, previous/next and fullscreen; votes, edit, delete/restore), `upload` (drag and drop, queue), `trash` (recycle bin), `tags` (tag list; tag page with category, aliases and implications), `explore`, `settings`, `help` (search cheat sheet), `legal` (Privacy Policy and Terms of Service, outside the signed-in shell), `share` (the sheet that makes a link, Settings › Shared links, and the public `/s/{token}` page outside the shell) |
+| `pages/` | `shell` (top bar, search with tag autocomplete, navigation; bottom bar on phones), `login`, `gallery` (infinite scroll), `post` (viewer with zoom, pan, previous/next and fullscreen; votes, edit, delete/restore), `editor` (the sheet that turns, flips and crops an image or trims a video; the crop maths is unit tested), `upload` (drag and drop, queue), `trash` (recycle bin), `tags` (tag list; tag page with category, aliases and implications), `explore`, `settings`, `help` (search cheat sheet), `legal` (Privacy Policy and Terms of Service, outside the signed-in shell), `share` (the sheet that makes a link, Settings › Shared links, and the public `/s/{token}` page outside the shell) |
 | `assets/main.css` | The design system. Material-You-style colour roles come from one OKLCH seed hue (`--seed-hue`), with light, dark and system themes. Glass applies to the bars only. Animations use spring easing and are disabled under reduced motion. |

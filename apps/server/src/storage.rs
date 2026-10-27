@@ -8,7 +8,8 @@
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
-use image::{DynamicImage, ImageReader, Limits, Rgb, RgbImage};
+use image::metadata::Orientation;
+use image::{DynamicImage, ImageDecoder, ImageReader, Limits, Rgb, RgbImage};
 use sha2::{Digest, Sha256};
 use starbooru_core::MediaKind;
 
@@ -117,6 +118,27 @@ impl Storage {
 
     pub fn has_tools(&self) -> bool {
         self.tools.is_some()
+    }
+
+    pub fn tools(&self) -> Option<&Tools> {
+        self.tools.as_ref()
+    }
+
+    /// Where a stored original lives.
+    pub fn original_path(&self, sha_hex: &str, ext: &str) -> Option<PathBuf> {
+        self.path_for_file(
+            Variant::Original,
+            &Self::file_name(Variant::Original, sha_hex, ext),
+        )
+    }
+
+    /// A fresh path in the scratch directory, cleared at every start.
+    pub fn scratch_path(&self, ext: &str) -> PathBuf {
+        let mut nonce = [0u8; 8];
+        rand::fill(&mut nonce);
+        self.root
+            .join("tmp")
+            .join(format!("{}.{ext}", hex::encode(nonce)))
     }
 
     pub fn file_name(variant: Variant, sha_hex: &str, ext: &str) -> String {
@@ -288,16 +310,23 @@ impl Storage {
     }
 }
 
-fn decode(bytes: &[u8]) -> AppResult<DynamicImage> {
+/// Decodes an image upright: the EXIF orientation is applied, as browsers
+/// do when they show the original.
+pub fn decode(bytes: &[u8]) -> AppResult<DynamicImage> {
     let mut reader = ImageReader::new(Cursor::new(bytes))
         .with_guessed_format()
         .map_err(|e| AppError::BadRequest(format!("cannot read image: {e}")))?;
     let mut limits = Limits::default();
     limits.max_alloc = Some(MAX_DECODE_BYTES);
     reader.limits(limits);
-    reader
-        .decode()
-        .map_err(|e| AppError::BadRequest(format!("cannot decode image: {e}")))
+    let mut decoder = reader
+        .into_decoder()
+        .map_err(|e| AppError::BadRequest(format!("cannot decode image: {e}")))?;
+    let orientation = decoder.orientation().unwrap_or(Orientation::NoTransforms);
+    let mut img = DynamicImage::from_decoder(decoder)
+        .map_err(|e| AppError::BadRequest(format!("cannot decode image: {e}")))?;
+    img.apply_orientation(orientation);
+    Ok(img)
 }
 
 fn fingerprint_jpeg(bytes: &[u8]) -> Option<Fingerprint> {
@@ -334,6 +363,29 @@ mod tests {
         let mut out = Cursor::new(Vec::new());
         img.write_to(&mut out, image::ImageFormat::Png).unwrap();
         out.into_inner()
+    }
+
+    #[test]
+    fn decodes_photos_upright() {
+        use image::ImageEncoder;
+        use image::codecs::jpeg::JpegEncoder;
+        // Big-endian TIFF with one IFD entry: Orientation (0x0112) = 6,
+        // "turn 90° clockwise to show", as phones write it.
+        let exif = [
+            b"MM\0*\0\0\0\x08\0\x01".as_slice(),
+            &[0x01, 0x12, 0, 3, 0, 0, 0, 1, 0, 6, 0, 0],
+            &[0, 0, 0, 0],
+        ]
+        .concat();
+        let img = image::RgbImage::from_pixel(40, 20, image::Rgb([200, 30, 30]));
+        let mut out = Vec::new();
+        let mut encoder = JpegEncoder::new(&mut out);
+        encoder.set_exif_metadata(exif).unwrap();
+        encoder
+            .write_image(img.as_raw(), 40, 20, image::ExtendedColorType::Rgb8)
+            .unwrap();
+        let decoded = decode(&out).unwrap();
+        assert_eq!((decoded.width(), decoded.height()), (20, 40));
     }
 
     #[tokio::test]

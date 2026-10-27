@@ -3,6 +3,7 @@
 mod auth;
 mod backup;
 mod config;
+mod edit;
 mod error;
 mod fetch;
 mod media;

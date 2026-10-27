@@ -709,3 +709,29 @@ shared-empty = Qui non c'è più niente.
 shared-open = Elemento { $n }
 shared-previous = Precedente
 shared-next = Successivo
+
+## Media editor
+
+editor-open = Modifica immagine o video
+editor-title-image = Modifica immagine
+editor-title-video = Taglia video
+editor-tools = Strumenti immagine
+editor-turn-left = Ruota a sinistra
+editor-turn-right = Ruota a destra
+editor-flip-h = Rifletti da sinistra a destra
+editor-flip-v = Rifletti dall'alto in basso
+editor-reset = Annulla le modifiche
+editor-crop-hint = Trascina gli angoli per ritagliare, o trascina dentro il riquadro per spostarlo.
+editor-start = Inizio (secondi)
+editor-end = Fine (secondi)
+editor-now = Usa il punto attuale
+editor-now-title = Prendi il punto in cui si trova il video
+editor-keeps = Tiene { $length } di { $total }.
+editor-keyframe-hint = Dove il video lo permette la qualità originale resta intatta; altrimenti la clip viene ricodificata, e può volerci un po'.
+editor-bad-time = Inserisci un inizio prima della fine, entro la durata del video.
+editor-too-short = La clip deve durare almeno un decimo di secondo.
+editor-no-change = Fai prima una modifica.
+editor-bin-original = Sposta l'originale nel cestino
+editor-copy-hint = Il risultato viene salvato come nuovo post con gli stessi tag, classificazione e fonte.
+editor-save = Salva nuovo post
+editor-saving = Salvataggio…

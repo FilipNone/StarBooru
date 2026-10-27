@@ -31,7 +31,7 @@ _Status as of 2026-10-27. Scope comes from `docs/checklist.md`._
 | pages and infinite scroll | ✅ | Infinite scroll with a "Load more" fallback. No numbered pages yet. |
 | media viewer | ✅ | Image, GIF, video. Zoom (wheel, double-click, pinch, buttons, `+`/`-`/`0`) and drag to pan; previous/next in the order of the search you came from (arrows, `←`/`→`, swipe); fullscreen (`F`); `E` edits tags, `Esc` steps back out. Autocomplete takes `↑`/`↓`, `Enter`/`Tab` and `Esc`. |
 | related media suggestion | ⬜ | M5 (embeddings) |
-| simple image editor / simple video editor | ⬜ | |
+| simple image editor / simple video editor | ✅ | The post viewer's editor turns, flips and crops an image (drag the corners) or trims a video (type times or take the playing position). The result is saved as a new post with the same tags; the original can go to the recycle bin. Video trims need ffmpeg: a lossless copy when the keyframes allow it, a re-encode otherwise. |
 | video preview | ✅ | Thumbnails for video, AVIF and JPEG XL through ffmpeg (bundled in the image), length badge, muted preview on mouse hover, plays in the viewer. Older posts get thumbnails at the next start. |
 | media importer / upload tab | ✅ | Multi-file drag and drop; folder import (only images and videos, optionally tagged with the folder name); import from URLs (downloaded by the server, public addresses only by default); shared tags and rating plus tags per file. |
 | saved search | ✅ | Star a search in the gallery header to save it, or tap it again to forget it. Saved searches show as chips on the unfiltered gallery. Per user, at most 200. |
@@ -93,3 +93,4 @@ _Status as of 2026-10-27. Scope comes from `docs/checklist.md`._
 
 - **Plaintext token on desktop.** The token is stored in the user's config directory. Moving it to the OS keyring is M4.
 - **Orphan files.** Fixed for failed inserts (the files are removed unless another post owns them) and interrupted writes (`tmp/` is cleared at startup). Files left by a crash between the write and the insert are not swept yet.
+- **Sideways photos from before EXIF orientation.** Images are now decoded upright, but posts uploaded earlier keep the thumbnail and the width/height they got without it. For such a photo the editor's crop can be refused as "outside the image"; turning it still works. Rebuilding those thumbnails and sizes needs a backfill.

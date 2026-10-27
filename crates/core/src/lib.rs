@@ -5,6 +5,7 @@
 
 pub mod admin;
 pub mod agent;
+pub mod edit;
 pub mod keys;
 pub mod model;
 pub mod oidc;
@@ -18,6 +19,7 @@ pub use admin::{
     ServerStats, Usage, UserUpdate, clean_settings,
 };
 pub use agent::describe_user_agent;
+pub use edit::{Crop, EditError, EditKind, MediaEdit, Trim, edit_kind};
 pub use keys::clean_api_key;
 pub use model::*;
 pub use oidc::{Identity, OidcBegin, OidcError, OidcFinish, OidcStart, SignInMethods};

@@ -2,6 +2,7 @@ mod admin;
 mod admin_backups;
 mod api_keys;
 mod duplicates;
+mod editor;
 mod explore;
 mod gallery;
 mod help;

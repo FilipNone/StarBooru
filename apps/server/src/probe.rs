@@ -16,6 +16,13 @@ use serde::Deserialize;
 use tracing::warn;
 
 const TIMEOUT: Duration = Duration::from_secs(30);
+/// Trimming copies the whole clip, which can take longer than a probe.
+const TRIM_TIMEOUT: Duration = Duration::from_secs(180);
+/// Re-encoding a long video is slow.
+const ENCODE_TIMEOUT: Duration = Duration::from_secs(900);
+/// How much longer than asked a stream-copied trim may run before it is
+/// re-encoded instead.
+const TRIM_SLACK_MS: i64 = 500;
 const MAX_PROBE_OUTPUT: u64 = 1 << 20;
 /// A 1024 px PNG frame is far below this.
 const MAX_FRAME_OUTPUT: u64 = 32 << 20;
@@ -100,7 +107,7 @@ impl Tools {
             "json",
         ])
         .arg(file_arg(path));
-        let json = run(&mut cmd, MAX_PROBE_OUTPUT)?;
+        let json = run(&mut cmd, MAX_PROBE_OUTPUT, TIMEOUT)?;
         parse_probe(&json)
     }
 
@@ -132,8 +139,107 @@ impl Tools {
             "png",
             "-",
         ]);
-        let png = run(&mut cmd, MAX_FRAME_OUTPUT)?;
+        let png = run(&mut cmd, MAX_FRAME_OUTPUT, TIMEOUT)?;
         (!png.is_empty()).then_some(png)
+    }
+}
+
+impl Tools {
+    /// Writes the part of a video between `start_ms` and `end_ms` to
+    /// `output`. A stream copy is tried first: it is fast and lossless, but
+    /// starts at the keyframe before `start_ms`. When that lands too early
+    /// the cut is re-encoded instead. Returns whether a new, non-empty
+    /// `output` was written. Call from a blocking thread.
+    pub fn trim(&self, input: &Path, output: &Path, ext: &str, start_ms: i64, end_ms: i64) -> bool {
+        // ffmpeg 9 exits 0 when `-n` refuses to overwrite, so check first.
+        let Some(format) = container(ext).filter(|_| !output.exists()) else {
+            return false;
+        };
+        let length = end_ms.saturating_sub(start_ms);
+        if self.cut(input, output, format, start_ms, length, false) {
+            let got = self.metadata(output).and_then(|p| p.duration_ms);
+            if start_ms == 0 || got.is_some_and(|ms| ms <= length.saturating_add(TRIM_SLACK_MS)) {
+                return true;
+            }
+        }
+        let _ = std::fs::remove_file(output);
+        self.cut(input, output, format, start_ms, length, true)
+    }
+
+    fn cut(
+        &self,
+        input: &Path,
+        output: &Path,
+        format: &str,
+        start_ms: i64,
+        length_ms: i64,
+        encode: bool,
+    ) -> bool {
+        let at = |ms: i64| format!("{}.{:03}", ms / 1000, ms % 1000);
+        let mut cmd = Command::new(&self.ffmpeg);
+        cmd.args([
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-protocol_whitelist",
+            "file",
+            "-ss",
+        ])
+        .arg(at(start_ms))
+        .arg("-i")
+        .arg(file_arg(input))
+        .arg("-t")
+        .arg(at(length_ms))
+        .args(["-map", "0:v:0", "-map", "0:a?", "-sn", "-dn"]);
+        match (encode, format) {
+            (false, _) => {
+                cmd.args(["-c", "copy", "-avoid_negative_ts", "make_zero"]);
+            }
+            (true, "webm") => {
+                cmd.args([
+                    "-c:v",
+                    "libvpx-vp9",
+                    "-crf",
+                    "30",
+                    "-b:v",
+                    "0",
+                    "-deadline",
+                    "good",
+                    "-cpu-used",
+                    "4",
+                    "-row-mt",
+                    "1",
+                    "-c:a",
+                    "libopus",
+                    "-b:a",
+                    "128k",
+                ]);
+            }
+            (true, _) => {
+                cmd.args([
+                    "-c:v", "libx264", "-crf", "18", "-preset", "veryfast", "-c:a", "aac", "-b:a",
+                    "192k",
+                ]);
+            }
+        }
+        if matches!(format, "mp4" | "mov") {
+            cmd.args(["-movflags", "+faststart"]);
+        }
+        cmd.args(["-f", format, "-n"]).arg(file_arg(output));
+        let timeout = if encode { ENCODE_TIMEOUT } else { TRIM_TIMEOUT };
+        run(&mut cmd, 0, timeout).is_some() && std::fs::metadata(output).is_ok_and(|m| m.len() > 0)
+    }
+}
+
+/// ffmpeg's muxer for a stored video's extension.
+fn container(ext: &str) -> Option<&'static str> {
+    match ext {
+        "mp4" => Some("mp4"),
+        "webm" => Some("webm"),
+        "mkv" => Some("matroska"),
+        "mov" => Some("mov"),
+        _ => None,
     }
 }
 
@@ -178,9 +284,9 @@ fn parse_probe(json: &[u8]) -> Option<Probed> {
 }
 
 /// Runs a tool and returns its stdout if it exits successfully within
-/// `TIMEOUT`. Output beyond `max_out` bytes stalls the child until the
+/// `timeout`. Output beyond `max_out` bytes stalls the child until the
 /// timeout kills it.
-fn run(cmd: &mut Command, max_out: u64) -> Option<Vec<u8>> {
+fn run(cmd: &mut Command, max_out: u64, timeout: Duration) -> Option<Vec<u8>> {
     let mut child = match cmd
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -207,7 +313,7 @@ fn run(cmd: &mut Command, max_out: u64) -> Option<Vec<u8>> {
         let _ = stdout.take(max_out).read_to_end(&mut buf);
         buf
     });
-    let deadline = Instant::now() + TIMEOUT;
+    let deadline = Instant::now() + timeout;
     let ok = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status.success(),
@@ -331,5 +437,47 @@ pub mod tests {
         std::fs::write(dir.path().join("junk.mp4"), b"not a video").unwrap();
         let junk = tools.probe(&dir.path().join("junk.mp4"), true);
         assert!(junk.frame.is_none());
+    }
+
+    #[test]
+    fn trims_a_video() {
+        let Some(tools) = tools() else {
+            return;
+        };
+        let dir = tempfile::tempdir().unwrap();
+        // A keyframe every second, so the cut starts at 1 s; a stream copy
+        // can run a few frames long.
+        let Some(_) = generate(
+            dir.path(),
+            "clip.mp4",
+            "testsrc=duration=4:size=160x90:rate=10",
+            &["-pix_fmt", "yuv420p", "-g", "10"],
+        ) else {
+            return;
+        };
+        let (input, output) = (dir.path().join("clip.mp4"), dir.path().join("cut.mp4"));
+        assert!(tools.trim(&input, &output, "mp4", 1_000, 3_000));
+        let p = tools.probe(&output, true);
+        assert_eq!((p.width, p.height), (Some(160), Some(90)));
+        let ms = p.duration_ms.unwrap();
+        assert!((1_900..=2_500).contains(&ms), "{ms}");
+        // With one keyframe at the start, a copy would keep the whole
+        // clip, so the cut is re-encoded.
+        let Some(_) = generate(
+            dir.path(),
+            "sparse.webm",
+            "testsrc=duration=4:size=160x90:rate=10",
+            &["-c:v", "libvpx-vp9", "-g", "1000", "-deadline", "realtime"],
+        ) else {
+            return;
+        };
+        let sparse = dir.path().join("sparse.webm");
+        let cut = dir.path().join("cut.webm");
+        assert!(tools.trim(&sparse, &cut, "webm", 1_500, 3_000));
+        let ms = tools.probe(&cut, true).duration_ms.unwrap();
+        assert!((1_400..=1_600).contains(&ms), "{ms}");
+        // Never overwrites, and refuses unknown containers.
+        assert!(!tools.trim(&input, &output, "mp4", 0, 1_000));
+        assert!(!tools.trim(&input, &dir.path().join("x.avi"), "avi", 0, 1_000));
     }
 }

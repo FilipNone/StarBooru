@@ -170,6 +170,9 @@ pub struct ServerInfo {
     /// The OpenID Connect provider's name, when sign-in through it is set up.
     #[serde(default)]
     pub oidc: Option<String>,
+    /// Whether videos can be trimmed (the server has ffmpeg).
+    #[serde(default)]
+    pub video_editing: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

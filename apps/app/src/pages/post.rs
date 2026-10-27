@@ -3,8 +3,9 @@ use std::collections::HashMap;
 use dioxus::html::geometry::{ClientPoint, PixelsRect};
 use dioxus::prelude::*;
 use starbooru_client::ClientError;
-use starbooru_core::{MediaKind, Neighbors, Post, PostUpdate, Rating};
+use starbooru_core::{EditKind, MediaKind, Neighbors, Post, PostUpdate, Rating, edit_kind};
 
+use super::editor::EditorSheet;
 use super::share::ShareSheet;
 use super::{ErrorBanner, Spinner};
 use crate::Route;
@@ -57,6 +58,7 @@ pub fn PostView(id: i64, q: String) -> Element {
     let mut busy = use_signal(|| false);
     let mut editing = use_signal(|| false);
     let mut sharing = use_signal(|| false);
+    let mut media_editing = use_signal(|| false);
     let mut tag_text = use_signal(String::new);
     let mut rating = use_signal(Rating::default);
 
@@ -83,6 +85,7 @@ pub fn PostView(id: i64, q: String) -> Element {
     use_effect(use_reactive!(|id| {
         post.set(None);
         editing.set(false);
+        media_editing.set(false);
         zoom.set(Zoom::default());
         reload(id);
     }));
@@ -94,6 +97,11 @@ pub fn PostView(id: i64, q: String) -> Element {
         client.neighbors(id, &q).await.ok()
     });
     let nav = move || (*neighbors.read()).flatten().unwrap_or_default();
+    // Trimming needs ffmpeg on the server.
+    let video_editing = use_resource(|| async move {
+        let client = store::client()?;
+        client.info().await.ok().map(|i| i.video_editing)
+    });
     let go = move |to: Option<i64>| {
         if let Some(id) = to {
             let q = current.peek().1.clone();
@@ -116,7 +124,7 @@ pub fn PostView(id: i64, q: String) -> Element {
     use_future(move || async move {
         let mut keys = document::eval(KEY_LISTENER);
         while let Ok(key) = keys.recv::<String>().await {
-            if editing() {
+            if editing() || media_editing() {
                 continue;
             }
             match key.as_str() {
@@ -194,6 +202,12 @@ pub fn PostView(id: i64, q: String) -> Element {
         _ => "—".into(),
     };
     let duration = p.duration_ms.and_then(format_duration);
+    let editable = edit_kind(p.kind, &p.mime).filter(|k| match k {
+        EditKind::Image => p.width.is_some() && p.height.is_some(),
+        EditKind::Video => {
+            p.duration_ms.is_some() && (*video_editing.read()).flatten().unwrap_or(false)
+        }
+    });
 
     rsx! {
         div { class: "page post-layout",
@@ -249,6 +263,11 @@ pub fn PostView(id: i64, q: String) -> Element {
                             button { class: "icon-btn", aria_label: t!("post-edit"), title: t!("post-edit-tags"), onclick: move |_| start_edit(),
                                 Ico { icon: Icon::Edit }
                             }
+                            if let Some(kind) = editable {
+                                button { class: "icon-btn", aria_label: t!("editor-open"), title: t!("editor-open"), onclick: move |_| media_editing.set(true),
+                                    Ico { icon: if kind == EditKind::Video { Icon::Cut } else { Icon::Crop } }
+                                }
+                            }
                             button { class: "icon-btn danger", aria_label: t!("post-delete"), title: t!("post-delete-title"),
                                 disabled: busy(), onclick: move |_| act(Op::Delete),
                                 Ico { icon: Icon::Delete }
@@ -258,6 +277,19 @@ pub fn PostView(id: i64, q: String) -> Element {
                 }
                 if sharing() {
                     ShareSheet { post_ids: vec![id], onclose: move |()| sharing.set(false) }
+                }
+                if let Some(kind) = editable.filter(|_| media_editing()) {
+                    EditorSheet {
+                        post: p.clone(),
+                        kind,
+                        file_url: file_url.clone(),
+                        onclose: move |()| media_editing.set(false),
+                        onsaved: move |new_id| {
+                            media_editing.set(false);
+                            let q = current.peek().1.clone();
+                            navigator().push(Route::PostView { id: new_id, q });
+                        },
+                    }
                 }
                 if editing() {
                     form {

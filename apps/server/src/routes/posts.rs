@@ -419,7 +419,7 @@ pub async fn import(
 }
 
 /// Stores `bytes` and inserts the post, refusing exact duplicates.
-async fn create_post(
+pub(super) async fn create_post(
     state: &AppState,
     user: &AuthUser,
     bytes: Bytes,
@@ -888,7 +888,12 @@ pub async fn restore(
     Ok(Json(load(&state, user.id, id).await?))
 }
 
-async fn set_deleted(state: &AppState, user: &AuthUser, id: i64, delete: bool) -> AppResult<()> {
+pub(super) async fn set_deleted(
+    state: &AppState,
+    user: &AuthUser,
+    id: i64,
+    delete: bool,
+) -> AppResult<()> {
     let mut tx = state.db.begin().await?;
     let (uploader, deleted, tag_ids): (Option<i64>, bool, Vec<i64>) = sqlx::query_as(
         "SELECT uploader_id, deleted_at IS NOT NULL, tag_ids FROM posts WHERE id = $1 FOR UPDATE",

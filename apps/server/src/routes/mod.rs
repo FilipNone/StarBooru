@@ -4,6 +4,7 @@ mod admin;
 mod auth;
 mod backups;
 mod duplicates;
+mod edit;
 mod explore;
 mod keys;
 mod oidc;
@@ -99,6 +100,7 @@ pub fn router(state: AppState) -> Router {
         .route("/posts/{id}/purge", post(posts::purge))
         .route("/trash/empty", post(trash::empty))
         .route("/posts/{id}/vote", put(posts::vote))
+        .route("/posts/{id}/edit", post(edit::edit))
         .route("/shares", get(shares::list).post(shares::create))
         .route("/shares/{id}", axum::routing::delete(shares::delete))
         .route("/shared/{token}", get(shares::view))
@@ -180,6 +182,7 @@ async fn info(State(state): State<AppState>) -> AppResult<Json<ServerInfo>> {
         max_upload_bytes: state.config.max_upload_bytes as u64,
         url_import: state.fetcher.is_some(),
         oidc: state.oidc.as_ref().map(|o| o.name().to_owned()),
+        video_editing: state.storage.has_tools(),
     }))
 }
 
