@@ -71,6 +71,8 @@ fn route_query(route: &Route) -> String {
 fn SearchBox(route: Route) -> Element {
     let mut text = use_signal(|| route_query(&route));
     let mut focused = use_signal(|| false);
+    // The highlighted suggestion, moved with the arrow keys.
+    let mut active = use_signal(|| None::<usize>);
     // Every navigation resets the box, so a half-typed query doesn't linger.
     use_effect(use_reactive!(|route| text.set(route_query(&route))));
 
@@ -116,6 +118,10 @@ fn SearchBox(route: Route) -> Element {
     };
 
     let list = suggestions.read().clone().unwrap_or_default();
+    let open = focused() && !list.is_empty();
+    let count = list.len();
+    let names: Vec<String> = list.iter().map(|t| t.name.clone()).collect();
+    let selected = active().filter(|i| *i < count);
     rsx! {
         form {
             class: "search",
@@ -132,16 +138,60 @@ fn SearchBox(route: Route) -> Element {
                 autocomplete: "off",
                 spellcheck: "false",
                 value: "{text}",
-                oninput: move |e| text.set(e.value()),
+                role: "combobox",
+                aria_autocomplete: "list",
+                aria_controls: "search-suggestions",
+                aria_expanded: if open { "true" } else { "false" },
+                aria_activedescendant: selected.map(|i| format!("suggestion-{i}")).unwrap_or_default(),
+                oninput: move |e| {
+                    text.set(e.value());
+                    active.set(None);
+                    focused.set(true);
+                },
                 onfocus: move |_| focused.set(true),
-                onblur: move |_| focused.set(false),
+                onblur: move |_| {
+                    focused.set(false);
+                    active.set(None);
+                },
+                onkeydown: move |e: KeyboardEvent| {
+                    if !open {
+                        return;
+                    }
+                    match e.key() {
+                        Key::ArrowDown => {
+                            e.prevent_default();
+                            active.set(Some(selected.map_or(0, |i| (i + 1) % count)));
+                        }
+                        Key::ArrowUp => {
+                            e.prevent_default();
+                            active.set(Some(selected.map_or(count - 1, |i| (i + count - 1) % count)));
+                        }
+                        Key::Enter | Key::Tab => {
+                            if let Some(name) = selected.and_then(|i| names.get(i)) {
+                                e.prevent_default();
+                                complete(name.clone());
+                                active.set(None);
+                            }
+                        }
+                        Key::Escape => {
+                            e.prevent_default();
+                            focused.set(false);
+                            active.set(None);
+                        }
+                        _ => {}
+                    }
+                },
             }
-            if focused() && !list.is_empty() {
-                ul { class: "suggestions", role: "listbox",
-                    for tag in list {
+            if open {
+                ul { class: "suggestions", role: "listbox", id: "search-suggestions",
+                    for (i, tag) in list.into_iter().enumerate() {
                         li {
                             key: "{tag.id}",
+                            id: "suggestion-{i}",
                             role: "option",
+                            class: if selected == Some(i) { "active" } else { "" },
+                            aria_selected: if selected == Some(i) { "true" } else { "false" },
+                            onmouseenter: move |_| active.set(Some(i)),
                             // mousedown fires before the input's blur
                             onmousedown: move |e| {
                                 e.prevent_default();

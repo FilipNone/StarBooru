@@ -120,7 +120,7 @@ pub fn Gallery(q: String) -> Element {
             }
             div { class: "grid",
                 for (index, post) in posts.read().iter().enumerate() {
-                    Thumb { key: "{post.id}", post: post.clone(), index }
+                    Thumb { key: "{post.id}", post: post.clone(), index, q: q.clone() }
                 }
             }
             if has_more() && error().is_none() {
@@ -169,7 +169,7 @@ fn SortMenu(q: String) -> Element {
 }
 
 #[component]
-fn Thumb(post: Post, index: usize) -> Element {
+fn Thumb(post: Post, index: usize, q: String) -> Element {
     let client = store::client();
     let src = post
         .thumb_url
@@ -182,7 +182,7 @@ fn Thumb(post: Post, index: usize) -> Element {
         Link {
             class: "thumb",
             style: "--delay: {delay}ms",
-            to: Route::PostView { id: post.id },
+            to: Route::PostView { id: post.id, q },
             if let Some(src) = src {
                 img { src, alt, loading: "lazy", decoding: "async" }
             } else {

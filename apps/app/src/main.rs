@@ -6,6 +6,7 @@ mod icons;
 mod pages;
 mod store;
 mod util;
+mod zoom;
 
 use dioxus::prelude::*;
 
@@ -20,8 +21,8 @@ pub enum Route {
     #[layout(Shell)]
         #[route("/?:q")]
         Gallery { q: String },
-        #[route("/post/:id")]
-        PostView { id: i64 },
+        #[route("/post/:id?:q")]
+        PostView { id: i64, q: String },
         #[route("/tags")]
         Tags {},
         #[route("/tag?:name")]

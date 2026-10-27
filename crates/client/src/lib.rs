@@ -7,9 +7,9 @@ use reqwest::{Method, RequestBuilder, StatusCode, header};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use starbooru_core::{
-    API_PREFIX, AliasRequest, ApiError, AuthResponse, Credentials, ImplicationRequest, Post,
-    PostPage, PostUpdate, PurgeResult, Rating, ServerInfo, Tag, TagDetail, TagOrder, TagUpdate,
-    User, VoteRequest,
+    API_PREFIX, AliasRequest, ApiError, AuthResponse, Credentials, ImplicationRequest, Neighbors,
+    Post, PostPage, PostUpdate, PurgeResult, Rating, ServerInfo, Tag, TagDetail, TagOrder,
+    TagUpdate, User, VoteRequest,
 };
 use thiserror::Error;
 use url::Url;
@@ -160,6 +160,14 @@ impl Client {
 
     pub async fn post(&self, id: i64) -> Result<Post> {
         Self::send(self.request(Method::GET, &format!("/posts/{id}"))?).await
+    }
+
+    /// The posts before and after `id` in the results of search `query`.
+    pub async fn neighbors(&self, id: i64, query: &str) -> Result<Neighbors> {
+        let req = self
+            .request(Method::GET, &format!("/posts/{id}/neighbors"))?
+            .query(&[("q", query)]);
+        Self::send(req).await
     }
 
     pub async fn update_post(&self, id: i64, update: &PostUpdate) -> Result<Post> {

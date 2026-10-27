@@ -176,7 +176,7 @@ fn TrashItem(post: Post, onrestore: EventHandler<i64>, onpurge: EventHandler<i64
     let id = post.id;
     rsx! {
         div { class: "trash-item",
-            Link { class: "thumb", to: Route::PostView { id },
+            Link { class: "thumb", to: Route::PostView { id, q: "status:deleted".to_owned() },
                 if let Some(src) = src {
                     img { src, alt: "{post.tags.join(\" \")}", loading: "lazy", decoding: "async" }
                 } else {

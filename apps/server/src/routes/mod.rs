@@ -47,6 +47,7 @@ pub fn router(state: AppState) -> Router {
                 .patch(posts::update)
                 .delete(posts::delete),
         )
+        .route("/posts/{id}/neighbors", get(posts::neighbors))
         .route("/posts/{id}/restore", post(posts::restore))
         .route("/posts/{id}/purge", post(posts::purge))
         .route("/trash/empty", post(trash::empty))

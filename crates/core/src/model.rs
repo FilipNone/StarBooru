@@ -281,6 +281,15 @@ pub enum TagOrder {
     Name,
 }
 
+/// The posts around one post in a search (`GET /posts/{id}/neighbors`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Neighbors {
+    /// The post shown before it, if any.
+    pub prev: Option<i64>,
+    /// The post shown after it, if any.
+    pub next: Option<i64>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PurgeResult {
     /// Posts permanently deleted.

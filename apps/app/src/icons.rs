@@ -6,11 +6,15 @@ use dioxus::prelude::*;
 pub enum Icon {
     Add,
     Check,
+    ChevronLeft,
+    ChevronRight,
     Close,
     Delete,
     DeleteForever,
     Download,
     Edit,
+    Fullscreen,
+    FullscreenExit,
     Gallery,
     Label,
     Logout,
@@ -22,6 +26,8 @@ pub enum Icon {
     ThumbUp,
     Tune,
     Upload,
+    ZoomIn,
+    ZoomOut,
 }
 
 impl Icon {
@@ -29,6 +35,8 @@ impl Icon {
         match self {
             Icon::Add => "M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z",
             Icon::Check => "M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z",
+            Icon::ChevronLeft => "M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z",
+            Icon::ChevronRight => "M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z",
             Icon::Close => {
                 "M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"
             }
@@ -41,6 +49,12 @@ impl Icon {
             Icon::Download => "M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z",
             Icon::Edit => {
                 "M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"
+            }
+            Icon::Fullscreen => {
+                "M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"
+            }
+            Icon::FullscreenExit => {
+                "M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"
             }
             Icon::Gallery => {
                 "M22 16V4c0-1.1-.9-2-2-2H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2zm-11-4l2.03 2.71L16 11l4 5H8l3-4zM2 6v14c0 1.1.9 2 2 2h14v-2H4V6H2z"
@@ -71,6 +85,12 @@ impl Icon {
                 "M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"
             }
             Icon::Upload => "M9 16h6v-6h4l-7-7-7 7h4zm-4 2h14v2H5z",
+            Icon::ZoomIn => {
+                "M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14zm2.5-4h-2v2H9v-2H7V9h2V7h1v2h2v1z"
+            }
+            Icon::ZoomOut => {
+                "M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14zM7 9h5v1H7z"
+            }
         }
     }
 }

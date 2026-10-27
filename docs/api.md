@@ -46,6 +46,7 @@ Account rules:
 | GET | `/posts?q=&page=&limit=` | | `PostPage {posts, page, limit, has_more}`. `page` starts at 1 (at most 10000); `limit` is at most 200, default 60. |
 | POST | `/posts` | multipart: `file` (required), `tags` (space-separated), `rating` (`g`/`s`/`q`/`e`), `source` | `Post`, or 409 `duplicate` if the same file exists |
 | GET | `/posts/{id}` | | `Post` |
+| GET | `/posts/{id}/neighbors?q=` | | `Neighbors {prev, next}`: the ids just before and after the post in the results of search `q` (same filters and order), or null at either end. Both are null for `order:random` or when `q` matches nothing. |
 | PATCH | `/posts/{id}` | `PostUpdate {tags?, rating?, source?}` | `Post`. `tags` replaces the whole list. |
 | DELETE | `/posts/{id}` | | 204; moves the post to the recycle bin (admin or uploader) |
 | POST | `/posts/{id}/restore` | | `Post` |

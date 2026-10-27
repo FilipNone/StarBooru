@@ -162,7 +162,7 @@ pub fn Upload() -> Element {
                             Status::Queued => rsx! { span { class: "pill", "Queued" } },
                             Status::Uploading => rsx! { span { class: "pill busy", "Uploading" } },
                             Status::Done(id) => rsx! {
-                                Link { class: "pill ok", to: Route::PostView { id: *id }, "Post #{id}" }
+                                Link { class: "pill ok", to: Route::PostView { id: *id, q: String::new() }, "Post #{id}" }
                             },
                             Status::Failed(msg) => rsx! { span { class: "pill bad", title: "{msg}", "{msg}" } },
                         }

@@ -29,7 +29,7 @@ _Status as of 2026-10-27. Scope comes from `docs/checklist.md`._
 | feature rich and fast sorting | ✅ | Newest, oldest, score, file size, resolution, tag count, last edit and random, in either direction (`_asc`/`_desc`). Each sort has a partial index on live posts. A sort menu sits in the gallery header. |
 | grid view of media | ✅ | |
 | pages and infinite scroll | ✅ | Infinite scroll with a "Load more" fallback. No numbered pages yet. |
-| media viewer | 🟡 | Image, GIF, video. Missing: zoom/pan, previous/next, fullscreen. |
+| media viewer | ✅ | Image, GIF, video. Zoom (wheel, double-click, pinch, buttons, `+`/`-`/`0`) and drag to pan; previous/next in the order of the search you came from (arrows, `←`/`→`, swipe); fullscreen (`F`); `E` edits tags, `Esc` steps back out. Autocomplete takes `↑`/`↓`, `Enter`/`Tab` and `Esc`. |
 | related media suggestion | ⬜ | M5 (embeddings) |
 | simple image editor / simple video editor | ⬜ | |
 | video preview | 🟡 | Plays in the viewer. No thumbnail or hover preview yet (needs ffmpeg). |
@@ -95,4 +95,3 @@ _Status as of 2026-10-27. Scope comes from `docs/checklist.md`._
 - **Plaintext token on desktop.** The token is stored in the user's config directory. Moving it to the OS keyring is M4.
 - **No video, AVIF or JPEG XL thumbnails.** The client shows a placeholder.
 - **Orphan files.** Fixed for failed inserts (the files are removed unless another post owns them) and interrupted writes (`tmp/` is cleared at startup). Files left by a crash between the write and the insert are not swept yet.
-- **Autocomplete has no keyboard navigation yet.**

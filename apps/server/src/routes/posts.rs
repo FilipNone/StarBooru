@@ -8,8 +8,8 @@ use sqlx::{FromRow, Postgres, QueryBuilder, Transaction};
 use starbooru_core::query::{SearchQuery, SortKey};
 use starbooru_core::tag::normalize_tags;
 use starbooru_core::{
-    DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT, MediaKind, Post, PostPage, PostUpdate, Rating, VoteRequest,
-    parse_query, parse_tag_list,
+    DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT, MediaKind, Neighbors, Post, PostPage, PostUpdate, Rating,
+    VoteRequest, parse_query, parse_tag_list,
 };
 use tracing::warn;
 
@@ -233,6 +233,95 @@ pub async fn search(
         page,
         limit,
         has_more,
+    }))
+}
+
+#[derive(Deserialize)]
+pub struct NeighborParams {
+    #[serde(default)]
+    q: String,
+}
+
+/// The sort expression used to step from one post to the next. Unlike
+/// `sort_column` it is never NULL, so row comparisons work: posts without
+/// dimensions sort last either way, as in `search`.
+fn step_column(key: SortKey, descending: bool) -> Option<&'static str> {
+    match (key, descending) {
+        (SortKey::Pixels, true) => Some("COALESCE(p.width::bigint * p.height, -1)"),
+        (SortKey::Pixels, false) => {
+            Some("COALESCE(p.width::bigint * p.height, 9223372036854775807)")
+        }
+        _ => sort_column(key),
+    }
+}
+
+/// `GET /posts/{id}/neighbors?q=`: the posts just before and after `id` in
+/// the results of search `q`, for previous/next in the viewer. A random
+/// order has no neighbours.
+pub async fn neighbors(
+    State(state): State<AppState>,
+    _user: AuthUser,
+    Path(id): Path<i64>,
+    Query(params): Query<NeighborParams>,
+) -> AppResult<Json<Neighbors>> {
+    let query = parse_query(&params.q)?;
+    let none = Neighbors {
+        prev: None,
+        next: None,
+    };
+    if query.order.key == SortKey::Random {
+        return Ok(Json(none));
+    }
+    let (include, wanted) = tag_ids(&state, &query.include).await?;
+    if include.len() < wanted {
+        return Ok(Json(none));
+    }
+    let (exclude, _) = tag_ids(&state, &query.exclude).await?;
+    let column = step_column(query.order.key, query.order.descending);
+
+    let step = |forward: bool| {
+        // Forward follows the gallery order; backward reverses it.
+        let ascending = forward != query.order.descending;
+        let (op, dir) = if ascending {
+            (" > ", " ASC")
+        } else {
+            (" < ", " DESC")
+        };
+        let mut qb = QueryBuilder::<Postgres>::new("SELECT p.id FROM posts p");
+        push_filters(&mut qb, &query, include.clone(), exclude.clone());
+        qb.push(" AND p.id <> ").push_bind(id).push(" AND ");
+        match column {
+            Some(c) => {
+                qb.push("(")
+                    .push(c)
+                    .push(", p.id)")
+                    .push(op)
+                    .push("(SELECT ")
+                    .push(c)
+                    .push(", p.id FROM posts p WHERE p.id = ")
+                    .push_bind(id)
+                    .push(") ORDER BY ")
+                    .push(c)
+                    .push(dir)
+                    .push(", p.id")
+                    .push(dir);
+            }
+            None => {
+                qb.push("p.id")
+                    .push(op)
+                    .push_bind(id)
+                    .push(" ORDER BY p.id")
+                    .push(dir);
+            }
+        }
+        qb.push(" LIMIT 1");
+        qb
+    };
+    let mut next = step(true);
+    let mut prev = step(false);
+    Ok(Json(Neighbors {
+        prev: prev.build_query_scalar().fetch_optional(&state.db).await?,
+        next: next.build_query_scalar().fetch_optional(&state.db).await?,
     }))
 }
 
@@ -698,6 +787,72 @@ mod tests {
         assert_eq!(random.len(), 3);
         let r = app.get("/api/v1/posts?q=order:sideways", &t).await;
         assert_eq!(r.status, axum::http::StatusCode::BAD_REQUEST);
+        app.finish().await;
+    }
+
+    #[tokio::test]
+    async fn neighbors_follow_the_search_order() {
+        let Some(app) = testing::app().await else {
+            return;
+        };
+        let t = app.register("admin").await;
+        // Ties on score and tag count, so the id tie-breaker matters too.
+        for (i, (size, tags)) in [(4, "a b"), (64, "a"), (16, "a b"), (32, "a c"), (8, "b")]
+            .into_iter()
+            .enumerate()
+        {
+            let png = testing::png(size, size, u32::try_from(i).unwrap());
+            app.upload(&t, &png, &[("tags", tags)]).await;
+        }
+        let step = |id: i64, q: &'static str| {
+            let app = &app;
+            let t = t.clone();
+            async move {
+                let path = format!("/api/v1/posts/{id}/neighbors?q={q}");
+                let n = app.get(&path, &t).await.json();
+                (n["prev"].as_i64(), n["next"].as_i64())
+            }
+        };
+        for q in [
+            "",
+            "order:old",
+            "order:score",
+            "order:size",
+            "order:size_asc",
+            "order:pixels",
+            "order:pixels_asc",
+            "order:tags",
+            "order:tags_asc",
+            "order:updated_asc",
+            "a",
+            "a+-c+order:size",
+        ] {
+            let expected = order_of(&app, &t, q).await;
+            assert!(!expected.is_empty(), "{q}");
+            let mut walked = vec![expected[0]];
+            let mut prev_of_first = None;
+            loop {
+                let current = *walked.last().unwrap();
+                let (prev, next) = step(current, q).await;
+                if walked.len() == 1 {
+                    prev_of_first = prev;
+                } else {
+                    assert_eq!(
+                        prev,
+                        Some(walked[walked.len() - 2]),
+                        "{q}: prev of {current}"
+                    );
+                }
+                match next {
+                    Some(n) => walked.push(n),
+                    None => break,
+                }
+            }
+            assert_eq!(prev_of_first, None, "{q}");
+            assert_eq!(walked, expected, "{q}");
+        }
+        assert_eq!(step(1, "order:random").await, (None, None));
+        assert_eq!(step(1, "missing_tag").await, (None, None));
         app.finish().await;
     }
 }

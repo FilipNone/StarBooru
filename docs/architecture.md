@@ -86,6 +86,7 @@ Media URLs look like `/media/thumb/<sha>.jpg?exp=…&sig=…`:
 
 | File | Role |
 |---|---|
+| `zoom.rs` | Zoom and pan maths for the viewer (scale around a point, clamped so the media keeps covering the stage). Unit tested. |
 | `store.rs` | The session (server URL, token, user) and preferences (theme, accent hue) in global signals. They persist to `localStorage` on the web and to `<config dir>/StarBooru/state.json` on native. |
-| `pages/` | `shell` (top bar, search with tag autocomplete, navigation; bottom bar on phones), `login`, `gallery` (infinite scroll), `post` (viewer, votes, edit, delete/restore), `upload` (drag and drop, queue), `trash` (recycle bin), `tags` (tag list; tag page with category, aliases and implications), `settings` |
+| `pages/` | `shell` (top bar, search with tag autocomplete, navigation; bottom bar on phones), `login`, `gallery` (infinite scroll), `post` (viewer with zoom, pan, previous/next and fullscreen; votes, edit, delete/restore), `upload` (drag and drop, queue), `trash` (recycle bin), `tags` (tag list; tag page with category, aliases and implications), `settings` |
 | `assets/main.css` | The design system. Material-You-style colour roles come from one OKLCH seed hue (`--seed-hue`), with light, dark and system themes. Glass applies to the bars only. Animations use spring easing and are disabled under reduced motion. |
