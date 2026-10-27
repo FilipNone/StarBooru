@@ -4,6 +4,7 @@ mod auth;
 mod config;
 mod error;
 mod media;
+mod probe;
 mod routes;
 mod state;
 mod storage;
@@ -51,10 +52,13 @@ async fn run() -> Result<(), StartupError> {
     sqlx::migrate!("./migrations").run(&db).await?;
     info!("database migrations applied");
 
-    let storage = storage::Storage::open(&config.data_dir).await?;
+    let storage = storage::Storage::open(&config.data_dir)
+        .await?
+        .with_tools(config.tools.clone());
     let state = AppState::new(config, db, storage);
     let app = routes::router(state.clone());
     tokio::spawn(routes::auto_purge(state.clone()));
+    tokio::spawn(routes::backfill_media(state.clone()));
 
     let listener = tokio::net::TcpListener::bind(state.config.bind).await?;
     info!("StarBooru listening on http://{}", state.config.bind);

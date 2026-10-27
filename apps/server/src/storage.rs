@@ -13,6 +13,7 @@ use sha2::{Digest, Sha256};
 use starbooru_core::MediaKind;
 
 use crate::error::{AppError, AppResult};
+use crate::probe::Tools;
 
 pub const THUMB_SIZE: u32 = 512;
 const THUMB_EXT: &str = "jpg";
@@ -52,6 +53,16 @@ pub struct Ingested {
     pub kind: MediaKind,
     pub width: Option<i32>,
     pub height: Option<i32>,
+    pub duration_ms: Option<i64>,
+    pub has_thumb: bool,
+}
+
+/// What ffmpeg found in a file `image` can't decode.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Derived {
+    pub width: Option<i32>,
+    pub height: Option<i32>,
+    pub duration_ms: Option<i64>,
     pub has_thumb: bool,
 }
 
@@ -73,6 +84,7 @@ const FORMATS: &[(&str, &str, MediaKind, bool)] = &[
 
 pub struct Storage {
     root: PathBuf,
+    tools: Option<Tools>,
 }
 
 impl Storage {
@@ -89,7 +101,18 @@ impl Storage {
         }
         Ok(Self {
             root: root.to_path_buf(),
+            tools: None,
         })
+    }
+
+    /// Enables thumbnails for video, AVIF and JPEG XL through ffmpeg.
+    pub fn with_tools(mut self, tools: Option<Tools>) -> Self {
+        self.tools = tools;
+        self
+    }
+
+    pub fn has_tools(&self) -> bool {
+        self.tools.is_some()
     }
 
     pub fn file_name(variant: Variant, sha_hex: &str, ext: &str) -> String {
@@ -149,13 +172,16 @@ impl Storage {
             .ok_or_else(|| AppError::internal("bad storage path"))?;
         self.write_atomic(&original, bytes)?;
         if let Some(jpeg) = &thumb {
-            let path = self
-                .path_for_file(
-                    Variant::Thumb,
-                    &Self::file_name(Variant::Thumb, &sha_hex, ext),
-                )
-                .ok_or_else(|| AppError::internal("bad storage path"))?;
-            self.write_atomic(&path, jpeg)?;
+            self.write_thumb(&sha_hex, ext, jpeg)?;
+        }
+        let mut derived = Derived {
+            width,
+            height,
+            duration_ms: None,
+            has_thumb: thumb.is_some(),
+        };
+        if !decodable {
+            derived = self.derive(&sha_hex, ext, kind)?;
         }
 
         Ok(Ingested {
@@ -163,10 +189,52 @@ impl Storage {
             ext,
             mime,
             kind,
-            width,
-            height,
+            width: derived.width,
+            height: derived.height,
+            duration_ms: derived.duration_ms,
+            has_thumb: derived.has_thumb,
+        })
+    }
+
+    /// Dimensions, duration and a thumbnail through ffmpeg, for a stored
+    /// original. Without the tools, or for a file they can't read, the result
+    /// is empty. Only disk errors fail. Call from a blocking thread.
+    pub fn derive(&self, sha_hex: &str, ext: &str, kind: MediaKind) -> AppResult<Derived> {
+        let Some(tools) = &self.tools else {
+            return Ok(Derived::default());
+        };
+        let original = self
+            .path_for_file(
+                Variant::Original,
+                &Self::file_name(Variant::Original, sha_hex, ext),
+            )
+            .ok_or_else(|| AppError::internal("bad storage path"))?;
+        let probed = tools.probe(&original, kind == MediaKind::Video);
+        let thumb = probed
+            .frame
+            .as_deref()
+            .and_then(|png| decode(png).ok())
+            .and_then(|img| make_thumbnail(&img).ok());
+        if let Some(jpeg) = &thumb {
+            self.write_thumb(sha_hex, ext, jpeg)?;
+        }
+        Ok(Derived {
+            width: probed.width,
+            height: probed.height,
+            duration_ms: probed.duration_ms,
             has_thumb: thumb.is_some(),
         })
+    }
+
+    fn write_thumb(&self, sha_hex: &str, ext: &str, jpeg: &[u8]) -> AppResult<()> {
+        let path = self
+            .path_for_file(
+                Variant::Thumb,
+                &Self::file_name(Variant::Thumb, sha_hex, ext),
+            )
+            .ok_or_else(|| AppError::internal("bad storage path"))?;
+        self.write_atomic(&path, jpeg)?;
+        Ok(())
     }
 
     /// Deletes a post's original and thumbnail. Missing files are not an error.
@@ -214,9 +282,14 @@ fn decode(bytes: &[u8]) -> AppResult<DynamicImage> {
         .map_err(|e| AppError::BadRequest(format!("cannot decode image: {e}")))
 }
 
-/// Fits the image in `THUMB_SIZE`², flattens transparency onto white, JPEG.
+/// Fits the image in `THUMB_SIZE`² (never enlarging it), flattens
+/// transparency onto white, JPEG.
 fn make_thumbnail(img: &DynamicImage) -> AppResult<Vec<u8>> {
-    let small = img.thumbnail(THUMB_SIZE, THUMB_SIZE).to_rgba8();
+    let small = if img.width() <= THUMB_SIZE && img.height() <= THUMB_SIZE {
+        img.to_rgba8()
+    } else {
+        img.thumbnail(THUMB_SIZE, THUMB_SIZE).to_rgba8()
+    };
     let rgb = RgbImage::from_fn(small.width(), small.height(), |x, y| {
         let [r, g, b, a] = small.get_pixel(x, y).0;
         let a = u16::from(a);
@@ -304,6 +377,7 @@ mod tests {
     fn path_validation_blocks_traversal() {
         let s = Storage {
             root: PathBuf::from("/data"),
+            tools: None,
         };
         let sha = "a".repeat(64);
         assert!(
@@ -323,5 +397,96 @@ mod tests {
                 .is_none()
         );
         assert!(s.path_for_file(Variant::Original, "ab.png").is_none());
+    }
+
+    #[tokio::test]
+    async fn thumbnails_video_avif_and_jxl_with_ffmpeg() {
+        let Some(tools) = crate::probe::tests::tools() else {
+            return;
+        };
+        let src = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(dir.path())
+            .await
+            .unwrap()
+            .with_tools(Some(tools));
+        // File name, lavfi input, encoder args, kind, size, thumbnail expected.
+        type Case<'a> = (&'a str, &'a str, &'a [&'a str], MediaKind, (i32, i32), bool);
+        let cases: [Case; 3] = [
+            (
+                "clip.webm",
+                "testsrc=duration=1.5:size=96x64:rate=10",
+                &["-c:v", "libvpx-vp9", "-b:v", "100k"],
+                MediaKind::Video,
+                (96, 64),
+                true,
+            ),
+            (
+                "still.avif",
+                "testsrc=size=80x60",
+                &[
+                    "-frames:v",
+                    "1",
+                    "-c:v",
+                    "libaom-av1",
+                    "-still-picture",
+                    "1",
+                ],
+                MediaKind::Image,
+                (80, 60),
+                false,
+            ),
+            (
+                "still.jxl",
+                "testsrc=size=72x40",
+                &["-frames:v", "1", "-c:v", "libjxl"],
+                MediaKind::Image,
+                (72, 40),
+                false,
+            ),
+        ];
+        for (name, input, args, kind, dims, timed) in cases {
+            let Some(bytes) = crate::probe::tests::generate(src.path(), name, input, args) else {
+                continue;
+            };
+            let info = storage.ingest(&bytes).unwrap();
+            assert_eq!(info.kind, kind, "{name}");
+            assert!(info.has_thumb, "{name}");
+            assert_eq!(
+                (info.width, info.height),
+                (Some(dims.0), Some(dims.1)),
+                "{name}"
+            );
+            assert_eq!(info.duration_ms.is_some(), timed, "{name}");
+            let thumb = thumb_path(&storage, &hex::encode(info.sha256));
+            let t = image::open(thumb).unwrap();
+            assert_eq!(
+                (t.width(), t.height()),
+                (dims.0 as u32, dims.1 as u32),
+                "{name}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn without_tools_videos_have_no_thumbnail() {
+        let Some(_) = crate::probe::tests::tools() else {
+            return;
+        };
+        let src = tempfile::tempdir().unwrap();
+        let Some(bytes) = crate::probe::tests::generate(
+            src.path(),
+            "clip.mp4",
+            "testsrc=duration=1:size=64x48:rate=5",
+            &["-pix_fmt", "yuv420p"],
+        ) else {
+            return;
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(dir.path()).await.unwrap();
+        let info = storage.ingest(&bytes).unwrap();
+        assert_eq!(info.kind, MediaKind::Video);
+        assert!(!info.has_thumb);
+        assert_eq!((info.width, info.duration_ms), (None, None));
     }
 }

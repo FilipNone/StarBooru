@@ -32,7 +32,7 @@ _Status as of 2026-10-27. Scope comes from `docs/checklist.md`._
 | media viewer | ✅ | Image, GIF, video. Zoom (wheel, double-click, pinch, buttons, `+`/`-`/`0`) and drag to pan; previous/next in the order of the search you came from (arrows, `←`/`→`, swipe); fullscreen (`F`); `E` edits tags, `Esc` steps back out. Autocomplete takes `↑`/`↓`, `Enter`/`Tab` and `Esc`. |
 | related media suggestion | ⬜ | M5 (embeddings) |
 | simple image editor / simple video editor | ⬜ | |
-| video preview | 🟡 | Plays in the viewer. No thumbnail or hover preview yet (needs ffmpeg). |
+| video preview | ✅ | Thumbnails for video, AVIF and JPEG XL through ffmpeg (bundled in the image), length badge, muted preview on mouse hover, plays in the viewer. Older posts get thumbnails at the next start. |
 | media importer / upload tab | 🟡 | Multi-file drag and drop, shared tags and rating. Missing: folder import, per-file tags, import from URL. |
 | saved search | ⬜ | M2 |
 | automatic tagging, AI features, OCR | ⬜ | M5 |
@@ -93,5 +93,4 @@ _Status as of 2026-10-27. Scope comes from `docs/checklist.md`._
 
 - **No login rate limiting.** Put the instance behind HTTPS and use strong passwords until M3.
 - **Plaintext token on desktop.** The token is stored in the user's config directory. Moving it to the OS keyring is M4.
-- **No video, AVIF or JPEG XL thumbnails.** The client shows a placeholder.
 - **Orphan files.** Fixed for failed inserts (the files are removed unless another post owns them) and interrupted writes (`tmp/` is cleared at startup). Files left by a crash between the write and the insert are not swept yet.

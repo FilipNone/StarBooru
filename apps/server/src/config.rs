@@ -5,6 +5,8 @@ use std::path::PathBuf;
 
 use thiserror::Error;
 
+use crate::probe::Tools;
+
 #[derive(Debug, Error)]
 pub enum ConfigError {
     #[error("{0} is not set")]
@@ -26,6 +28,8 @@ pub struct Config {
     pub instance_name: String,
     /// Posts stay in the recycle bin this many days, then are purged. 0 keeps them.
     pub trash_days: u32,
+    /// ffmpeg and ffprobe, for video, AVIF and JPEG XL thumbnails. `None` turns them off.
+    pub tools: Option<Tools>,
 }
 
 const MIN_SECRET_LEN: usize = 32;
@@ -76,6 +80,21 @@ impl Config {
             })?,
         };
 
+        // `STARBOORU_FFMPEG=off` turns thumbnails for video, AVIF and JPEG XL off.
+        let ffmpeg = get("STARBOORU_FFMPEG").unwrap_or_else(|| "ffmpeg".into());
+        let tools = (!matches!(
+            ffmpeg.trim().to_ascii_lowercase().as_str(),
+            "" | "off" | "false" | "0"
+        ))
+        .then(|| Tools {
+            ffmpeg: ffmpeg.trim().into(),
+            ffprobe: get("STARBOORU_FFPROBE")
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| "ffprobe".into())
+                .trim()
+                .into(),
+        });
+
         let web_dir = get("STARBOORU_WEB_DIR")
             .filter(|s| !s.trim().is_empty())
             .map(PathBuf::from);
@@ -97,6 +116,7 @@ impl Config {
             }),
             instance_name: get("STARBOORU_NAME").unwrap_or_else(|| "StarBooru".into()),
             trash_days,
+            tools,
         })
     }
 
@@ -112,6 +132,7 @@ impl Config {
             allow_registration: true,
             instance_name: "StarBooru".into(),
             trash_days: 0,
+            tools: None,
         }
     }
 }
@@ -143,6 +164,27 @@ mod tests {
         assert!(!c.allow_registration);
         assert!(c.web_dir.is_none());
         assert_eq!(c.trash_days, 0);
+        let tools = c.tools.unwrap();
+        assert_eq!(tools.ffmpeg, std::path::Path::new("ffmpeg"));
+        assert_eq!(tools.ffprobe, std::path::Path::new("ffprobe"));
+    }
+
+    #[test]
+    fn media_tools() {
+        let with = |pairs: &[(&str, &str)]| {
+            let mut all = vec![("DATABASE_URL", "x"), ("STARBOORU_SECRET", SECRET)];
+            all.extend_from_slice(pairs);
+            cfg(&all).unwrap().tools
+        };
+        assert!(with(&[("STARBOORU_FFMPEG", "off")]).is_none());
+        assert!(with(&[("STARBOORU_FFMPEG", " ")]).is_none());
+        let t = with(&[
+            ("STARBOORU_FFMPEG", "/opt/ff/ffmpeg"),
+            ("STARBOORU_FFPROBE", "/opt/ff/ffprobe"),
+        ])
+        .unwrap();
+        assert_eq!(t.ffmpeg, std::path::Path::new("/opt/ff/ffmpeg"));
+        assert_eq!(t.ffprobe, std::path::Path::new("/opt/ff/ffprobe"));
     }
 
     #[test]

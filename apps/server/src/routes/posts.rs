@@ -31,6 +31,7 @@ struct PostRow {
     file_size: i64,
     width: Option<i32>,
     height: Option<i32>,
+    duration_ms: Option<i64>,
     has_thumb: bool,
     rating: i16,
     source: Option<String>,
@@ -45,7 +46,7 @@ struct PostRow {
 fn select_posts(user_id: i64) -> QueryBuilder<Postgres> {
     let mut qb = QueryBuilder::new(
         "SELECT p.id, p.sha256, p.ext, p.mime, p.kind, p.file_size, p.width, p.height, \
-         p.has_thumb, p.rating, p.source, p.score, p.created_at, p.deleted_at, \
+         p.duration_ms, p.has_thumb, p.rating, p.source, p.score, p.created_at, p.deleted_at, \
          COALESCE((SELECT array_agg(t.name ORDER BY t.name) FROM tags t \
                    WHERE t.id = ANY(p.tag_ids)), '{}'::text[]) AS tags, \
          COALESCE((SELECT v.value FROM post_votes v \
@@ -78,6 +79,7 @@ fn to_post(state: &AppState, row: PostRow) -> Post {
         file_size: row.file_size,
         width: row.width,
         height: row.height,
+        duration_ms: row.duration_ms,
         sha256: sha,
         rating: Rating::from_db(row.rating).unwrap_or_default(),
         score: row.score,
@@ -412,9 +414,9 @@ async fn insert_post(
 ) -> AppResult<i64> {
     let mut tx = state.db.begin().await?;
     let id: i64 = sqlx::query_scalar(
-        "INSERT INTO posts (sha256, ext, mime, kind, file_size, width, height, has_thumb, \
-         rating, source, uploader_id) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id",
+        "INSERT INTO posts (sha256, ext, mime, kind, file_size, width, height, duration_ms, \
+         has_thumb, rating, source, uploader_id) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id",
     )
     .bind(info.sha256.as_slice())
     .bind(info.ext)
@@ -423,6 +425,7 @@ async fn insert_post(
     .bind(file_size)
     .bind(info.width)
     .bind(info.height)
+    .bind(info.duration_ms)
     .bind(info.has_thumb)
     .bind(rating.to_db())
     .bind(source)
@@ -436,6 +439,80 @@ async fn insert_post(
     set_tags(&mut tx, id, tags).await?;
     tx.commit().await?;
     Ok(id)
+}
+
+/// id, sha256, ext, kind.
+type BackfillRow = (i64, Vec<u8>, String, i16);
+
+/// At startup: thumbnails, dimensions and duration for posts that have no
+/// thumbnail yet and that ffmpeg can read (uploaded before it was installed,
+/// or before this existed). Files ffmpeg can't read are retried next start.
+pub async fn backfill_media(state: AppState) {
+    if !state.storage.has_tools() {
+        return;
+    }
+    let mut after = 0i64;
+    let mut done = 0u64;
+    loop {
+        let batch: Result<Vec<BackfillRow>, _> = sqlx::query_as(
+            "SELECT id, sha256, ext, kind FROM posts \
+             WHERE NOT has_thumb AND (kind = $1 OR ext IN ('avif', 'jxl')) AND id > $2 \
+             ORDER BY id LIMIT 50",
+        )
+        .bind(MediaKind::Video.to_db())
+        .bind(after)
+        .fetch_all(&state.db)
+        .await;
+        let batch = match batch {
+            Ok(b) if !b.is_empty() => b,
+            Ok(_) => break,
+            Err(e) => {
+                warn!("media backfill stopped: {e}");
+                return;
+            }
+        };
+        for (id, sha, ext, kind) in batch {
+            after = id;
+            let kind = MediaKind::from_db(kind).unwrap_or(MediaKind::Image);
+            let sha_hex = hex::encode(sha);
+            let st = state.clone();
+            let derived =
+                tokio::task::spawn_blocking(move || st.storage.derive(&sha_hex, &ext, kind)).await;
+            let derived = match derived {
+                Ok(Ok(d)) => d,
+                Ok(Err(e)) => {
+                    warn!("media backfill: post {id}: {e}");
+                    continue;
+                }
+                Err(e) => {
+                    warn!("media backfill: post {id}: {e}");
+                    continue;
+                }
+            };
+            if !derived.has_thumb && derived.width.is_none() && derived.duration_ms.is_none() {
+                continue;
+            }
+            let updated = sqlx::query(
+                "UPDATE posts SET has_thumb = has_thumb OR $2, width = COALESCE(width, $3), \
+                 height = COALESCE(height, $4), duration_ms = COALESCE(duration_ms, $5) \
+                 WHERE id = $1",
+            )
+            .bind(id)
+            .bind(derived.has_thumb)
+            .bind(derived.width)
+            .bind(derived.height)
+            .bind(derived.duration_ms)
+            .execute(&state.db)
+            .await;
+            match updated {
+                Ok(_) => done += 1,
+                Err(e) => warn!("media backfill: post {id}: {e}"),
+            }
+        }
+    }
+    if done > 0 {
+        tracing::info!("media backfill: updated {done} posts");
+    }
 }
 
 fn duplicate(id: i64) -> AppError {
@@ -853,6 +930,51 @@ mod tests {
         }
         assert_eq!(step(1, "order:random").await, (None, None));
         assert_eq!(step(1, "missing_tag").await, (None, None));
+        app.finish().await;
+    }
+
+    #[tokio::test]
+    async fn backfill_adds_video_thumbnails() {
+        let Some(tools) = crate::probe::tests::tools() else {
+            return;
+        };
+        let Some(app) = testing::app().await else {
+            return;
+        };
+        let t = app.register("admin").await;
+        let src = tempfile::tempdir().unwrap();
+        let Some(clip) = crate::probe::tests::generate(
+            src.path(),
+            "clip.mp4",
+            "testsrc=duration=2:size=64x48:rate=10",
+            &["-pix_fmt", "yuv420p"],
+        ) else {
+            return app.finish().await;
+        };
+        // The test app has no ffmpeg, like a server that predates it.
+        let r = app.upload(&t, &clip, &[("tags", "clip")]).await.json();
+        let id = r["id"].as_i64().unwrap();
+        assert!(r["thumb_url"].is_null());
+        assert!(r["duration_ms"].is_null());
+
+        let mut config = app.state.config.clone();
+        config.tools = Some(tools.clone());
+        let storage = crate::storage::Storage::open(&config.data_dir)
+            .await
+            .unwrap()
+            .with_tools(Some(tools));
+        let with_ffmpeg = crate::state::AppState::new(config, app.state.db.clone(), storage);
+        super::backfill_media(with_ffmpeg).await;
+
+        let p = app.get(&format!("/api/v1/posts/{id}"), &t).await.json();
+        assert!(p["thumb_url"].is_string());
+        assert_eq!(p["duration_ms"], 2000);
+        assert_eq!(
+            (p["width"].as_i64(), p["height"].as_i64()),
+            (Some(64), Some(48))
+        );
+        let thumb = app.get(p["thumb_url"].as_str().unwrap(), &t).await;
+        assert_eq!(thumb.status, axum::http::StatusCode::OK);
         app.finish().await;
     }
 }

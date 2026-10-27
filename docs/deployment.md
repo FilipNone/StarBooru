@@ -25,6 +25,10 @@ Desktop and Android users sign in with the same URL (`https://your-domain`).
 
 `STARBOORU_MAX_UPLOAD_MB` (default 512) is the server's limit. Dokploy's Traefik doesn't cap request bodies by default. If you put another proxy (nginx, Cloudflare) in front, raise its limit too. Cloudflare's free plan caps request bodies at 100 MB.
 
+### Video thumbnails
+
+The image ships ffmpeg (most of its roughly 750 MB). The server uses it for thumbnails, size and length of videos, AVIF and JPEG XL. Without it, those posts show a placeholder. Each start retries posts that still lack a thumbnail, so installing ffmpeg later fills them in.
+
 ## Configuration
 
 | Variable | Default | Meaning |
@@ -35,6 +39,8 @@ Desktop and Android users sign in with the same URL (`https://your-domain`).
 | `STARBOORU_ALLOW_REGISTRATION` | `false` | Allow sign-ups after the first (admin) account |
 | `STARBOORU_MAX_UPLOAD_MB` | `512` | Largest upload, 1 to 16384 |
 | `STARBOORU_TRASH_DAYS` | `0` | Purge recycle-bin posts (and their files) after this many days; `0` keeps them until emptied by hand |
+| `STARBOORU_FFMPEG` | `ffmpeg` | ffmpeg for video, AVIF and JPEG XL thumbnails (installed in the image); `off` disables it |
+| `STARBOORU_FFPROBE` | `ffprobe` | ffprobe, for video size and length |
 | `STARBOORU_BIND` | `0.0.0.0:8080` | Listen address |
 | `STARBOORU_DATA_DIR` | `/data` in the image | Media storage |
 | `STARBOORU_WEB_DIR` | `/app/web` in the image | Compiled web app; unset means the server runs API-only |

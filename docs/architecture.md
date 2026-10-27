@@ -31,6 +31,7 @@ The desktop and Android apps are the same Dioxus code as the web app. Each one a
 | `routes/` | One file per resource: `auth`, `posts`, `tags`, `trash`. `mod.rs` builds the router and its layers (CORS, compression, tracing, panic catcher, SPA fallback). |
 | `auth.rs` | Bearer-token extractor; Argon2id password hashing (on the blocking pool) |
 | `storage.rs` | Format sniffing, content-addressed storage, thumbnails |
+| `probe.rs` | Size, length and a still frame through `ffprobe`/`ffmpeg` child processes (time-limited, local files only, capped output) |
 | `media.rs` | HMAC-signed media URLs and the file handler (supports Range for video seeking) |
 | `error.rs` | `AppError` → JSON `{code, message}` with the right status |
 | `testing.rs` | Test-only harness: a fresh database per test and the real router |
@@ -75,7 +76,7 @@ Uploads are sniffed by content, not by name. Accepted formats:
 | GIF | animation |
 | MP4, WebM, MKV, MOV | video |
 
-Thumbnails are 512px JPEGs and are made for the formats the `image` crate decodes. Videos, AVIF and JPEG XL have no thumbnail yet; the client shows a placeholder.
+Thumbnails are JPEGs at most 512px on the long side. The `image` crate decodes the common formats. For video, AVIF and JPEG XL the server asks ffmpeg for a frame (10% into a video, at most 5 s) and ffprobe for the size and length (`posts.duration_ms`). Without ffmpeg those posts have no thumbnail and the client shows a placeholder. At each start a background task retries posts that are still missing one. The gallery plays a muted preview of a video while the mouse is over it.
 
 Media URLs look like `/media/thumb/<sha>.jpg?exp=…&sig=…`:
 - The signature is an HMAC-SHA256 keyed by `STARBOORU_SECRET`.

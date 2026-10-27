@@ -69,7 +69,10 @@ pub async fn app_with(tweak: impl FnOnce(&mut Config)) -> Option<TestApp> {
     let dir = tempfile::tempdir().unwrap();
     let mut config = Config::for_tests(dir.path());
     tweak(&mut config);
-    let storage = Storage::open(&config.data_dir).await.unwrap();
+    let storage = Storage::open(&config.data_dir)
+        .await
+        .unwrap()
+        .with_tools(config.tools.clone());
     let state = AppState::new(config, db, storage);
     let router = crate::routes::router(state.clone());
     Some(TestApp {

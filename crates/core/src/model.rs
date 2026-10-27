@@ -194,6 +194,9 @@ pub struct Post {
     pub file_size: i64,
     pub width: Option<i32>,
     pub height: Option<i32>,
+    /// Length of a video in milliseconds, when known.
+    #[serde(default)]
+    pub duration_ms: Option<i64>,
     /// Lowercase hex SHA-256 of the original file.
     pub sha256: String,
     pub rating: Rating,

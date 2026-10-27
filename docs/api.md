@@ -53,7 +53,7 @@ Account rules:
 | POST | `/posts/{id}/purge` | | 204; permanently deletes a post that is in the recycle bin, with its files (admin or uploader). 409 `not_deleted` if the post is live. |
 | PUT | `/posts/{id}/vote` | `{value: -1 \| 0 \| 1}` | `Post` with the new `score` and `my_vote` |
 
-A `Post` carries `file_url` and `thumb_url`. These are signed paths relative to the server, valid for at least 6 hours. Fetch them without the bearer token. `thumb_url` is null when no thumbnail exists.
+A `Post` carries `file_url` and `thumb_url`. These are signed paths relative to the server, valid for at least 6 hours. Fetch them without the bearer token. `thumb_url` is null when no thumbnail exists. `duration_ms` is the length of a video, or null.
 
 ### Search syntax (`q`)
 

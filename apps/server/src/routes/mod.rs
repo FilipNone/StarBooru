@@ -5,6 +5,7 @@ mod posts;
 mod tags;
 mod trash;
 
+pub use posts::backfill_media;
 pub use trash::auto_purge;
 
 use std::any::Any;

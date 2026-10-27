@@ -5,6 +5,7 @@ use super::{ErrorBanner, Spinner};
 use crate::Route;
 use crate::icons::{Ico, Icon};
 use crate::store;
+use crate::util::{escape_attr, format_duration};
 
 const PAGE_SIZE: u32 = 60;
 
@@ -175,21 +176,52 @@ fn Thumb(post: Post, index: usize, q: String) -> Element {
         .thumb_url
         .as_deref()
         .and_then(|u| client.as_ref().map(|c| c.absolute(u)));
+    let video = matches!(post.kind, MediaKind::Video);
+    let preview_src = client
+        .as_ref()
+        .filter(|_| video)
+        .map(|c| c.absolute(&post.file_url));
+    // Mouse hover only: a tap on a phone should open the post, not play it.
+    let mut hovered = use_signal(|| false);
     // Staggered entrance within a page of results.
     let delay = (index % PAGE_SIZE as usize) * 16;
     let alt = post.tags.join(" ");
+    let duration = post.duration_ms.and_then(format_duration);
     rsx! {
         Link {
             class: "thumb",
             style: "--delay: {delay}ms",
             to: Route::PostView { id: post.id, q },
-            if let Some(src) = src {
-                img { src, alt, loading: "lazy", decoding: "async" }
-            } else {
-                div { class: "thumb-placeholder", Ico { icon: Icon::Play, size: 40 } }
+            div {
+                class: "thumb-media",
+                onpointerenter: move |e: PointerEvent| {
+                    if video && e.pointer_type() == "mouse" {
+                        hovered.set(true);
+                    }
+                },
+                onpointerleave: move |_| hovered.set(false),
+                if let Some(src) = src {
+                    img { src, alt, loading: "lazy", decoding: "async" }
+                } else {
+                    div { class: "thumb-placeholder", Ico { icon: Icon::Play, size: 40 } }
+                }
+                if hovered() && let Some(src) = preview_src {
+                    // Parsed HTML, because only a parsed `muted` attribute
+                    // mutes the video, and browsers autoplay muted videos only.
+                    div {
+                        class: "preview",
+                        aria_hidden: "true",
+                        dangerous_inner_html: "<video src=\"{escape_attr(&src)}\" muted autoplay loop playsinline preload=\"auto\"></video>",
+                    }
+                }
             }
             match post.kind {
-                MediaKind::Video => rsx! { span { class: "badge", Ico { icon: Icon::Play, size: 16 } } },
+                MediaKind::Video => rsx! {
+                    span { class: "badge",
+                        Ico { icon: Icon::Play, size: 16 }
+                        if let Some(d) = duration { "{d}" }
+                    }
+                },
                 MediaKind::Animation => rsx! { span { class: "badge", "GIF" } },
                 MediaKind::Image => rsx! {},
             }

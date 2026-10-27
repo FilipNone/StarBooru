@@ -9,7 +9,7 @@ use super::{ErrorBanner, Spinner};
 use crate::Route;
 use crate::icons::{Ico, Icon};
 use crate::store;
-use crate::util::human_size;
+use crate::util::{format_duration, human_size};
 use crate::zoom::{STEP, Zoom};
 
 /// Keys the viewer handles, sent from a page-wide listener. Typing in a
@@ -191,6 +191,7 @@ pub fn PostView(id: i64, q: String) -> Element {
         (Some(w), Some(h)) => format!("{w} × {h}"),
         _ => "—".into(),
     };
+    let duration = p.duration_ms.and_then(format_duration);
 
     rsx! {
         div { class: "page post-layout",
@@ -295,6 +296,9 @@ pub fn PostView(id: i64, q: String) -> Element {
                         dt { "Rating" } dd { "{p.rating.as_str()}" }
                         dt { "Size" } dd { "{human_size(p.file_size)}" }
                         dt { "Dimensions" } dd { "{dims}" }
+                        if let Some(d) = duration {
+                            dt { "Length" } dd { "{d}" }
+                        }
                         dt { "Type" } dd { "{p.mime}" }
                         dt { "Added" } dd { "{added}" }
                         if let Some(source) = &p.source {

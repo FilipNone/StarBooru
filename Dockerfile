@@ -35,8 +35,9 @@ RUN cargo build --release --locked -p starbooru-server \
 
 FROM debian:trixie-slim
 
+# ffmpeg makes thumbnails for video, AVIF and JPEG XL.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
+    && apt-get install -y --no-install-recommends ca-certificates ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 # A fresh named volume copies this directory's ownership, so the server can write to it.
 RUN useradd --system --uid 10001 --user-group --no-create-home --home-dir /data starbooru \

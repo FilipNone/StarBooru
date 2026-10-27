@@ -73,7 +73,7 @@ Server integration tests run the real router against PostgreSQL. Each test creat
 export STARBOORU_TEST_DATABASE_URL=postgres://starbooru:devpass@127.0.0.1:55432/starbooru
 ```
 
-The harness is `apps/server/src/testing.rs`.
+The harness is `apps/server/src/testing.rs`. Tests for video, AVIF and JPEG XL thumbnails need `ffmpeg` on `PATH` and are skipped without it.
 
 ```sh
 cargo test -p starbooru-core
