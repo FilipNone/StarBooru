@@ -4,6 +4,7 @@ use starbooru_core::{Credentials, ServerInfo};
 
 use super::LegalLinks;
 use crate::icons::{Ico, Icon};
+use crate::oidc::{self, Done};
 use crate::store::{self, PREFS};
 
 #[component]
@@ -22,6 +23,8 @@ pub fn Login() -> Element {
     let mut creating = use_signal(|| false);
     let mut busy = use_signal(|| false);
     let mut error = use_signal(|| None::<String>);
+    // A provider sign-in waiting for the browser (desktop and Android).
+    let mut waiting = use_signal(|| None::<dioxus::core::Task>);
 
     let probe = move || {
         let url = server.peek().trim().to_owned();
@@ -76,6 +79,40 @@ pub fn Login() -> Element {
                 Err(e) => error.set(Some(e.to_string())),
             }
         });
+    };
+
+    let sso = move |_| {
+        let url = server().trim().to_owned();
+        let client = match Client::new(&url) {
+            Ok(client) => client,
+            Err(e) => {
+                error.set(Some(e.to_string()));
+                return;
+            }
+        };
+        busy.set(true);
+        error.set(None);
+        let task = spawn(async move {
+            match oidc::run(client, url.clone(), false).await {
+                // The page is on its way to the provider.
+                Ok(None) => return,
+                Ok(Some(Done::SignedIn(auth))) => store::sign_in(url, auth),
+                Ok(Some(Done::Linked(_))) => {}
+                Err(e) => error.set(Some(e)),
+            }
+            busy.set(false);
+            waiting.set(None);
+        });
+        // The web page leaves instead of waiting.
+        if cfg!(not(target_arch = "wasm32")) {
+            waiting.set(Some(task));
+        }
+    };
+    let cancel = move |_| {
+        if let Some(task) = waiting.take() {
+            task.cancel();
+        }
+        busy.set(false);
     };
 
     let first_user = info().is_some_and(|i| !i.has_users);
@@ -140,6 +177,24 @@ pub fn Login() -> Element {
                         {t!("login-create")}
                     } else {
                         {t!("login-sign-in")}
+                    }
+                }
+                if let Some(name) = info().and_then(|i| i.oidc) {
+                    div { class: "or", span { {t!("login-or")} } }
+                    if waiting().is_some() {
+                        p { class: "muted status-line", role: "status", {t!("oidc-waiting")} }
+                        button { class: "btn tonal wide", r#type: "button", onclick: cancel,
+                            {t!("cancel")}
+                        }
+                    } else {
+                        button {
+                            class: "btn tonal wide",
+                            r#type: "button",
+                            disabled: busy(),
+                            onclick: sso,
+                            Ico { icon: Icon::Shield }
+                            {t!("login-with", provider = name)}
+                        }
                     }
                 }
                 if can_register {

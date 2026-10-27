@@ -23,9 +23,15 @@ sys-locale = { version = "0.3", features = ["js"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 directories = "6"
+# Provider sign-in: the system browser and a loopback listener for its answer.
+tokio = { version = "1", features = ["net", "io-util", "time"] }
+webbrowser = "1"
 
 [dev-dependencies]
 fluent-syntax = "0.12"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt", "net", "io-util", "time"] }
 
 [features]
 default = []

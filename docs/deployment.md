@@ -50,6 +50,18 @@ The image ships the PostgreSQL 17 client. `pg_dump` must be at least as new as t
 3. Put the media files back if they were lost, into the `media` volume, as they were.
 4. Start `starbooru` again. Migrations newer than the backup run at start-up.
 
+## Sign-in with an identity provider
+
+StarBooru can also sign people in with an OpenID Connect provider such as Authentik, Keycloak, Authelia or Google. Passwords keep working next to it.
+
+1. At the provider, create an OAuth2/OpenID application: confidential client, authorization code flow, scopes `openid profile email`. Set the redirect URI to `https://your-domain/api/v1/auth/oidc/callback`.
+2. Set `STARBOORU_PUBLIC_URL=https://your-domain`, `STARBOORU_OIDC_ISSUER` (the provider's issuer URL, the one that serves `/.well-known/openid-configuration`), `STARBOORU_OIDC_CLIENT_ID`, `STARBOORU_OIDC_CLIENT_SECRET` and, for the button, `STARBOORU_OIDC_NAME`.
+3. Redeploy. The sign-in screen shows *Sign in with …*.
+
+Someone who signs in this way for the first time gets a new account when registration is open (or when the server has no accounts yet, as admin). With registration closed, an admin keeps control: people sign in once with a password, then link the provider account in Settings › Ways to sign in. Accounts made by the provider have no password until they set one in Settings.
+
+The desktop and Android apps open the system browser and receive the answer on a loopback address, so nothing else needs registering at the provider.
+
 ## Configuration
 
 Admins can change the name, open registration, the recycle-bin days and the backup schedule in the app (Settings › Administration). Those changes apply at once and override the variables below.
@@ -62,6 +74,11 @@ Admins can change the name, open registration, the recycle-bin days and the back
 | `STARBOORU_ALLOW_REGISTRATION` | `false` | Allow sign-ups after the first (admin) account |
 | `STARBOORU_MAX_UPLOAD_MB` | `512` | Largest upload, 1 to 16384 |
 | `STARBOORU_TRASH_DAYS` | `0` | Purge recycle-bin posts (and their files) after this many days; `0` keeps them until emptied by hand |
+| `STARBOORU_PUBLIC_URL` | unset | The address people open StarBooru at, e.g. `https://booru.example.com`. Needed for provider sign-in. |
+| `STARBOORU_OIDC_ISSUER` | unset | OpenID Connect issuer URL (https). With the client id and secret, turns provider sign-in on. |
+| `STARBOORU_OIDC_CLIENT_ID` | unset | Client id from the provider |
+| `STARBOORU_OIDC_CLIENT_SECRET` | unset | Client secret from the provider |
+| `STARBOORU_OIDC_NAME` | `SSO` | Provider name on the *Sign in with …* button |
 | `STARBOORU_BACKUP_DAYS` | `1` | Days between automatic database backups, 0 to 365; `0` turns them off |
 | `STARBOORU_BACKUP_KEEP` | `7` | Automatic backups kept, 1 to 100 |
 | `STARBOORU_BACKUP_DIR` | `STARBOORU_DATA_DIR/backups` | Where backups are written |

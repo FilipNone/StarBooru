@@ -6,6 +6,7 @@ mod backups;
 mod duplicates;
 mod explore;
 mod keys;
+mod oidc;
 mod posts;
 mod searches;
 mod tags;
@@ -44,6 +45,13 @@ pub fn router(state: AppState) -> Router {
         .route("/auth/me", get(auth::me))
         .route("/auth/usage", get(auth::usage))
         .route("/auth/password", put(auth::change_password))
+        .route("/auth/oidc/begin", post(oidc::begin))
+        .route("/auth/oidc/begin-link", post(oidc::begin_link))
+        .route("/auth/oidc/callback", get(oidc::callback))
+        .route("/auth/oidc/finish", post(oidc::finish))
+        .route("/auth/oidc/link", post(oidc::link))
+        .route("/auth/identities", get(oidc::identities))
+        .route("/auth/identities/{id}", axum::routing::delete(oidc::unlink))
         .route(
             "/auth/sessions",
             get(auth::sessions).delete(auth::revoke_other_sessions),
@@ -167,6 +175,7 @@ async fn info(State(state): State<AppState>) -> AppResult<Json<ServerInfo>> {
         registration_open: !has_users || settings.allow_registration,
         max_upload_bytes: state.config.max_upload_bytes as u64,
         url_import: state.fetcher.is_some(),
+        oidc: state.oidc.as_ref().map(|o| o.name().to_owned()),
     }))
 }
 

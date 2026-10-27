@@ -701,6 +701,12 @@ button.chip:disabled { cursor: default; }
   animation: pop var(--slow) var(--ease-spring) 120ms both;
 }
 .login-card .btn + .btn { margin-top: 8px; }
+.login-card .or {
+  display: flex; align-items: center; gap: 12px; margin: 16px 0;
+  color: var(--on-surface-2); font-size: 13px;
+}
+.login-card .or::before, .login-card .or::after { content: ""; flex: 1; border-top: 1px solid var(--outline); }
+.login-card .status-line { margin: 0 0 8px; text-align: center; }
 
 /* ---------- duplicates ---------- */
 .dup-count { margin: 0 0 12px; font-size: 14px; }

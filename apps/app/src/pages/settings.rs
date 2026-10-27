@@ -1,12 +1,13 @@
 use chrono::Utc;
 use dioxus::prelude::*;
-use starbooru_core::{Role, SessionInfo, Usage};
+use starbooru_core::{Identity, Role, SessionInfo, SignInMethods, Usage};
 
 use super::api_keys::ApiKeysCard;
 use super::{ErrorBanner, Spinner};
 use crate::Route;
 use crate::i18n::Lang;
 use crate::icons::{Ico, Icon};
+use crate::oidc::{self, Done};
 use crate::store::{self, PREFS, SESSION, Theme};
 use crate::util::{human_size, time_ago};
 
@@ -42,6 +43,25 @@ pub fn Settings() -> Element {
     let session = SESSION.read().clone();
     // Bumped after a password change, which signs other sessions out.
     let mut sessions_version = use_signal(|| 0u32);
+    let mut methods = use_signal(|| None::<SignInMethods>);
+    use_effect(move || {
+        let _ = sessions_version();
+        let Some(client) = store::client() else {
+            return;
+        };
+        spawn(async move {
+            if let Ok(found) = client.sign_in_methods().await {
+                methods.set(Some(found));
+            }
+        });
+    });
+    let provider = info.read().as_ref().and_then(|i| i.as_ref()?.oidc.clone());
+    let has_password = methods.read().as_ref().is_none_or(|m| m.password);
+    let show_methods = provider.is_some()
+        || methods
+            .read()
+            .as_ref()
+            .is_some_and(|m| !m.identities.is_empty());
 
     rsx! {
         div { class: "page narrow",
@@ -196,7 +216,10 @@ pub fn Settings() -> Element {
                         }
                     }
                 }
-                PasswordCard { onchanged: move |()| sessions_version += 1 }
+                if show_methods {
+                    SignInCard { methods, provider }
+                }
+                PasswordCard { has_password, onchanged: move |()| sessions_version += 1 }
                 SessionsCard { version: sessions_version() }
                 ApiKeysCard {}
             }
@@ -221,8 +244,163 @@ fn role_label(role: Role) -> String {
     }
 }
 
+/// The account's password and provider sign-ins, with linking and
+/// unlinking. The last way in can't be removed.
 #[component]
-fn PasswordCard(onchanged: EventHandler<()>) -> Element {
+fn SignInCard(methods: Signal<Option<SignInMethods>>, provider: Option<String>) -> Element {
+    let mut busy = use_signal(|| false);
+    let mut error = use_signal(|| None::<String>);
+    let mut waiting = use_signal(|| None::<dioxus::core::Task>);
+    let link = move |_| {
+        let (Some(client), Some(session)) = (store::client(), SESSION.peek().clone()) else {
+            return;
+        };
+        busy.set(true);
+        error.set(None);
+        let task = spawn(async move {
+            match oidc::run(client, session.server, true).await {
+                Ok(None) => return,
+                Ok(Some(Done::Linked(identity))) => {
+                    if let Some(m) = methods.write().as_mut() {
+                        m.identities.push(identity);
+                    }
+                }
+                Ok(Some(Done::SignedIn(_))) => {}
+                Err(e) => error.set(Some(e)),
+            }
+            busy.set(false);
+            waiting.set(None);
+        });
+        if cfg!(not(target_arch = "wasm32")) {
+            waiting.set(Some(task));
+        }
+    };
+    let cancel = move |_| {
+        if let Some(task) = waiting.take() {
+            task.cancel();
+        }
+        busy.set(false);
+    };
+    let unlink = move |id: i64| {
+        let Some(client) = store::client() else {
+            return;
+        };
+        busy.set(true);
+        error.set(None);
+        spawn(async move {
+            match client.unlink_identity(id).await {
+                Ok(()) => {
+                    if let Some(m) = methods.write().as_mut() {
+                        m.identities.retain(|i| i.id != id);
+                    }
+                }
+                Err(e) if e.is_unauthorized() => store::forget_session(),
+                Err(e) => error.set(Some(e.to_string())),
+            }
+            busy.set(false);
+        });
+    };
+
+    let now = Utc::now();
+    let guard = methods.read();
+    let Some(m) = guard.as_ref() else {
+        return rsx! {};
+    };
+    let last_way_in = !m.password && m.identities.len() == 1;
+    rsx! {
+        section { class: "card",
+            h2 { class: "card-title", {t!("signin-title")} }
+            if let Some(message) = error() {
+                ErrorBanner { message }
+            }
+            ul { class: "sessions",
+                li { class: "session",
+                    div { class: "session-main",
+                        strong { {t!("login-password")} }
+                        span { class: "muted",
+                            if m.password { {t!("signin-password-set")} } else { {t!("signin-password-none")} }
+                        }
+                    }
+                }
+                for identity in m.identities.iter() {
+                    li { key: "{identity.id}", class: "session",
+                        div { class: "session-main",
+                            strong { {identity_name(identity, provider.as_deref())} }
+                            span { class: "muted",
+                                {identity_times(identity, now)}
+                            }
+                        }
+                        IdentityUnlink {
+                            id: identity.id,
+                            name: identity_name(identity, provider.as_deref()),
+                            disabled: busy() || last_way_in,
+                            onunlink: unlink,
+                        }
+                    }
+                }
+            }
+            if last_way_in {
+                p { class: "muted hint", {t!("signin-last")} }
+            }
+            if let Some(name) = provider {
+                div { class: "row-end",
+                    if waiting().is_some() {
+                        span { class: "muted", role: "status", {t!("oidc-waiting")} }
+                        button { class: "btn tonal", r#type: "button", onclick: cancel, {t!("cancel")} }
+                    } else {
+                        button { class: "btn tonal", r#type: "button", disabled: busy(), onclick: link,
+                            Ico { icon: Icon::Link }
+                            {t!("signin-link", provider = name)}
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// "alice@example.com", or the provider's name when it gave no label.
+fn identity_name(identity: &Identity, provider: Option<&str>) -> String {
+    match (&identity.label, provider) {
+        (Some(label), _) if !label.is_empty() => label.clone(),
+        (_, Some(provider)) => provider.to_owned(),
+        _ => t!("signin-provider"),
+    }
+}
+
+fn identity_times(identity: &Identity, now: chrono::DateTime<Utc>) -> String {
+    let linked = time_ago(identity.created_at, now);
+    match identity.last_used_at {
+        Some(used) => t!("signin-times", linked = linked, used = time_ago(used, now)),
+        None => t!("signin-linked", linked = linked),
+    }
+}
+
+#[component]
+fn IdentityUnlink(id: i64, name: String, disabled: bool, onunlink: EventHandler<i64>) -> Element {
+    let mut confirm = use_signal(|| false);
+    rsx! {
+        button {
+            class: if confirm() { "btn danger small" } else { "icon-btn danger" },
+            title: t!("signin-unlink"),
+            aria_label: t!("signin-unlink-named", name = name),
+            disabled,
+            onblur: move |_| confirm.set(false),
+            onclick: move |_| {
+                if confirm() {
+                    onunlink.call(id);
+                } else {
+                    confirm.set(true);
+                }
+            },
+            Ico { icon: Icon::Close }
+            if confirm() { {t!("sure")} }
+        }
+    }
+}
+
+#[component]
+fn PasswordCard(has_password: bool, onchanged: EventHandler<()>) -> Element {
     let mut current = use_signal(String::new);
     let mut new = use_signal(String::new);
     let mut confirm = use_signal(String::new);
@@ -232,7 +410,7 @@ fn PasswordCard(onchanged: EventHandler<()>) -> Element {
 
     let too_short = !new().is_empty() && new().chars().count() < MIN_PASSWORD_CHARS;
     let mismatch = !confirm().is_empty() && confirm() != new();
-    let ready = !current().is_empty()
+    let ready = (!has_password || !current().is_empty())
         && new().chars().count() >= MIN_PASSWORD_CHARS
         && confirm() == new()
         && !busy();
@@ -265,14 +443,19 @@ fn PasswordCard(onchanged: EventHandler<()>) -> Element {
     rsx! {
         section { class: "card",
             h2 { class: "card-title", {t!("login-password")} }
+            if !has_password {
+                p { class: "muted hint", {t!("password-none")} }
+            }
             form { onsubmit: submit,
-                label { class: "field",
-                    span { {t!("password-current")} }
-                    input {
-                        r#type: "password",
-                        autocomplete: "current-password",
-                        value: "{current}",
-                        oninput: move |e| current.set(e.value()),
+                if has_password {
+                    label { class: "field",
+                        span { {t!("password-current")} }
+                        input {
+                            r#type: "password",
+                            autocomplete: "current-password",
+                            value: "{current}",
+                            oninput: move |e| current.set(e.value()),
+                        }
                     }
                 }
                 label { class: "field",
@@ -311,7 +494,13 @@ fn PasswordCard(onchanged: EventHandler<()>) -> Element {
                 }
                 div { class: "row-end",
                     button { class: "btn", r#type: "submit", disabled: !ready,
-                        if busy() { {t!("password-changing")} } else { {t!("password-change")} }
+                        if busy() {
+                            {t!("password-changing")}
+                        } else if has_password {
+                            {t!("password-change")}
+                        } else {
+                            {t!("password-set")}
+                        }
                     }
                 }
             }

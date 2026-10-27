@@ -5,6 +5,7 @@
 #[macro_use]
 mod i18n;
 mod icons;
+mod oidc;
 mod pages;
 mod store;
 mod util;
@@ -12,6 +13,7 @@ mod zoom;
 
 use dioxus::prelude::*;
 
+use crate::oidc::OidcReturn;
 use crate::pages::{
     Admin, Duplicates, Explore, Gallery, Help, NotFound, PostView, Privacy, Settings, Shell,
     TagPage, Tags, Terms, Trash, Upload,
@@ -47,6 +49,8 @@ pub enum Route {
         #[route("/admin")]
         Admin {},
     #[end_layout]
+    #[route("/oidc?:oidc_code&:oidc_error")]
+    OidcReturn { oidc_code: String, oidc_error: String },
     #[route("/privacy")]
     Privacy {},
     #[route("/terms")]

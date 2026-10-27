@@ -15,9 +15,12 @@ use crate::settings;
 use crate::state::AppState;
 use crate::throttle::{ClientAddr, account_key};
 
-type UserRow = (i64, String, String, DateTime<Utc>);
+pub(super) type UserRow = (i64, String, String, DateTime<Utc>);
+/// A user row, plus the password hash (none for provider-only accounts)
+/// and whether the account is disabled.
+type LoginRow = (i64, String, String, DateTime<Utc>, Option<String>, bool);
 
-fn to_user((id, username, role, created_at): UserRow) -> AppResult<User> {
+pub(super) fn to_user((id, username, role, created_at): UserRow) -> AppResult<User> {
     Ok(User {
         id,
         username,
@@ -36,7 +39,7 @@ fn client_label(headers: &HeaderMap) -> String {
     describe_user_agent(ua)
 }
 
-async fn start_session(
+pub(super) async fn start_session(
     state: &AppState,
     user: User,
     headers: &HeaderMap,
@@ -130,14 +133,16 @@ pub async fn login(
     let now = Utc::now();
     let account = account_key(&creds.username);
     state.guards.check_login(&account, addr.as_deref(), now)?;
-    let row: Option<(i64, String, String, DateTime<Utc>, String, bool)> = sqlx::query_as(
+    let row: Option<LoginRow> = sqlx::query_as(
         "SELECT id, username, role, created_at, password_hash, disabled_at IS NOT NULL \
          FROM users WHERE lower(username) = lower($1)",
     )
     .bind(creds.username.trim())
     .fetch_optional(&state.db)
     .await?;
-    let stored = row.as_ref().map(|r| r.4.clone());
+    // Accounts without a password (made by a provider sign-in) fail like an
+    // unknown name.
+    let stored = row.as_ref().and_then(|r| r.4.clone());
     let verified = verify_password(creds.password, stored).await?;
     let Some((id, username, role, created_at, _, disabled)) = row.filter(|_| verified) else {
         state.guards.failed_login(&account, addr.as_deref(), now);
@@ -191,8 +196,8 @@ pub async fn usage(State(state): State<AppState>, user: AuthUser) -> AppResult<J
     }))
 }
 
-/// `PUT /auth/password`: needs the current password. Signs out every other
-/// session.
+/// `PUT /auth/password`: needs the current password, if there is one.
+/// Signs out every other session.
 pub async fn change_password(
     State(state): State<AppState>,
     user: AuthUser,
@@ -200,10 +205,11 @@ pub async fn change_password(
 ) -> AppResult<StatusCode> {
     let session_id = user.session_id()?;
     auth::validate_password(&change.new)?;
-    let stored: String = sqlx::query_scalar("SELECT password_hash FROM users WHERE id = $1")
-        .bind(user.id)
-        .fetch_one(&state.db)
-        .await?;
+    let stored: Option<String> =
+        sqlx::query_scalar("SELECT password_hash FROM users WHERE id = $1")
+            .bind(user.id)
+            .fetch_one(&state.db)
+            .await?;
     let now = Utc::now();
     let key = format!("#{}", user.id);
     state
@@ -211,7 +217,9 @@ pub async fn change_password(
         .account
         .check(&key, now)
         .map_err(|retry_after| AppError::TooManyRequests { retry_after })?;
-    if !verify_password(change.current, Some(stored)).await? {
+    if let Some(stored) = stored
+        && !verify_password(change.current, Some(stored)).await?
+    {
         state.guards.account.hit(&key, now);
         return Err(AppError::BadRequest("the current password is wrong".into()));
     }

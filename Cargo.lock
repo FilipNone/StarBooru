@@ -5756,8 +5756,10 @@ dependencies = [
  "starbooru-client",
  "starbooru-core",
  "sys-locale",
+ "tokio",
  "unic-langid",
  "web-sys",
+ "webbrowser",
 ]
 
 [[package]]
@@ -5790,6 +5792,7 @@ version = "0.1.0"
 dependencies = [
  "argon2",
  "axum",
+ "base64 0.22.1",
  "chrono",
  "hex",
  "hmac",
@@ -6594,6 +6597,7 @@ dependencies = [
  "idna",
  "percent-encoding",
  "serde",
+ "serde_derive",
 ]
 
 [[package]]

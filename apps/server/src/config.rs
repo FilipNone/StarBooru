@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use starbooru_core::admin::{MAX_BACKUP_DAYS, MAX_BACKUP_KEEP};
 use thiserror::Error;
+use url::Url;
 
 use crate::fetch::Reach;
 use crate::probe::Tools;
@@ -45,6 +46,24 @@ pub struct Config {
     pub backup_days: u32,
     /// Automatic backups kept.
     pub backup_keep: u32,
+    /// Sign-in through an OpenID Connect provider. `None` turns it off.
+    pub oidc: Option<OidcConfig>,
+}
+
+#[derive(Debug, Clone)]
+pub struct OidcConfig {
+    /// The provider's issuer URL; its metadata is read from
+    /// `<issuer>/.well-known/openid-configuration`.
+    pub issuer: Url,
+    pub client_id: String,
+    pub client_secret: String,
+    /// Shown on the sign-in button.
+    pub name: String,
+    /// Where the provider sends the browser back:
+    /// `<STARBOORU_PUBLIC_URL>/api/v1/auth/oidc/callback`.
+    pub redirect_uri: Url,
+    /// The server's own address, so sign-ins can return to the web app.
+    pub public_url: Url,
 }
 
 const MIN_SECRET_LEN: usize = 32;
@@ -147,6 +166,8 @@ impl Config {
         ))
         .then(|| PathBuf::from(pg_dump.trim()));
 
+        let oidc = oidc_config(&get)?;
+
         let web_dir = get("STARBOORU_WEB_DIR")
             .filter(|s| !s.trim().is_empty())
             .map(PathBuf::from);
@@ -175,6 +196,7 @@ impl Config {
             pg_dump,
             backup_days,
             backup_keep,
+            oidc,
         })
     }
 
@@ -197,8 +219,88 @@ impl Config {
             pg_dump: None,
             backup_days: 0,
             backup_keep: 7,
+            oidc: None,
         }
     }
+}
+
+/// `STARBOORU_OIDC_*`: all of issuer, client id and secret, or none.
+fn oidc_config(get: &impl Fn(&str) -> Option<String>) -> Result<Option<OidcConfig>, ConfigError> {
+    let value = |name: &str| {
+        get(name)
+            .map(|v| v.trim().to_owned())
+            .filter(|v| !v.is_empty())
+    };
+    let (issuer, client_id, client_secret) = match (
+        value("STARBOORU_OIDC_ISSUER"),
+        value("STARBOORU_OIDC_CLIENT_ID"),
+        value("STARBOORU_OIDC_CLIENT_SECRET"),
+    ) {
+        (None, None, None) => return Ok(None),
+        (Some(i), Some(c), Some(s)) => (i, c, s),
+        _ => {
+            return Err(ConfigError::Invalid {
+                name: "STARBOORU_OIDC_ISSUER",
+                reason: "set STARBOORU_OIDC_ISSUER, STARBOORU_OIDC_CLIENT_ID and \
+                         STARBOORU_OIDC_CLIENT_SECRET together"
+                    .into(),
+            });
+        }
+    };
+    let issuer = web_url(&issuer).map_err(|reason| ConfigError::Invalid {
+        name: "STARBOORU_OIDC_ISSUER",
+        reason,
+    })?;
+    let public = value("STARBOORU_PUBLIC_URL").ok_or(ConfigError::Missing(
+        "STARBOORU_PUBLIC_URL (needed for OpenID Connect sign-in)",
+    ))?;
+    let public_url = web_url(&public).map_err(|reason| ConfigError::Invalid {
+        name: "STARBOORU_PUBLIC_URL",
+        reason,
+    })?;
+    let redirect_uri = public_url
+        .join(&format!(
+            "{}/auth/oidc/callback",
+            starbooru_core::API_PREFIX.trim_start_matches('/')
+        ))
+        .map_err(|e| ConfigError::Invalid {
+            name: "STARBOORU_PUBLIC_URL",
+            reason: e.to_string(),
+        })?;
+    Ok(Some(OidcConfig {
+        issuer,
+        client_id,
+        client_secret,
+        name: value("STARBOORU_OIDC_NAME").unwrap_or_else(|| "SSO".into()),
+        redirect_uri,
+        public_url,
+    }))
+}
+
+/// An https URL (http only for this machine), with a trailing `/` so
+/// relative paths join below it.
+fn web_url(raw: &str) -> Result<Url, String> {
+    let url = Url::parse(raw).map_err(|e| format!("`{raw}`: {e}"))?;
+    let loopback = matches!(
+        url.host(),
+        Some(url::Host::Domain("localhost"))
+            | Some(url::Host::Ipv4(std::net::Ipv4Addr::LOCALHOST))
+            | Some(url::Host::Ipv6(std::net::Ipv6Addr::LOCALHOST))
+    );
+    match url.scheme() {
+        "https" => {}
+        "http" if loopback => {}
+        _ => return Err(format!("`{raw}` must be an https address")),
+    }
+    if url.query().is_some() || url.fragment().is_some() || !url.username().is_empty() {
+        return Err(format!("`{raw}` must be a plain address"));
+    }
+    let mut url = url;
+    if !url.path().ends_with('/') {
+        let path = format!("{}/", url.path());
+        url.set_path(&path);
+    }
+    Ok(url)
 }
 
 /// A whole number from `name`, or `default` when it is unset.
@@ -312,6 +414,59 @@ mod tests {
         assert!(with(&[("STARBOORU_BACKUP_KEEP", "0")]).is_err());
         assert!(with(&[("STARBOORU_BACKUP_DAYS", "366")]).is_err());
         assert!(with(&[("STARBOORU_BACKUP_DAYS", "daily")]).is_err());
+    }
+
+    #[test]
+    fn oidc() {
+        let with = |pairs: &[(&str, &str)]| {
+            let mut all = vec![("DATABASE_URL", "x"), ("STARBOORU_SECRET", SECRET)];
+            all.extend_from_slice(pairs);
+            cfg(&all).map(|c| c.oidc)
+        };
+        assert!(with(&[]).unwrap().is_none());
+        let full = [
+            (
+                "STARBOORU_OIDC_ISSUER",
+                "https://auth.example.com/application/o/booru",
+            ),
+            ("STARBOORU_OIDC_CLIENT_ID", "booru"),
+            ("STARBOORU_OIDC_CLIENT_SECRET", "s3cret"),
+            ("STARBOORU_PUBLIC_URL", "https://booru.example.com"),
+        ];
+        let o = with(&full).unwrap().unwrap();
+        assert_eq!(
+            o.issuer.as_str(),
+            "https://auth.example.com/application/o/booru/"
+        );
+        assert_eq!(
+            o.redirect_uri.as_str(),
+            "https://booru.example.com/api/v1/auth/oidc/callback"
+        );
+        assert_eq!(o.name, "SSO");
+        // Under a path, and plain http on this machine.
+        let o = with(&[
+            ("STARBOORU_OIDC_ISSUER", "http://127.0.0.1:9000"),
+            ("STARBOORU_OIDC_CLIENT_ID", "booru"),
+            ("STARBOORU_OIDC_CLIENT_SECRET", "s3cret"),
+            ("STARBOORU_OIDC_NAME", "Authentik"),
+            ("STARBOORU_PUBLIC_URL", "http://localhost:8080/booru"),
+        ])
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            o.redirect_uri.as_str(),
+            "http://localhost:8080/booru/api/v1/auth/oidc/callback"
+        );
+        assert_eq!(o.name, "Authentik");
+        // Half set, no public URL, or plain http elsewhere.
+        assert!(with(&full[..2]).is_err());
+        assert!(with(&full[..3]).is_err());
+        let mut http = full;
+        http[0].1 = "http://auth.example.com";
+        assert!(with(&http).is_err());
+        let mut query = full;
+        query[3].1 = "https://booru.example.com/?x=1";
+        assert!(with(&query).is_err());
     }
 
     #[test]

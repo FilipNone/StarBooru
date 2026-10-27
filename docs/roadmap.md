@@ -14,7 +14,7 @@ _Status as of 2026-10-27. Scope comes from `docs/checklist.md`._
    - Clients: one Dioxus app for web, desktop and Android.
    - Docker image and a Dokploy-ready compose file.
 2. **M2, daily driver.** Video thumbnails, a recycle bin page, mass edit, saved searches, an explore/trending page, a duplicate finder, keyboard navigation, i18n scaffolding.
-3. **M3, admin and safety.** OAuth (login rate limiting, API keys, admin settings, server stats, usage stats and limits, and database backups are done).
+3. **M3, admin and safety.** Done: sign-in with an OpenID Connect provider, login rate limiting, API keys, admin settings, server stats, usage stats and limits, and database backups.
 4. **M4, native polish.** Caching and offline use, a keyring token store, Android dynamic colour, in-app updates, multiple booru backends, sync.
 5. **M5, AI.** Embeddings with pgvector for related media and similar-image search, automatic tagging, OCR, translation, upscaling and background removal (with a bring-your-own API key).
 
@@ -37,7 +37,7 @@ _Status as of 2026-10-27. Scope comes from `docs/checklist.md`._
 | saved search | ✅ | Star a search in the gallery header to save it, or tap it again to forget it. Saved searches show as chips on the unfiltered gallery. Per user, at most 200. |
 | automatic tagging, AI features, OCR | ⬜ | M5 |
 | explore tab with trending | ✅ | An Explore tab: trending posts (net upvotes in the last day, week, month or year), popular tags on recent posts, *On this day* from earlier years, and shuffleable random picks. A search narrows it all. |
-| login system | 🟡 | Accounts, Argon2id, revocable tokens, first user becomes admin. Failed sign-ins are limited per account and address (429 with `Retry-After`). OAuth: M3. |
+| login system | ✅ | Accounts, Argon2id, revocable tokens, first user becomes admin. Failed sign-ins are limited per account and address (429 with `Retry-After`). Optional sign-in with an OpenID Connect provider (Authentik, Keycloak, Google…): PKCE, accounts made on first sign-in when registration is open, and provider accounts linked and unlinked in Settings. The desktop app gets the answer through the system browser and a loopback listener. |
 | profile settings | ✅ | Theme, accent and language; password change (signs out other devices); a list of signed-in devices with last activity, sign-out per device and *Sign out everywhere else*. |
 | usage stats / usage limits | ✅ | Each account sees its uploads (posts and bytes) in Settings, with a meter when it has a limit. Admins see every account's usage and set a storage limit per account; uploads past it are refused (`quota_exceeded`). |
 | automatic smart image compression | ⬜ | Originals are kept byte-exact by design. Compressed variants could be added. |

@@ -9,10 +9,11 @@ use serde::de::DeserializeOwned;
 use starbooru_core::{
     API_PREFIX, AdminUser, AliasRequest, ApiError, ApiKey, AuthResponse, Backup, BackupSchedule,
     Backups, BulkEdit, BulkResult, CreatedApiKey, Credentials, DismissDuplicates, Duplicates,
-    Explore, ImplicationRequest, ImportRequest, Neighbors, NewApiKey, PasswordChange,
-    PasswordReset, Post, PostPage, PostUpdate, PurgeResult, Rating, ResolveDuplicates,
-    RevokeResult, SaveSearchRequest, SavedSearch, ServerInfo, ServerSettings, ServerStats,
-    SessionInfo, Tag, TagDetail, TagOrder, TagUpdate, Usage, User, UserUpdate, VoteRequest,
+    Explore, Identity, ImplicationRequest, ImportRequest, Neighbors, NewApiKey, OidcBegin,
+    OidcFinish, OidcStart, PasswordChange, PasswordReset, Post, PostPage, PostUpdate, PurgeResult,
+    Rating, ResolveDuplicates, RevokeResult, SaveSearchRequest, SavedSearch, ServerInfo,
+    ServerSettings, ServerStats, SessionInfo, SignInMethods, Tag, TagDetail, TagOrder, TagUpdate,
+    Usage, User, UserUpdate, VoteRequest,
 };
 use std::time::Duration;
 use thiserror::Error;
@@ -182,7 +183,46 @@ impl Client {
         Self::send_empty(self.request(Method::POST, "/auth/logout")?).await
     }
 
-    /// Needs the current password; signs out every other session.
+    /// Starts a sign-in with the server's identity provider. The browser
+    /// goes to `url`; the provider's answer comes back to `return_to` as an
+    /// `oidc_code` (or `oidc_error`) query parameter, which
+    /// [`Self::oidc_finish`] redeems together with the `handle`.
+    pub async fn oidc_begin(&self, return_to: &str) -> Result<OidcStart> {
+        let body = OidcBegin {
+            return_to: return_to.to_owned(),
+        };
+        self.json(Method::POST, "/auth/oidc/begin", &body).await
+    }
+
+    /// Like [`Self::oidc_begin`], to add the provider sign-in to the
+    /// signed-in account with [`Self::oidc_link`].
+    pub async fn oidc_begin_link(&self, return_to: &str) -> Result<OidcStart> {
+        let body = OidcBegin {
+            return_to: return_to.to_owned(),
+        };
+        self.json(Method::POST, "/auth/oidc/begin-link", &body)
+            .await
+    }
+
+    pub async fn oidc_finish(&self, finish: &OidcFinish) -> Result<AuthResponse> {
+        self.json(Method::POST, "/auth/oidc/finish", finish).await
+    }
+
+    pub async fn oidc_link(&self, finish: &OidcFinish) -> Result<Identity> {
+        self.json(Method::POST, "/auth/oidc/link", finish).await
+    }
+
+    /// Whether the account has a password, and its provider sign-ins.
+    pub async fn sign_in_methods(&self) -> Result<SignInMethods> {
+        Self::send(self.request(Method::GET, "/auth/identities")?).await
+    }
+
+    pub async fn unlink_identity(&self, id: i64) -> Result<()> {
+        Self::send_empty(self.request(Method::DELETE, &format!("/auth/identities/{id}"))?).await
+    }
+
+    /// Needs the current password, if the account has one; signs out every
+    /// other session.
     pub async fn change_password(&self, current: &str, new: &str) -> Result<()> {
         let body = PasswordChange {
             current: current.to_owned(),
@@ -630,6 +670,7 @@ mod tests {
             registration_open: false,
             max_upload_bytes: 1,
             url_import: false,
+            oidc: None,
         })
         .unwrap();
         format!(

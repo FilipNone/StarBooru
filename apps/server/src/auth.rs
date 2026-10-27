@@ -132,7 +132,7 @@ pub fn new_api_key() -> String {
     format!("{API_KEY_PREFIX}{}", random_hex())
 }
 
-fn random_hex() -> String {
+pub fn random_hex() -> String {
     let mut bytes = [0u8; 32];
     rand::fill(&mut bytes);
     hex::encode(bytes)

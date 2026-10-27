@@ -9,6 +9,7 @@ use crate::backup::Backups;
 use crate::config::Config;
 use crate::fetch::Fetcher;
 use crate::media::Signer;
+use crate::oidc::Oidc;
 use crate::storage::Storage;
 use crate::throttle::Guards;
 
@@ -26,6 +27,8 @@ pub struct Inner {
     /// Sign-in and sign-up limits.
     pub guards: Guards,
     pub backups: Backups,
+    /// Sign-in through an OpenID Connect provider, when set up.
+    pub oidc: Option<Oidc>,
     pub started_at: DateTime<Utc>,
 }
 
@@ -33,6 +36,13 @@ impl AppState {
     pub fn new(config: Config, db: PgPool, storage: Storage) -> Self {
         let signer = Signer::new(&config.secret);
         let backups = Backups::new(&config.secret);
+        let oidc = config.oidc.clone().and_then(|c| match Oidc::new(c) {
+            Ok(o) => Some(o),
+            Err(e) => {
+                warn!("OpenID Connect sign-in is off: cannot start the HTTP client: {e}");
+                None
+            }
+        });
         let fetcher = config
             .url_import
             .and_then(|reach| match Fetcher::new(reach) {
@@ -50,6 +60,7 @@ impl AppState {
             fetcher,
             guards: Guards::default(),
             backups,
+            oidc,
             started_at: Utc::now(),
         }))
     }

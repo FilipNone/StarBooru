@@ -167,6 +167,9 @@ pub struct ServerInfo {
     /// Whether `POST /posts/import` is enabled.
     #[serde(default)]
     pub url_import: bool,
+    /// The OpenID Connect provider's name, when sign-in through it is set up.
+    #[serde(default)]
+    pub oidc: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -186,6 +189,8 @@ pub struct Credentials {
 /// `PUT /auth/password`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PasswordChange {
+    /// Ignored when the account has no password yet.
+    #[serde(default)]
     pub current: String,
     pub new: String,
 }

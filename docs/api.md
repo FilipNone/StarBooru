@@ -23,7 +23,7 @@ All endpoints are under `/api/v1`. Bodies are JSON unless noted. The Rust types 
 
 | Method | Path | |
 |---|---|---|
-| GET | `/info` | `ServerInfo`: `name`, `version`, `has_users`, `registration_open`, `max_upload_bytes`, `url_import` (whether `POST /posts/import` is on) |
+| GET | `/info` | `ServerInfo`: `name`, `version`, `has_users`, `registration_open`, `max_upload_bytes`, `url_import` (whether `POST /posts/import` is on), `oidc` (the identity provider's name for a "Sign in with …" button, `null` when OpenID Connect sign-in is off) |
 | GET | `/healthz` (not under `/api/v1`) | `ok` when the database answers |
 
 `name` and `registration_open` follow the admin settings (see [Administration](#administration)).
@@ -37,7 +37,7 @@ All endpoints are under `/api/v1`. Bodies are JSON unless noted. The Rust types 
 | POST | `/auth/logout` | | 204; revokes this token |
 | GET | `/auth/me` | | `User` |
 | GET | `/auth/usage` | | `Usage {posts, bytes, quota_bytes}`: what the account uploaded (recycle bin included) and its storage limit (`null` for none) |
-| PUT | `/auth/password` | `PasswordChange {current, new}` | 204. Signs out every other session of the account. 400 if `current` is wrong or `new` breaks the password rules. 429 after 10 wrong `current` passwords in 15 minutes. |
+| PUT | `/auth/password` | `PasswordChange {current, new}` | 204. Signs out every other session of the account. 400 if `current` is wrong or `new` breaks the password rules. 429 after 10 wrong `current` passwords in 15 minutes. An account made by a provider sign-in has no password until it sets one; `current` is then ignored. |
 | GET | `/auth/sessions` | | `SessionInfo[] {id, client, created_at, last_used_at, expires_at, current}`: the account's live sessions, this one first. `client` is a short description such as "Firefox on Linux", derived from the User-Agent at sign-in (the header itself is not stored). `last_used_at` is updated at most every 5 minutes. |
 | DELETE | `/auth/sessions/{id}` | | 204; signs that session out. 404 if it isn't one of yours. |
 | DELETE | `/auth/sessions` | | `RevokeResult {revoked}`; signs out every session but this one |
@@ -48,6 +48,30 @@ Account rules:
 - Tokens last 90 days.
 - With an API key, the `/auth/logout`, `/auth/password` and `/auth/sessions` endpoints return 403 `forbidden`.
 - A disabled account gets 403 `forbidden` at sign-in (after the right password), and its sessions and keys answer 401.
+
+### Provider sign-in (OpenID Connect)
+
+On when the server has `STARBOORU_OIDC_*` set (`/info` then names the provider in `oidc`); otherwise these endpoints answer 404.
+
+1. `POST /auth/oidc/begin` with `OidcBegin {return_to}` answers `OidcStart {url, handle}`. Keep `handle` secret and open `url` in a browser.
+2. The provider sends the browser back to `GET /auth/oidc/callback` on the server, which sends it on to `return_to` with `oidc_code=<code>` added to the query, or `oidc_error=denied` (the user said no) or `oidc_error=failed`.
+3. `POST /auth/oidc/finish` with `OidcFinish {code, handle}` answers `AuthResponse`, like `/auth/login`.
+
+`return_to` must be a page of the server's own web app (under `STARBOORU_PUBLIC_URL`) or a loopback address (`http://127.0.0.1:<port>/…`, `http://[::1]…`, `http://localhost…`) a native app listens on; anything else is 400. A sign-in must be finished within 10 minutes, once. A code with the wrong handle, used twice or too late is 400.
+
+At `finish`, a provider account seen before signs in to the account it is linked to. A new one makes an account, if registration is open or there are no accounts yet (the first becomes admin); its username comes from the provider's `preferred_username` or email, made unique with a number. With registration closed it is 403 `forbidden`, as for a disabled account.
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| POST | `/auth/oidc/begin` | `OidcBegin {return_to}` | `OidcStart {url, handle}`. 429 when too many sign-ins are pending. |
+| POST | `/auth/oidc/begin-link` | `OidcBegin` | `OidcStart`, to link a provider account to the signed-in one |
+| GET | `/auth/oidc/callback` | | 303 to `return_to`. An unknown or expired sign-in gets a short HTML page (400) instead. |
+| POST | `/auth/oidc/finish` | `OidcFinish {code, handle}` | `AuthResponse` |
+| POST | `/auth/oidc/link` | `OidcFinish` | `Identity`. Only the account that called `begin-link` can finish it. 409 `identity_taken` if that provider account is linked already. |
+| GET | `/auth/identities` | | `SignInMethods {password, identities: Identity[] {id, label, created_at, last_used_at}}`: whether the account has a password, and its linked provider accounts. `label` is the provider's username or email. |
+| DELETE | `/auth/identities/{id}` | | 204. 400 if it is the account's last way to sign in (no password, no other identity). 404 if it isn't yours. |
+
+The `begin-link`, `link` and `identities` endpoints need a session; API keys get 403.
 
 ## API keys
 

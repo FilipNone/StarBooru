@@ -6,6 +6,7 @@ mod config;
 mod error;
 mod fetch;
 mod media;
+mod oidc;
 mod probe;
 mod routes;
 mod settings;
