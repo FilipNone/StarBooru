@@ -2,7 +2,7 @@
 
 All endpoints are under `/api/v1`. Bodies are JSON unless noted. The Rust types are in `crates/core/src/model.rs`, and `starbooru-client` wraps every call.
 
-**Auth.** Send `Authorization: Bearer <token>`. Every endpoint except `info`, `auth/register` and `auth/login` requires it.
+**Auth.** Send `Authorization: Bearer <token>`. Every endpoint except `info`, `auth/register` and `auth/login` requires it. The token is a session token from sign-in (`sb_…`) or an [API key](#api-keys) (`sbk_…`).
 
 **Errors.** Errors are returned as `{"code": "...", "message": "..."}` with a matching status:
 
@@ -43,6 +43,21 @@ Account rules:
 - Usernames are 2 to 32 characters of `A–Z a–z 0–9 _ . -` and are unique regardless of case.
 - Passwords are 8 characters or more.
 - Tokens last 90 days.
+- With an API key, the `/auth/logout`, `/auth/password` and `/auth/sessions` endpoints return 403 `forbidden`.
+
+## API keys
+
+Long-lived tokens for scripts and other tools. A key acts as the user who made it, with these limits:
+- It can't manage sign-ins, the password or keys. Those endpoints answer 403 `forbidden`, so a leaked key can't take over the account.
+- A read-only key answers 403 `forbidden` ("this API key is read-only") to anything but `GET` and `HEAD`.
+
+Managing keys needs a sign-in session. Changing the password keeps the account's keys; remove any you no longer trust.
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| GET | `/keys` | | `ApiKey[] {id, name, prefix, read_only, created_at, last_used_at, expires_at}`, newest first. `prefix` is the first 12 characters of the token. `last_used_at` is `null` until first use and is updated at most every 5 minutes. `expires_at` is `null` for keys that don't expire. Expired keys stay listed until removed. |
+| POST | `/keys` | `NewApiKey {name, read_only?, expires_days?}` | `CreatedApiKey {key, token}`. The token is shown only here; the server keeps only its SHA-256. The name is 1–64 characters with whitespace collapsed. `expires_days` is 1–3650, or omitted for never. 400 past 50 keys. |
+| DELETE | `/keys/{id}` | | 204; the key stops working at once. 404 if it isn't the caller's. |
 
 ## Posts
 

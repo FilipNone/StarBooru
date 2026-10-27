@@ -149,8 +149,8 @@ pub async fn login(
 }
 
 pub async fn logout(State(state): State<AppState>, user: AuthUser) -> AppResult<StatusCode> {
-    sqlx::query("DELETE FROM sessions WHERE token_hash = $1")
-        .bind(&user.token_hash)
+    sqlx::query("DELETE FROM sessions WHERE id = $1")
+        .bind(user.session_id()?)
         .execute(&state.db)
         .await?;
     Ok(StatusCode::NO_CONTENT)
@@ -172,6 +172,7 @@ pub async fn change_password(
     user: AuthUser,
     Json(change): Json<PasswordChange>,
 ) -> AppResult<StatusCode> {
+    let session_id = user.session_id()?;
     auth::validate_password(&change.new)?;
     let stored: String = sqlx::query_scalar("SELECT password_hash FROM users WHERE id = $1")
         .bind(user.id)
@@ -197,7 +198,7 @@ pub async fn change_password(
         .await?;
     sqlx::query("DELETE FROM sessions WHERE user_id = $1 AND id <> $2")
         .bind(user.id)
-        .bind(user.session_id)
+        .bind(session_id)
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
@@ -210,6 +211,7 @@ pub async fn sessions(
     State(state): State<AppState>,
     user: AuthUser,
 ) -> AppResult<Json<Vec<SessionInfo>>> {
+    let session_id = user.session_id()?;
     type Row = (i64, String, DateTime<Utc>, DateTime<Utc>, DateTime<Utc>);
     let rows: Vec<Row> = sqlx::query_as(
         "SELECT id, client, created_at, last_used_at, expires_at FROM sessions \
@@ -217,7 +219,7 @@ pub async fn sessions(
          ORDER BY id = $2 DESC, last_used_at DESC, id DESC",
     )
     .bind(user.id)
-    .bind(user.session_id)
+    .bind(session_id)
     .fetch_all(&state.db)
     .await?;
     Ok(Json(
@@ -229,7 +231,7 @@ pub async fn sessions(
                     created_at,
                     last_used_at,
                     expires_at,
-                    current: id == user.session_id,
+                    current: id == session_id,
                 },
             )
             .collect(),
@@ -242,6 +244,7 @@ pub async fn revoke_session(
     user: AuthUser,
     Path(id): Path<i64>,
 ) -> AppResult<StatusCode> {
+    user.session_id()?;
     let done = sqlx::query("DELETE FROM sessions WHERE id = $1 AND user_id = $2")
         .bind(id)
         .bind(user.id)
@@ -260,7 +263,7 @@ pub async fn revoke_other_sessions(
 ) -> AppResult<Json<RevokeResult>> {
     let done = sqlx::query("DELETE FROM sessions WHERE user_id = $1 AND id <> $2")
         .bind(user.id)
-        .bind(user.session_id)
+        .bind(user.session_id()?)
         .execute(&state.db)
         .await?;
     Ok(Json(RevokeResult {

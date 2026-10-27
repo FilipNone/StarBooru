@@ -14,7 +14,7 @@ _Status as of 2026-10-27. Scope comes from `docs/checklist.md`._
    - Clients: one Dioxus app for web, desktop and Android.
    - Docker image and a Dokploy-ready compose file.
 2. **M2, daily driver.** Video thumbnails, a recycle bin page, mass edit, saved searches, an explore/trending page, a duplicate finder, keyboard navigation, i18n scaffolding.
-3. **M3, admin and safety.** Admin settings, server stats, usage limits and stats, API keys, OAuth (login rate limiting is done), database backup from the UI.
+3. **M3, admin and safety.** Admin settings, server stats, usage limits and stats, OAuth (login rate limiting and API keys are done), database backup from the UI.
 4. **M4, native polish.** Caching and offline use, a keyring token store, Android dynamic colour, in-app updates, multiple booru backends, sync.
 5. **M5, AI.** Embeddings with pgvector for related media and similar-image search, automatic tagging, OCR, translation, upscaling and background removal (with a bring-your-own API key).
 
@@ -49,7 +49,7 @@ _Status as of 2026-10-27. Scope comes from `docs/checklist.md`._
 | dark / light theme, custom main colour | ✅ | System, light and dark themes. Accent from swatches or a hue slider. |
 | share system | ⬜ | |
 | duplicate remover | ✅ | Exact duplicates are refused at upload (SHA-256). Settings › Duplicate finder groups near-duplicates (difference hash plus average colour, Strict/Normal/Loose), keeps the best copy with optional tag merge and bins the rest, or marks a group as not duplicates. |
-| api key | ⬜ | M3 (tokens exist; long-lived named keys don't) |
+| api key | ✅ | Settings › API keys: named keys, full or read-only, never expiring or for 30/90/365 days, with last use shown. The token is shown once and stored hashed. Keys can't manage sign-ins, the password or other keys. |
 | sweet animations | 🟡 | Spring transitions, staggered grid, reduced-motion aware |
 | language translation future proof | ✅ | Every UI string is in a Fluent catalogue (`apps/app/locales/*.ftl`), with English and Italian. Settings › Language picks one or follows the system. A test checks that every catalogue has every message with the same variables. Server error messages are still English. |
 

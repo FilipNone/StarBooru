@@ -210,6 +210,41 @@ pub struct RevokeResult {
     pub revoked: u64,
 }
 
+/// A long-lived token for scripts and other tools (`GET /keys`). It acts as
+/// its owner, except that it can't manage sign-ins, the password or keys.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApiKey {
+    pub id: i64,
+    pub name: String,
+    /// The start of the token, like `sbk_1a2b3c4d`, to tell keys apart.
+    pub prefix: String,
+    /// Only `GET` and `HEAD` requests.
+    pub read_only: bool,
+    pub created_at: DateTime<Utc>,
+    /// Updated at most every few minutes; `None` until first used.
+    pub last_used_at: Option<DateTime<Utc>>,
+    /// `None`: never expires.
+    pub expires_at: Option<DateTime<Utc>>,
+}
+
+/// `POST /keys`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct NewApiKey {
+    pub name: String,
+    #[serde(default)]
+    pub read_only: bool,
+    /// Days until it expires (1 to `MAX_API_KEY_DAYS`); `None` for never.
+    #[serde(default)]
+    pub expires_days: Option<u32>,
+}
+
+/// The answer to `POST /keys`. The token is shown only this once.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreatedApiKey {
+    pub key: ApiKey,
+    pub token: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthResponse {
     pub token: String,

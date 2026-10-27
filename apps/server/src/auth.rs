@@ -1,20 +1,23 @@
-//! Accounts, password hashing and bearer-token sessions.
+//! Accounts, password hashing, and bearer tokens: sign-in sessions and API
+//! keys.
 
 use argon2::Argon2;
 use argon2::password_hash::phc::PasswordHash;
 use argon2::password_hash::{PasswordHasher, PasswordVerifier};
 use axum::extract::FromRequestParts;
+use axum::http::Method;
 use axum::http::header::AUTHORIZATION;
 use axum::http::request::Parts;
 use sha2::{Digest, Sha256};
 use starbooru_core::Role;
+use starbooru_core::keys::API_KEY_PREFIX;
 
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 
 pub const SESSION_DAYS: i64 = 90;
-/// `sessions.last_used_at` is refreshed when it is older than this, so most
-/// requests don't write.
+/// `last_used_at` of a session or key is refreshed when it is older than
+/// this, so most requests don't write.
 const TOUCH_AFTER_SECS: i64 = 300;
 const MAX_PASSWORD_BYTES: usize = 1024;
 
@@ -23,13 +26,30 @@ const MAX_PASSWORD_BYTES: usize = 1024;
 pub struct AuthUser {
     pub id: i64,
     pub role: Role,
-    pub token_hash: Vec<u8>,
-    pub session_id: i64,
+    pub credential: Credential,
+}
+
+/// What the request signed in with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Credential {
+    Session(i64),
+    ApiKey(i64),
 }
 
 impl AuthUser {
     pub fn can_moderate(&self, owner: Option<i64>) -> bool {
         self.role == Role::Admin || owner == Some(self.id)
+    }
+
+    /// The sign-in session behind the request. API keys are refused, so a
+    /// leaked key can't change the password, sign-ins or keys.
+    pub fn session_id(&self) -> AppResult<i64> {
+        match self.credential {
+            Credential::Session(id) => Ok(id),
+            Credential::ApiKey(_) => Err(AppError::Denied(
+                "API keys can't do this; sign in to the app instead",
+            )),
+        }
     }
 }
 
@@ -46,36 +66,67 @@ impl FromRequestParts<AppState> for AuthUser {
             .filter(|t| !t.is_empty())
             .ok_or(AppError::Unauthorized)?;
         let token_hash = hash_token(token);
-        let (id, role, session_id, stale): (i64, String, i64, bool) = sqlx::query_as(
-            "SELECT u.id, u.role, s.id, s.last_used_at < now() - make_interval(secs => $2) \
-             FROM sessions s JOIN users u ON u.id = s.user_id \
-             WHERE s.token_hash = $1 AND s.expires_at > now()",
-        )
+        let is_key = token.starts_with(API_KEY_PREFIX);
+        let found: Option<(i64, String, i64, bool, bool)> = if is_key {
+            sqlx::query_as(
+                "SELECT u.id, u.role, k.id, k.read_only, \
+                        coalesce(k.last_used_at < now() - make_interval(secs => $2), true) \
+                 FROM api_keys k JOIN users u ON u.id = k.user_id \
+                 WHERE k.token_hash = $1 AND (k.expires_at IS NULL OR k.expires_at > now())",
+            )
+        } else {
+            sqlx::query_as(
+                "SELECT u.id, u.role, s.id, false, \
+                        s.last_used_at < now() - make_interval(secs => $2) \
+                 FROM sessions s JOIN users u ON u.id = s.user_id \
+                 WHERE s.token_hash = $1 AND s.expires_at > now()",
+            )
+        }
         .bind(&token_hash)
         .bind(TOUCH_AFTER_SECS as f64)
         .fetch_optional(&state.db)
-        .await?
-        .ok_or(AppError::Unauthorized)?;
+        .await?;
+        let (id, role, credential_id, read_only, stale) = found.ok_or(AppError::Unauthorized)?;
         let role = Role::from_db(&role).ok_or_else(|| AppError::internal("bad role in db"))?;
+        if read_only && !matches!(parts.method, Method::GET | Method::HEAD) {
+            return Err(AppError::Denied("this API key is read-only"));
+        }
         if stale {
-            sqlx::query("UPDATE sessions SET last_used_at = now() WHERE id = $1")
-                .bind(session_id)
+            let touch = if is_key {
+                "UPDATE api_keys SET last_used_at = now() WHERE id = $1"
+            } else {
+                "UPDATE sessions SET last_used_at = now() WHERE id = $1"
+            };
+            sqlx::query(touch)
+                .bind(credential_id)
                 .execute(&state.db)
                 .await?;
         }
+        let credential = if is_key {
+            Credential::ApiKey(credential_id)
+        } else {
+            Credential::Session(credential_id)
+        };
         Ok(Self {
             id,
             role,
-            token_hash,
-            session_id,
+            credential,
         })
     }
 }
 
 pub fn new_token() -> String {
+    format!("sb_{}", random_hex())
+}
+
+pub fn new_api_key() -> String {
+    format!("{API_KEY_PREFIX}{}", random_hex())
+}
+
+fn random_hex() -> String {
     let mut bytes = [0u8; 32];
     rand::fill(&mut bytes);
-    format!("sb_{}", hex::encode(bytes))
+    hex::encode(bytes)
 }
 
 pub fn hash_token(token: &str) -> Vec<u8> {
@@ -169,6 +220,8 @@ mod tests {
     fn tokens_are_unique_and_hashed() {
         let (a, b) = (new_token(), new_token());
         assert_ne!(a, b);
+        assert!(a.starts_with("sb_") && !a.starts_with(API_KEY_PREFIX));
+        assert!(new_api_key().starts_with(API_KEY_PREFIX));
         assert_eq!(hash_token(&a).len(), 32);
     }
 

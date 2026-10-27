@@ -2,6 +2,7 @@ use chrono::Utc;
 use dioxus::prelude::*;
 use starbooru_core::{Role, SessionInfo};
 
+use super::api_keys::ApiKeysCard;
 use super::{ErrorBanner, Spinner};
 use crate::Route;
 use crate::i18n::Lang;
@@ -165,6 +166,7 @@ pub fn Settings() -> Element {
                 }
                 PasswordCard { onchanged: move |()| sessions_version += 1 }
                 SessionsCard { version: sessions_version() }
+                ApiKeysCard {}
             }
         }
     }

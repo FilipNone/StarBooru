@@ -3,6 +3,7 @@
 mod auth;
 mod duplicates;
 mod explore;
+mod keys;
 mod posts;
 mod searches;
 mod tags;
@@ -48,6 +49,8 @@ pub fn router(state: AppState) -> Router {
             "/auth/sessions/{id}",
             axum::routing::delete(auth::revoke_session),
         )
+        .route("/keys", get(keys::list).post(keys::create))
+        .route("/keys/{id}", axum::routing::delete(keys::delete))
         .route(
             "/posts",
             get(posts::search)

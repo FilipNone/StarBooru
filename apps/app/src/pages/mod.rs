@@ -1,3 +1,4 @@
+mod api_keys;
 mod duplicates;
 mod explore;
 mod gallery;

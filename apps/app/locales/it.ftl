@@ -301,7 +301,7 @@ privacy-2 = Chi è responsabile
 privacy-3 = La persona o l'organizzazione che gestisce questo server (il gestore) decide chi può registrarsi ed è responsabile dei dati che contiene. Le domande sui tuoi dati vanno rivolte a lei.
 privacy-4 = Cosa salva il server
 privacy-5 = Il tuo account: nome utente, ruolo e un hash Argon2id con sale della tua password. La password in sé non viene mai salvata.
-privacy-6 = Le tue sessioni: un hash di ogni token di accesso, il tipo di dispositivo da cui proviene (ad esempio “StarBooru app on Linux” o “Firefox on Android”), quando è stata creata e usata l'ultima volta, e quando scade.
+privacy-6 = Le tue sessioni: un hash di ogni token di accesso, il tipo di dispositivo da cui proviene (ad esempio “StarBooru app on Linux” o “Firefox on Android”), quando è stata creata e usata l'ultima volta, e quando scade. Le chiavi API che crei sono conservate allo stesso modo: un hash della chiave, il suo nome e quando è stata usata l'ultima volta.
 privacy-7 = Ciò che aggiungi: i file caricati con dimensione, risoluzione, checksum e un'impronta visiva per la ricerca dei duplicati, oltre a tag, classificazioni, fonti, voti e ricerche salvate.
 privacy-8 = Per rallentare i tentativi di indovinare le password, il server conta gli accessi falliti per account e per indirizzo di rete, e le registrazioni per indirizzo. Questi conteggi restano in memoria al massimo un'ora e non vengono mai scritti su disco.
 privacy-9 = Cosa resta sul tuo dispositivo
@@ -514,3 +514,34 @@ sort-pixels = Risoluzione più alta
 sort-tags = Più tag
 sort-tags-asc = Meno tag
 sort-random = Casuale
+
+## API keys
+
+keys-title = Chiavi API
+keys-lead = Permetti a script e altri strumenti di usare StarBooru a tuo nome. Una chiave non può cambiare la password, gli accessi o le chiavi.
+keys-copy-now = Copia ora la chiave “{ $name }”. Non verrà più mostrata.
+keys-token = Nuova chiave API
+keys-copy = Copia
+keys-copied = Copiata
+keys-none = Ancora nessuna chiave API.
+keys-read-only = Sola lettura
+keys-full = Accesso completo
+keys-expired = Scaduta
+keys-used = Usata { $when }
+keys-never-used = Mai usata
+keys-no-expiry = Non scade
+keys-expired-on = Scaduta il { $date }
+keys-expires-on = Scade il { $date }
+keys-name = Nome
+keys-name-placeholder = Chi la userà, ad es. script di backup
+keys-access = Accesso
+keys-lifetime = Scadenza
+keys-never-expires = Mai
+keys-days =
+    { $count ->
+        [one] 1 giorno
+       *[other] { $count } giorni
+    }
+keys-create = Crea chiave
+keys-delete = Rimuovi la chiave
+keys-delete-named = Rimuovi la chiave { $name }

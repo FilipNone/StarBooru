@@ -14,6 +14,9 @@ pub enum AppError {
     Unauthorized,
     #[error("you are not allowed to do that")]
     Forbidden,
+    /// Forbidden, with the reason.
+    #[error("{0}")]
+    Denied(&'static str),
     #[error("not found")]
     NotFound,
     #[error("{message}")]
@@ -43,7 +46,7 @@ impl AppError {
         match self {
             AppError::BadRequest(_) => (StatusCode::BAD_REQUEST, "bad_request"),
             AppError::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized"),
-            AppError::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
+            AppError::Forbidden | AppError::Denied(_) => (StatusCode::FORBIDDEN, "forbidden"),
             AppError::NotFound => (StatusCode::NOT_FOUND, "not_found"),
             AppError::Conflict { code, .. } => (StatusCode::CONFLICT, code),
             AppError::PayloadTooLarge => (StatusCode::PAYLOAD_TOO_LARGE, "too_large"),

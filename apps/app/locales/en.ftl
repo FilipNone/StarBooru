@@ -301,7 +301,7 @@ privacy-2 = Who is responsible
 privacy-3 = The person or organisation that runs this server (the operator) decides who may sign up and is responsible for the data on it. Questions about your data go to them.
 privacy-4 = What the server stores
 privacy-5 = Your account: username, role and a salted Argon2id hash of your password. The password itself is never stored.
-privacy-6 = Your sessions: a hash of each sign-in token, the kind of device it came from (for example “StarBooru app on Linux” or “Firefox on Android”), when it was created and last used, and when it expires.
+privacy-6 = Your sessions: a hash of each sign-in token, the kind of device it came from (for example “StarBooru app on Linux” or “Firefox on Android”), when it was created and last used, and when it expires. API keys you create are kept the same way: a hash of the key, its name, and when it was last used.
 privacy-7 = What you add: uploaded files with their size, dimensions, checksum and a visual fingerprint for the duplicate finder, plus tags, ratings, sources, votes and saved searches.
 privacy-8 = To slow down password guessing, the server counts failed sign-ins per account and per network address, and sign-ups per address. These counts are kept in memory for at most an hour and never written to disk.
 privacy-9 = What stays on your device
@@ -514,3 +514,34 @@ sort-pixels = Highest resolution
 sort-tags = Most tags
 sort-tags-asc = Fewest tags
 sort-random = Random
+
+## API keys
+
+keys-title = API keys
+keys-lead = Let scripts and other tools use StarBooru as you. A key can't change your password, sign-ins or keys.
+keys-copy-now = Copy the key “{ $name }” now. It won't be shown again.
+keys-token = New API key
+keys-copy = Copy
+keys-copied = Copied
+keys-none = No API keys yet.
+keys-read-only = Read-only
+keys-full = Full access
+keys-expired = Expired
+keys-used = Used { $when }
+keys-never-used = Never used
+keys-no-expiry = Never expires
+keys-expired-on = Expired { $date }
+keys-expires-on = Expires { $date }
+keys-name = Name
+keys-name-placeholder = What will use it, e.g. backup script
+keys-access = Access
+keys-lifetime = Expires
+keys-never-expires = Never
+keys-days =
+    { $count ->
+        [one] 1 day
+       *[other] { $count } days
+    }
+keys-create = Create key
+keys-delete = Remove key
+keys-delete-named = Remove the key { $name }

@@ -7,11 +7,11 @@ use reqwest::{Method, RequestBuilder, StatusCode, header};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use starbooru_core::{
-    API_PREFIX, AliasRequest, ApiError, AuthResponse, BulkEdit, BulkResult, Credentials,
-    DismissDuplicates, Duplicates, Explore, ImplicationRequest, ImportRequest, Neighbors,
-    PasswordChange, Post, PostPage, PostUpdate, PurgeResult, Rating, ResolveDuplicates,
-    RevokeResult, SaveSearchRequest, SavedSearch, ServerInfo, SessionInfo, Tag, TagDetail,
-    TagOrder, TagUpdate, User, VoteRequest,
+    API_PREFIX, AliasRequest, ApiError, ApiKey, AuthResponse, BulkEdit, BulkResult, CreatedApiKey,
+    Credentials, DismissDuplicates, Duplicates, Explore, ImplicationRequest, ImportRequest,
+    Neighbors, NewApiKey, PasswordChange, Post, PostPage, PostUpdate, PurgeResult, Rating,
+    ResolveDuplicates, RevokeResult, SaveSearchRequest, SavedSearch, ServerInfo, SessionInfo, Tag,
+    TagDetail, TagOrder, TagUpdate, User, VoteRequest,
 };
 use std::time::Duration;
 use thiserror::Error;
@@ -201,6 +201,20 @@ impl Client {
     /// Signs out everywhere but here.
     pub async fn revoke_other_sessions(&self) -> Result<RevokeResult> {
         Self::send(self.request(Method::DELETE, "/auth/sessions")?).await
+    }
+
+    /// The caller's API keys. Needs a sign-in session, not a key.
+    pub async fn api_keys(&self) -> Result<Vec<ApiKey>> {
+        Self::send(self.request(Method::GET, "/keys")?).await
+    }
+
+    /// The answer holds the only copy of the new key's token.
+    pub async fn create_api_key(&self, key: &NewApiKey) -> Result<CreatedApiKey> {
+        self.json(Method::POST, "/keys", key).await
+    }
+
+    pub async fn delete_api_key(&self, id: i64) -> Result<()> {
+        Self::send_empty(self.request(Method::DELETE, &format!("/keys/{id}"))?).await
     }
 
     pub async fn me(&self) -> Result<User> {

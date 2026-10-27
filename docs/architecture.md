@@ -29,7 +29,7 @@ The desktop and Android apps are the same Dioxus code as the web app. Each one a
 |---|---|
 | `config.rs` | Environment variables (see `deployment.md`) |
 | `routes/` | One file per resource: `auth`, `posts`, `tags`, `trash`, `duplicates`, and more. `mod.rs` builds the router and its layers (CORS, compression, tracing, panic catcher, SPA fallback). |
-| `auth.rs` | Bearer-token extractor; Argon2id password hashing (on the blocking pool) |
+| `auth.rs` | Bearer-token extractor for sessions (`sb_…`) and API keys (`sbk_…`); a read-only key is refused anything but `GET`/`HEAD`, and `AuthUser::session_id()` refuses keys on the account endpoints. Argon2id password hashing (on the blocking pool). |
 | `throttle.rs` | Sign-in limits: failed attempts per account and per client address (IPv6 by /64) in fixed windows, in memory and capped at 10,000 keys each. The address is the socket peer, or the last `X-Forwarded-For` entry with `STARBOORU_TRUST_PROXY`. |
 | `storage.rs` | Format sniffing, content-addressed storage, thumbnails |
 | `similar.rs` | Duplicate finder fingerprints: a 64-bit difference hash (9×8 brightness grid) plus the average colour, and grouping by Hamming distance through a 4×16-bit multi-index, so it never compares every pair. Fine high-frequency patterns blur to flat at 9×8 and can match when their colours do. |
@@ -52,6 +52,7 @@ PostgreSQL schema: `apps/server/migrations/`.
 | `duplicate_dismissals` | Pairs of posts (`post_a < post_b`) marked as not duplicates |
 | `post_votes` | One vote per user and post, −1 or +1, with `voted_at` (set when the vote is cast or changed). `posts.score` is their sum. |
 | `tag_aliases` | `alias → tag_id`. Aliases are resolved when tagging, searching and in autocomplete. |
+| `api_keys` | Per user: a name, the SHA-256 of the token, its first 12 characters (`prefix`, for telling keys apart), `read_only`, `last_used_at` (null until used) and an optional `expires_at` |
 | `saved_searches` | Per user: a name (unique per user, case-insensitively) and a query string |
 | `tag_implications` | `tag_id → implied_id`. Expanded transitively (a recursive CTE) when tags are set, so implied tags are stored on posts. Cycles are refused. Edits take an advisory lock, since they may rewrite many posts. |
 

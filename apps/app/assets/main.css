@@ -362,7 +362,7 @@ input[type="range"] { width: 100%; accent-color: var(--primary); margin-top: 12p
 .saved-searches .chip { gap: 6px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .saved-searches .chip svg { flex: none; color: var(--primary); }
 .sort { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; font-size: 14px; }
-.sort select, .bulk-rating {
+.sort select, .bulk-rating, .key-options select {
   min-height: 40px; padding: 0 36px 0 14px; border: 1px solid var(--outline); border-radius: 999px;
   font: inherit; font-weight: 600; color: var(--on-surface); cursor: pointer; appearance: none;
   background-color: var(--surface);
@@ -373,7 +373,7 @@ input[type="range"] { width: 100%; accent-color: var(--primary); margin-top: 12p
   background-size: 5px 5px, 5px 5px;
   background-repeat: no-repeat;
 }
-.sort select:focus-visible { outline: 3px solid var(--primary); outline-offset: 2px; }
+.sort select:focus-visible, .key-options select:focus-visible { outline: 3px solid var(--primary); outline-offset: 2px; }
 .gallery .page-head .select-toggle { margin-left: -4px; }
 
 /* selection mode */
@@ -432,6 +432,16 @@ button.thumb { width: 100%; padding: 0; border: 0; font: inherit; color: inherit
 .session-main .muted { flex-basis: 100%; font-size: 14px; }
 .session-main .pill { background: var(--primary-container); color: var(--on-primary-container); }
 .card form .banner { margin-bottom: 12px; }
+.session-main .pill.bad { background: var(--danger-container); color: var(--on-danger-container); }
+.key-prefix { font: 13px ui-monospace, "Cascadia Code", "Roboto Mono", monospace; color: var(--on-surface-2); }
+.key-created { display: grid; gap: 10px; margin-bottom: 12px; }
+.key-token { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.key-token input {
+  flex: 1; width: 0; min-width: 0; padding: 10px 12px; border: 1px solid var(--outline); border-radius: var(--radius-s);
+  background: var(--surface); color: var(--on-surface); font: 14px ui-monospace, "Cascadia Code", "Roboto Mono", monospace;
+}
+.key-form { margin-top: 4px; padding-top: 16px; border-top: 1px solid oklch(from var(--outline) l c h / 0.4); }
+.key-options { display: flex; flex-wrap: wrap; align-items: start; gap: 0 24px; }
 
 /* ---------- explore ---------- */
 
