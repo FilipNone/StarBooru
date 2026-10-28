@@ -16,7 +16,7 @@ use std::time::Duration;
 use base64::Engine as _;
 use serde_json::{Value, json};
 use starbooru_core::ai::{ParsedSuggestions, TAG_PROMPT};
-use starbooru_core::local_ai::recommended_tier;
+use starbooru_core::local_ai::machine_tier;
 use starbooru_core::tag::normalize_tags;
 use starbooru_core::{AiRoute, TagCategory, parse_suggestions};
 use tokio::sync::Semaphore;
@@ -88,7 +88,7 @@ impl AiSetup {
     pub fn local_model(&self) -> String {
         if self.local_model.is_empty() {
             let hw = crate::local_ai::hardware();
-            recommended_tier(&hw).preset().model.to_owned()
+            machine_tier(&hw).preset().model.to_owned()
         } else {
             self.local_model.clone()
         }

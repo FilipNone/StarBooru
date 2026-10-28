@@ -15,7 +15,7 @@ use serde_json::Value;
 use starbooru_core::ai::TAG_PROMPT;
 use starbooru_core::local_ai::{
     Gpu, GpuKind, Hardware, LocalAiStatus, LocalModel, LocalRuntime, LocalTestResult, PullProgress,
-    TIERS, TierCheck, assess, fit_from_seconds, recommended_tier,
+    TIERS, TierCheck, assess, fit_from_seconds, machine_tier,
 };
 use tracing::warn;
 
@@ -309,7 +309,7 @@ pub async fn status(state: &AppState, setup: &AiSetup) -> LocalAiStatus {
             installed: installed(p.model),
         })
         .collect();
-    let recommended = (hw.ram_total > 0).then(|| recommended_tier(&hw));
+    let recommended = (hw.ram_total > 0).then(|| machine_tier(&hw));
     LocalAiStatus {
         tiers,
         recommended,

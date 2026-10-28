@@ -233,6 +233,18 @@ pub fn recommended_tier(hw: &Hardware) -> LocalTier {
         .unwrap_or(LocalTier::Small)
 }
 
+/// The preset for the machine as a whole, used when the admin hasn't picked
+/// one: like [`recommended_tier`], but counting all of each graphics card's
+/// memory rather than what is free right now, so the model in use doesn't
+/// change with whatever else is running.
+pub fn machine_tier(hw: &Hardware) -> LocalTier {
+    let mut hw = hw.clone();
+    for gpu in &mut hw.gpus {
+        gpu.vram_free_bytes = None;
+    }
+    recommended_tier(&hw)
+}
+
 /// A measured run: how long a small tagging request took.
 pub fn fit_from_seconds(seconds: f64) -> Fit {
     if seconds < 20.0 {
@@ -445,6 +457,8 @@ mod tests {
             ]
         );
         assert_eq!(recommended_tier(&busy), LocalTier::Medium);
+        // The pick for the machine stays put while the card is busy.
+        assert_eq!(machine_tier(&busy), LocalTier::Large);
         // Unknown VRAM counts as none.
         let unknown = machine(16, 32, vec![gpu(GpuKind::Dedicated, None)]);
         assert_eq!(
