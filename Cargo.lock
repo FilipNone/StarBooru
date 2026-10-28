@@ -5761,6 +5761,7 @@ dependencies = [
  "directories",
  "fluent-bundle",
  "fluent-syntax",
+ "gdk",
  "jni 0.21.1",
  "robius-android-env",
  "serde",

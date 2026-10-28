@@ -387,8 +387,7 @@ input[type="range"] { width: 100%; accent-color: var(--primary); margin-top: 12p
 .badge {
   position: absolute; right: 8px; bottom: 8px; display: inline-flex; align-items: center; gap: 4px;
   min-height: 24px; font-variant-numeric: tabular-nums; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 700;
-  background: oklch(0 0 0 / 0.55); color: white;
-  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  background: oklch(0 0 0 / 0.65); color: white;
 }
 .gallery .page-head { margin-bottom: 12px; }
 .gallery .page-head .page-title { margin: 0; }

@@ -539,6 +539,12 @@ fn ImageCanvas(
         }));
         spawn(async move { measure().await });
     };
+    // Every pointer leaving the frame ends up here; re-render only on a change.
+    let mut drop_handle = move || {
+        if drag.peek().is_some() {
+            drag.set(None);
+        }
+    };
     rsx! {
         div { class: "editor-stage",
             div {
@@ -563,9 +569,9 @@ fn ImageCanvas(
                     let dy = (p.y - d.from.y) / r.height();
                     crop.set(d.start.dragged(d.handle, dx, dy));
                 },
-                onpointerup: move |_| drag.set(None),
-                onpointercancel: move |_| drag.set(None),
-                onpointerleave: move |_| drag.set(None),
+                onpointerup: move |_| drop_handle(),
+                onpointercancel: move |_| drop_handle(),
+                onpointerleave: move |_| drop_handle(),
                 img { src: "{src}", alt: "", draggable: "false", style: "{image}" }
                 div {
                     class: "crop-box",

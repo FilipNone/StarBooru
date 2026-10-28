@@ -717,7 +717,17 @@ fn Stage(
     rect: Signal<Option<PixelsRect>>,
 ) -> Element {
     let mut mounted = use_signal(|| None::<std::rc::Rc<MountedData>>);
-    let mut touches = use_signal(HashMap::<i32, Touch>::new);
+    // Pointers down on the stage. Not a signal: re-rendering the stage on
+    // every pointer move made the desktop app lag. `dragging` follows
+    // whether any pointer is down.
+    let mut touches = use_hook(|| CopyValue::new(HashMap::<i32, Touch>::new()));
+    let mut dragging = use_signal(|| false);
+    let mut settle = move || {
+        let now = !touches.peek().is_empty();
+        if *dragging.peek() != now {
+            dragging.set(now);
+        }
+    };
     let zoomable = kind != MediaKind::Video;
 
     // Rect of the stage; measured when a gesture starts, as scrolling moves it.
@@ -736,7 +746,7 @@ fn Stage(
     for (on, name) in [
         (full(), " full"),
         (z.is_zoomed(), " zoomed"),
-        (!touches.read().is_empty(), " dragging"),
+        (dragging(), " dragging"),
     ] {
         if on {
             class.push_str(name);
@@ -785,6 +795,7 @@ fn Stage(
                 }
                 let p = e.client_coordinates();
                 touches.write().insert(e.pointer_id(), Touch { start: p, last: p });
+                settle();
                 spawn(async move {
                     measure().await;
                 });
@@ -817,11 +828,12 @@ fn Stage(
             },
             onpointerup: move |e| {
                 let ended = touches.write().remove(&e.pointer_id());
+                settle();
                 let Some(t) = ended else {
                     return;
                 };
                 let (dx, dy) = (t.last.x - t.start.x, t.last.y - t.start.y);
-                if touches.read().is_empty() && !zoom().is_zoomed() && dx.abs() > SWIPE && dx.abs() > dy.abs() * 1.5 {
+                if touches.peek().is_empty() && !zoom().is_zoomed() && dx.abs() > SWIPE && dx.abs() > dy.abs() * 1.5 {
                     let to = if dx > 0.0 { nav.prev } else { nav.next };
                     if let Some(to) = to {
                         onnav.call(to);
@@ -830,9 +842,11 @@ fn Stage(
             },
             onpointercancel: move |e| {
                 touches.write().remove(&e.pointer_id());
+                settle();
             },
             onpointerleave: move |e| {
                 touches.write().remove(&e.pointer_id());
+                settle();
             },
             match kind {
                 MediaKind::Video => rsx! {

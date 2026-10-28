@@ -150,9 +150,52 @@ pub mod android {
     }
 }
 
+/// Sets up the Linux desktop webview before the window opens, and says
+/// whether Dioxus should turn off WebKit's DMA-BUF renderer, as it does by
+/// default on Wayland. Without it every frame is copied through memory,
+/// which made the app crawl on a large scaled screen, so it stays on except
+/// for NVIDIA's driver, whose explicit sync breaks it.
+/// `STARBOORU_DMABUF=0` or `=1` overrides the guess.
+#[cfg(feature = "desktop")]
+pub fn prepare_webview() -> bool {
+    let forced = std::env::var("STARBOORU_DMABUF").ok();
+    let off = dmabuf_off(
+        forced.as_deref(),
+        std::path::Path::new("/sys/module/nvidia").exists(),
+    );
+    // XWayland first, as Dioxus's default does: on Wayland GTK draws its
+    // own title bar, whose buttons don't respond on KDE (dioxus#3667).
+    // Plain Wayland when there's no X server; GDK_BACKEND still wins.
+    #[cfg(target_os = "linux")]
+    if !off && std::env::var_os("GDK_BACKEND").is_none() {
+        gdk::set_allowed_backends("x11,wayland");
+    }
+    off
+}
+
+#[cfg(feature = "desktop")]
+fn dmabuf_off(forced: Option<&str>, nvidia: bool) -> bool {
+    match forced.map(str::trim) {
+        Some("0") => true,
+        Some("1") => false,
+        _ => nvidia,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "desktop")]
+    #[test]
+    fn dmabuf_off_only_for_nvidia() {
+        // Regression: every Wayland desktop ran the slow copying renderer.
+        assert!(!dmabuf_off(None, false));
+        assert!(dmabuf_off(None, true));
+        assert!(dmabuf_off(Some("0"), false));
+        assert!(!dmabuf_off(Some(" 1 "), true));
+        assert!(dmabuf_off(Some("yes please"), true));
+    }
 
     #[test]
     fn finds_the_hue_of_a_colour() {

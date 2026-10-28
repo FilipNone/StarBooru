@@ -82,7 +82,12 @@ fn launch_desktop() {
         .with_inner_size(LogicalSize::new(1280.0, 820.0))
         .with_min_inner_size(LogicalSize::new(360.0, 480.0));
     dioxus::LaunchBuilder::desktop()
-        .with_cfg(Config::new().with_window(window).with_menu(None))
+        .with_cfg(
+            Config::new()
+                .with_window(window)
+                .with_menu(None)
+                .with_disable_dma_buf_on_wayland(system::prepare_webview()),
+        )
         .launch(App);
 }
 

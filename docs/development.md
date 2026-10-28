@@ -65,6 +65,8 @@ Without a phone, [Waydroid](https://waydro.id) works as the device: `adb connect
 
 The web app keeps the API at its own origin by default. The native apps ask for the server URL at sign-in. Set `STARBOORU_SERVER` to prefill the sign-in page. Native apps read it at run time; the web and Android builds read it at compile time, so set it in the environment `dx serve` runs in. The API allows any origin (it uses bearer tokens, not cookies), so `dx serve --web` on another port works.
 
+On Linux the desktop app runs through XWayland, where GTK's window buttons work on every desktop, with WebKit's DMA-BUF renderer on. Dioxus turns that renderer off on Wayland by default, which copies every frame through memory and makes the app lag on large scaled screens; the app keeps that only for NVIDIA's driver. `STARBOORU_DMABUF=0` turns the renderer off (try it if the window stays blank) and `=1` forces it on; `GDK_BACKEND=wayland` runs natively. WebKitGTK halves its frame rate while the system's power profile is *Power saver*. Thumbnails don't grow into the viewer on Linux desktop: `startViewTransition` aborts WebKitGTK's web process (2.54).
+
 ## Tests and lints
 
 The gate before finishing a task is in `AGENTS.md` › *Before you finish a task*. While iterating:

@@ -574,7 +574,11 @@ pub(super) fn Thumb(
                     hovered.set(true);
                 }
             },
-            onpointerleave: move |_| hovered.set(false),
+            onpointerleave: move |_| {
+                if *hovered.peek() {
+                    hovered.set(false);
+                }
+            },
             if let Some(src) = src {
                 img { src, alt: alt.clone(), loading: "lazy", decoding: "async" }
             } else {
@@ -622,6 +626,10 @@ pub(super) fn Thumb(
         move |_| {
             *OPENING.write() = Some(post.clone());
             let q = q.clone();
+            if !HERO_TRANSITION {
+                nav.push(Route::PostView { id, q });
+                return;
+            }
             spawn(async move {
                 let mut hero = document::eval(HERO_START);
                 let _ = hero.send(id);
@@ -642,6 +650,11 @@ pub(super) fn Thumb(
         }
     }
 }
+
+/// Whether the webview can run the hero transition. WebKitGTK (the Linux
+/// desktop webview) aborts its web process inside `startViewTransition`,
+/// so there the viewer opens without it.
+const HERO_TRANSITION: bool = !cfg!(all(feature = "desktop", target_os = "linux"));
 
 /// Grows the clicked thumbnail into the viewer's image with a view
 /// transition, where the browser has them and motion isn't reduced. Sends
@@ -670,6 +683,13 @@ t.finished.then(end, end);
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn no_hero_transition_in_webkitgtk() {
+        // Regression: clicking a thumbnail crashed the Linux desktop app.
+        let linux_desktop = cfg!(all(feature = "desktop", target_os = "linux"));
+        assert_eq!(HERO_TRANSITION, !linux_desktop);
+    }
 
     #[test]
     fn shares_in_gallery_order() {
