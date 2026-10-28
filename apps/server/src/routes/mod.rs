@@ -26,8 +26,9 @@ pub use trash::auto_purge;
 use std::any::Any;
 use std::time::Duration;
 
-use axum::extract::{DefaultBodyLimit, State};
+use axum::extract::{DefaultBodyLimit, Request, State};
 use axum::http::{HeaderValue, Method, StatusCode, header};
+use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
@@ -192,7 +193,8 @@ pub fn router(state: AppState) -> Router {
         }
     }
 
-    app.layer(cors)
+    app.layer(axum::middleware::from_fn(detach))
+        .layer(cors)
         .layer(TraceLayer::new_for_http())
         .layer(CatchPanicLayer::custom(panic_response))
         .with_state(state)
@@ -228,6 +230,20 @@ async fn health(State(state): State<AppState>) -> Response {
 
 async fn api_not_found() -> AppError {
     AppError::NotFound
+}
+
+/// Runs each request in its own task. Hyper drops a request's future when its
+/// client goes away, which would stop a translation, an edit or an import
+/// halfway; here only the wait is dropped, and the work finishes and is kept.
+async fn detach(req: Request, next: Next) -> Response {
+    match tokio::spawn(next.run(req)).await {
+        Ok(response) => response,
+        Err(e) if e.is_panic() => panic_response(e.into_panic()),
+        Err(e) => {
+            error!("request task stopped: {e}");
+            AppError::Internal(e.to_string()).into_response()
+        }
+    }
 }
 
 /// Last-resort guard: a panic in a handler becomes a 500, never a dead server.
@@ -369,5 +385,64 @@ mod tests {
             StatusCode::UNAUTHORIZED
         );
         app.finish().await;
+    }
+
+    /// A client that hangs up mustn't stop the work it asked for.
+    #[tokio::test]
+    async fn work_finishes_after_the_client_leaves() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::time::Duration;
+
+        use axum::body::Body;
+        use axum::http::Request;
+        use tower::ServiceExt;
+
+        let make = |done: Arc<AtomicBool>, detached: bool| {
+            let app = axum::Router::new().route(
+                "/",
+                axum::routing::post(move || async move {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    done.store(true, Ordering::SeqCst);
+                }),
+            );
+            if detached {
+                app.layer(axum::middleware::from_fn(super::detach))
+            } else {
+                app
+            }
+        };
+        for detached in [false, true] {
+            let done = Arc::new(AtomicBool::new(false));
+            let request = Request::post("/").body(Body::empty()).unwrap();
+            // the client gives up after 20 ms; dropping the future is what hyper does
+            let answer = tokio::time::timeout(
+                Duration::from_millis(20),
+                make(done.clone(), detached).oneshot(request),
+            )
+            .await;
+            assert!(answer.is_err());
+            tokio::time::sleep(Duration::from_millis(250)).await;
+            assert_eq!(done.load(Ordering::SeqCst), detached);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_panic_in_a_detached_request_is_a_500() {
+        use axum::body::Body;
+        use axum::http::Request;
+        use tower::ServiceExt;
+
+        async fn boom() -> &'static str {
+            panic!("boom")
+        }
+        let app = axum::Router::new()
+            .route("/", axum::routing::get(boom))
+            .layer(axum::middleware::from_fn(super::detach));
+        let response = app
+            .oneshot(Request::get("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 }
