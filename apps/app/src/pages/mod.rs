@@ -32,7 +32,6 @@ pub use post::PostView;
 pub use select::{Choice, Select};
 pub use settings::Settings;
 pub use share::SharedPage;
-#[cfg_attr(not(feature = "desktop"), allow(unused_imports))]
 pub use shell::{Shell, notify};
 pub use tags::{TagPage, Tags};
 pub use trash::Trash;

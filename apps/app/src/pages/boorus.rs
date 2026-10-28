@@ -6,10 +6,13 @@ use std::collections::{HashMap, HashSet};
 
 use dioxus::prelude::*;
 use starbooru_core::tag::{MAX_TAGS_PER_POST, TagError};
-use starbooru_core::{BooruApi, ImportRequest, RemotePost, RemoteSearch, SITES, parse_tag_list};
+use starbooru_core::{
+    BooruApi, ImportJob, ImportRequest, JobState, RemotePost, RemoteSearch, SITES, parse_tag_list,
+};
 
 use super::{Choice, ErrorBanner, Select, Spinner};
 use crate::Route;
+use crate::activity::{self, JOBS};
 use crate::icons::{Ico, Icon};
 use crate::store::{self, PREFS, SavedBooru};
 
@@ -25,6 +28,18 @@ enum Status {
     /// Already in the collection (the server's message says which post).
     Known(String),
     Failed(String),
+}
+
+/// How a result's import job is going.
+fn job_status(job: &ImportJob) -> Status {
+    let message = job.error.clone().unwrap_or_default();
+    match (job.state, job.post_id) {
+        (JobState::Queued | JobState::Running, _) => Status::Busy,
+        (JobState::Done, Some(id)) => Status::Done(id),
+        // imported, then deleted
+        (JobState::Done, None) | (JobState::Duplicate, _) => Status::Known(message),
+        (JobState::Failed, _) => Status::Failed(message),
+    }
 }
 
 pub fn api_of(name: &str) -> Option<BooruApi> {
@@ -192,29 +207,41 @@ pub fn Boorus() -> Element {
             .filter(|p| selected.read().contains(&p.id))
             .cloned()
             .collect();
+        let mut requests = Vec::new();
+        let mut sent = Vec::new();
+        for post in picked {
+            match import_tags(&post.tags, &extra) {
+                Err(e) => {
+                    status
+                        .write()
+                        .insert(post.id, Status::Failed(e.to_string()));
+                }
+                Ok(tags) => {
+                    sent.push(post.id);
+                    requests.push(ImportRequest {
+                        url: post.file_url,
+                        tags,
+                        rating: post.rating,
+                        source: Some(post.page_url),
+                    });
+                }
+            }
+        }
+        if requests.is_empty() {
+            return;
+        }
         importing.set(true);
         error.set(None);
+        // The server runs the imports; their progress comes from `JOBS`.
         spawn(async move {
-            for post in picked {
-                status.write().insert(post.id, Status::Busy);
-                let result = match import_tags(&post.tags, &extra) {
-                    Err(e) => Status::Failed(e.to_string()),
-                    Ok(tags) => {
-                        let request = ImportRequest {
-                            url: post.file_url.clone(),
-                            tags,
-                            rating: post.rating,
-                            source: Some(post.page_url.clone()),
-                        };
-                        match client.import_url(&request).await {
-                            Ok(created) => Status::Done(created.id),
-                            Err(e) if e.code() == Some("duplicate") => Status::Known(e.to_string()),
-                            Err(e) => Status::Failed(e.to_string()),
-                        }
+            match activity::queue_imports(&client, requests).await {
+                Ok(()) => {
+                    for id in sent {
+                        status.write().remove(&id);
+                        selected.write().remove(&id);
                     }
-                };
-                status.write().insert(post.id, result);
-                selected.write().remove(&post.id);
+                }
+                Err(message) => error.set(Some(message)),
             }
             importing.set(false);
         });
@@ -227,14 +254,26 @@ pub fn Boorus() -> Element {
     };
     let count = selected.read().len();
     let selecting = count > 0;
-    let failures: Vec<String> = status
+    let jobs = activity::jobs_by_source(&JOBS.read());
+    let shown: HashMap<u64, Status> = posts
         .read()
+        .iter()
+        .filter_map(|p| {
+            let local = status.read().get(&p.id).cloned();
+            Some((
+                p.id,
+                local.or_else(|| jobs.get(&p.page_url).map(job_status))?,
+            ))
+        })
+        .collect();
+    let failures: Vec<String> = shown
         .values()
         .filter_map(|s| match s {
             Status::Failed(m) => Some(m.clone()),
             _ => None,
         })
         .collect();
+    let busy = shown.values().any(|s| *s == Status::Busy);
     rsx! {
         div { class: "page boorus",
             h1 { class: "page-title", {t!("boorus-title")} }
@@ -343,6 +382,9 @@ pub fn Boorus() -> Element {
             if let Some(message) = error() {
                 ErrorBanner { message }
             }
+            if busy {
+                div { class: "banner info", role: "status", {t!("boorus-queued")} }
+            }
             for message in failures.iter().take(1) {
                 div { class: "banner warn", role: "status", {t!("boorus-some-failed", error = message.clone())} }
             }
@@ -359,7 +401,7 @@ pub fn Boorus() -> Element {
                         post: post.clone(),
                         delay: (index % 40) * 15,
                         on: selected.read().contains(&post.id),
-                        status: status.read().get(&post.id).cloned(),
+                        status: shown.get(&post.id).cloned(),
                         ontoggle: move |id| {
                             let mut set = selected.write();
                             if !set.remove(&id) {

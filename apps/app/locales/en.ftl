@@ -365,7 +365,6 @@ add = Add
 upload-shared-tags = Tags for all files
 rating = Rating
 upload-clear = Clear list
-upload-running = Uploading…
 upload-start =
     { $count ->
         [0] Upload
@@ -380,6 +379,33 @@ upload-failed = Failed
 upload-file-tags-placeholder = Tags for this file only
 upload-file-tags-label = Tags for { $name }
 upload-unreadable = cannot read file: { $error }
+upload-ready = Up next
+upload-remove = Remove { $name }
+upload-device-hint = Uploads keep going while you use other pages, but stop if you close StarBooru.
+upload-jobs-title = Importing on the server
+upload-jobs-hint = Your server downloads these itself, so they finish even if you close StarBooru.
+upload-done = Imported
+upload-job-running = Importing
+upload-job-cancel = Cancel
+upload-jobs-clear = Clear finished
+activity-signed-out = You're signed out.
+activity-pending =
+    { $count ->
+        [one] 1 upload or import in progress
+       *[other] { $count } uploads and imports in progress
+    }
+activity-uploaded =
+    { $count ->
+        [one] 1 file uploaded
+       *[other] { $count } files uploaded
+    }
+activity-imported =
+    { $count ->
+        [one] 1 post imported
+       *[other] { $count } posts imported
+    }
+activity-known = { $count } already here
+activity-failed = { $count } failed
 
 ## Tags
 
@@ -908,3 +934,4 @@ boorus-extra-tags = Extra tags for these posts
 boorus-import-label = Import the selected posts
 boorus-import = Import { $count }
 boorus-some-failed = Some posts weren't imported: { $error }
+boorus-queued = Your server is importing them. You can leave this page; they'll finish anyway.

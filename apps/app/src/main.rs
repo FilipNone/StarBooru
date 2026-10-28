@@ -4,6 +4,7 @@
 
 #[macro_use]
 mod i18n;
+mod activity;
 mod cache;
 mod download;
 mod icons;

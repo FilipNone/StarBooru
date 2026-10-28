@@ -365,7 +365,6 @@ add = Aggiungi
 upload-shared-tags = Tag per tutti i file
 rating = Classificazione
 upload-clear = Svuota l'elenco
-upload-running = Caricamento…
 upload-start =
     { $count ->
         [0] Carica
@@ -380,6 +379,41 @@ upload-failed = Non riuscito
 upload-file-tags-placeholder = Tag solo per questo file
 upload-file-tags-label = Tag per { $name }
 upload-unreadable = impossibile leggere il file: { $error }
+upload-ready = Il prossimo
+upload-remove = Rimuovi { $name }
+upload-device-hint = I caricamenti continuano mentre usi le altre pagine, ma si fermano se chiudi StarBooru.
+upload-jobs-title = Importazioni sul server
+upload-jobs-hint = Li scarica il tuo server, quindi finiscono anche se chiudi StarBooru.
+upload-done = Importato
+upload-job-running = In importazione
+upload-job-cancel = Annulla
+upload-jobs-clear = Togli i completati
+activity-signed-out = Non hai effettuato l'accesso.
+activity-pending =
+    { $count ->
+        [one] 1 caricamento o importazione in corso
+       *[other] { $count } caricamenti e importazioni in corso
+    }
+activity-uploaded =
+    { $count ->
+        [one] 1 file caricato
+       *[other] { $count } file caricati
+    }
+activity-imported =
+    { $count ->
+        [one] 1 post importato
+       *[other] { $count } post importati
+    }
+activity-known =
+    { $count ->
+        [one] 1 già presente
+       *[other] { $count } già presenti
+    }
+activity-failed =
+    { $count ->
+        [one] 1 non riuscito
+       *[other] { $count } non riusciti
+    }
 
 ## Tags
 
@@ -908,3 +942,4 @@ boorus-extra-tags = Tag in più per questi post
 boorus-import-label = Importa i post selezionati
 boorus-import = Importa { $count }
 boorus-some-failed = Alcuni post non sono stati importati: { $error }
+boorus-queued = Li sta importando il tuo server. Puoi lasciare questa pagina: finiranno comunque.

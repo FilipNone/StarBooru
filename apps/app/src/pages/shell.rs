@@ -6,6 +6,7 @@ use starbooru_core::Tag;
 
 use super::login::Login;
 use crate::Route;
+use crate::activity::{self, Activity};
 use crate::icons::{Ico, Icon};
 use crate::store::{self, SESSION};
 
@@ -31,6 +32,7 @@ pub fn Shell() -> Element {
             NavItems { route }
         }
         Snackbar {}
+        Activity {}
     }
 }
 
@@ -39,10 +41,6 @@ static NOTICE: GlobalSignal<Option<(u64, String)>> = Signal::global(|| None);
 
 /// Shows a short message at the bottom of the screen for a few seconds,
 /// for things that finish after the click (a download, say).
-#[cfg_attr(
-    not(feature = "desktop"),
-    allow(dead_code, reason = "only desktop downloads notify so far")
-)]
 pub fn notify(message: String) {
     let n = NOTICE.peek().as_ref().map_or(0, |(n, _)| n.wrapping_add(1));
     *NOTICE.write() = Some((n, message));
@@ -105,14 +103,48 @@ fn NavItems(route: Route) -> Element {
         (Route::Upload {}, Icon::Upload, t!("nav-upload")),
         (Route::Settings {}, Icon::Tune, t!("nav-settings")),
     ];
+    // Uploads and imports still going, shown on the Upload item.
+    let pending = activity::pending();
+    let note = t!("activity-pending", count = pending);
     rsx! {
         for (to, icon, label) in items {
-            Link {
+            NavLink {
                 key: "{label}",
-                class: if std::mem::discriminant(&to) == std::mem::discriminant(&route) { "nav-item active" } else { "nav-item" },
+                active: std::mem::discriminant(&to) == std::mem::discriminant(&route),
+                badge: if matches!(to, Route::Upload {}) { pending } else { 0 },
+                note: note.clone(),
                 to,
-                span { class: "nav-pill", Ico { icon } }
-                span { class: "nav-label", "{label}" }
+                icon,
+                label,
+            }
+        }
+    }
+}
+
+/// `badge` counts work still going on that page; `note` says so in words.
+#[component]
+fn NavLink(
+    to: Route,
+    icon: Icon,
+    label: String,
+    active: bool,
+    badge: usize,
+    note: String,
+) -> Element {
+    rsx! {
+        Link {
+            class: if active { "nav-item active" } else { "nav-item" },
+            title: if badge > 0 { note.clone() } else { String::new() },
+            to,
+            span { class: "nav-pill",
+                Ico { icon }
+                if badge > 0 {
+                    span { class: "nav-badge", aria_hidden: "true", "{badge.min(99)}" }
+                }
+            }
+            span { class: "nav-label", "{label}" }
+            if badge > 0 {
+                span { class: "visually-hidden", "{note}" }
             }
         }
     }
