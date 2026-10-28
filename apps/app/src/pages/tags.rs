@@ -1,8 +1,9 @@
-//! The tag list and the tag page: category, aliases and implications.
+//! The tag list, the tag page (category, place in the tree, aliases and
+//! implications) and a post's tags grouped for the viewer.
 
 use dioxus::prelude::*;
 use starbooru_client::ClientError;
-use starbooru_core::{Role, Tag, TagCategory, TagDetail, TagOrder, TagUpdate};
+use starbooru_core::{PostTag, Role, SECTIONS, Tag, TagCategory, TagDetail, TagOrder, TagUpdate};
 
 use super::{ErrorBanner, Spinner};
 use crate::Route;
@@ -26,6 +27,135 @@ fn category_label(category: TagCategory) -> String {
         TagCategory::Character => t!("category-character"),
         TagCategory::Copyright => t!("category-copyright"),
         TagCategory::Meta => t!("category-meta"),
+    }
+}
+
+/// The chip class that colours a tag by its category.
+pub(super) fn category_class(category: TagCategory) -> &'static str {
+    match category {
+        TagCategory::General => "chip",
+        TagCategory::Artist => "chip cat-artist",
+        TagCategory::Character => "chip cat-character",
+        TagCategory::Copyright => "chip cat-copyright",
+        TagCategory::Meta => "chip cat-meta",
+    }
+}
+
+/// A heading in the viewer's tag card.
+#[derive(Clone, Debug, PartialEq)]
+enum Group {
+    Category(TagCategory),
+    Section(String),
+    /// General tags outside any tree.
+    Other,
+}
+
+impl Group {
+    /// Artist, copyright, character, the built-in sections in order, other
+    /// sections by name, general tags without one, meta.
+    fn rank(&self) -> (u8, usize, &str) {
+        match self {
+            Group::Category(TagCategory::Artist) => (0, 0, ""),
+            Group::Category(TagCategory::Copyright) => (1, 0, ""),
+            Group::Category(TagCategory::Character) => (2, 0, ""),
+            Group::Section(name) => match SECTIONS.iter().position(|s| s == name) {
+                Some(i) => (3, i, ""),
+                None => (4, 0, name),
+            },
+            Group::Other | Group::Category(TagCategory::General) => (5, 0, ""),
+            Group::Category(TagCategory::Meta) => (6, 0, ""),
+        }
+    }
+
+    fn label(&self) -> String {
+        match self {
+            Group::Category(c) => category_label(*c),
+            Group::Section(name) => section_label(name),
+            Group::Other => t!("section-other"),
+        }
+    }
+}
+
+fn section_label(name: &str) -> String {
+    match name {
+        "people" => t!("section-people"),
+        "hair" => t!("section-hair"),
+        "eyes" => t!("section-eyes"),
+        "skin" => t!("section-skin"),
+        "body" => t!("section-body"),
+        "expression" => t!("section-expression"),
+        "pose" => t!("section-pose"),
+        "clothing" => t!("section-clothing"),
+        "setting" => t!("section-setting"),
+        "style" => t!("section-style"),
+        other => {
+            // a section someone made: `hair_accessories` reads "Hair accessories"
+            let words = other.replace('_', " ");
+            let mut chars = words.chars();
+            chars
+                .next()
+                .map(|c| c.to_uppercase().chain(chars).collect())
+                .unwrap_or_default()
+        }
+    }
+}
+
+/// A post's tags under their headings, each group sorted by name.
+fn group_tags(tags: &[PostTag]) -> Vec<(Group, Vec<PostTag>)> {
+    let mut groups: Vec<(Group, Vec<PostTag>)> = Vec::new();
+    for tag in tags {
+        let group = match (&tag.category, &tag.section) {
+            (TagCategory::General, Some(section)) => Group::Section(section.clone()),
+            (TagCategory::General, None) => Group::Other,
+            (category, _) => Group::Category(*category),
+        };
+        match groups.iter_mut().find(|(g, _)| *g == group) {
+            Some((_, list)) => list.push(tag.clone()),
+            None => groups.push((group, vec![tag.clone()])),
+        }
+    }
+    groups.sort_by(|a, b| a.0.rank().cmp(&b.0.rank()));
+    for (_, list) in &mut groups {
+        list.sort_by(|a, b| a.name.cmp(&b.name));
+    }
+    groups
+}
+
+/// The viewer's tag chips, grouped when the server sent the details.
+#[component]
+pub fn TagGroups(details: Vec<PostTag>, names: Vec<String>) -> Element {
+    if details.is_empty() {
+        return rsx! {
+            div { class: "chips",
+                for tag in names {
+                    Link { key: "{tag}", class: "chip", to: Route::Gallery { q: tag.clone() }, "{tag}" }
+                }
+            }
+        };
+    }
+    let groups = group_tags(&details);
+    // one heading saying "Other" says nothing
+    let headed = !matches!(groups.as_slice(), [(Group::Other, _)]);
+    rsx! {
+        div { class: "tag-groups",
+            for (group, tags) in groups {
+                section { key: "{group.label()}", class: "tag-group",
+                    if headed {
+                        h3 { "{group.label()}" }
+                    }
+                    div { class: "chips",
+                        for tag in tags {
+                            Link {
+                                key: "{tag.name}",
+                                class: category_class(tag.category),
+                                to: Route::Gallery { q: tag.name.clone() },
+                                "{tag.name}"
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -232,10 +362,11 @@ pub fn TagPage(name: String) -> Element {
         };
         busy.set(true);
         spawn(async move {
-            match client
-                .update_tag(&tag.tag.name, &TagUpdate { category })
-                .await
-            {
+            let update = TagUpdate {
+                category: Some(category),
+                parent: None,
+            };
+            match client.update_tag(&tag.tag.name, &update).await {
                 Ok(updated) => {
                     if let Some(d) = detail.write().as_mut() {
                         d.tag = updated;
@@ -243,6 +374,27 @@ pub fn TagPage(name: String) -> Element {
                 }
                 Err(e) => report(&mut error, e),
             }
+            busy.set(false);
+        });
+    };
+
+    // "" takes the tag out from under its parent.
+    let set_parent = move |parent: String| {
+        let (Some(client), Some(tag)) = (store::client(), detail.peek().clone()) else {
+            return;
+        };
+        busy.set(true);
+        spawn(async move {
+            let name = tag.tag.name;
+            let update = TagUpdate {
+                category: None,
+                parent: Some(parent),
+            };
+            let result = match client.update_tag(&name, &update).await {
+                Ok(_) => client.tag(&name).await,
+                Err(e) => Err(e),
+            };
+            apply(result);
             busy.set(false);
         });
     };
@@ -332,6 +484,11 @@ pub fn TagPage(name: String) -> Element {
                         }
                     }
                 }
+                TreeCard {
+                    detail: d.clone(),
+                    busy: busy(),
+                    onparent: set_parent,
+                }
                 RelationCard {
                     title: t!("tags-aliases"),
                     hint: t!("tags-aliases-hint"),
@@ -367,6 +524,65 @@ pub fn TagPage(name: String) -> Element {
                                 Link { key: "{t.id}", class: "chip", to: Route::TagPage { name: t.name.clone() }, "{t.name}" }
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Where the tag sits: its parents, a field to move it, and what is under it.
+#[component]
+fn TreeCard(detail: TagDetail, busy: bool, onparent: EventHandler<String>) -> Element {
+    let mut text = use_signal(String::new);
+    let has_parent = !detail.ancestors.is_empty();
+    rsx! {
+        section { class: "card",
+            h2 { class: "card-title", {t!("tags-tree")} }
+            p { class: "muted hint", {t!("tags-tree-hint")} }
+            if has_parent {
+                nav { class: "tag-trail", aria_label: t!("tags-tree"),
+                    for a in detail.ancestors.iter() {
+                        Link { key: "{a.id}", class: "chip", to: Route::TagPage { name: a.name.clone() }, "{a.name}" }
+                        span { class: "sep", aria_hidden: "true", "›" }
+                    }
+                    span { class: "here", aria_current: "page", "{detail.tag.name}" }
+                    button { class: "btn text small", r#type: "button", disabled: busy, onclick: move |_| onparent.call(String::new()),
+                        {t!("tags-move-top")}
+                    }
+                }
+            } else {
+                p { class: "muted", {t!("tags-tree-top")} }
+            }
+            form {
+                class: "inline-add",
+                onsubmit: move |e: FormEvent| {
+                    e.prevent_default();
+                    let value = text().trim().to_owned();
+                    if !value.is_empty() {
+                        onparent.call(value);
+                        text.set(String::new());
+                    }
+                },
+                input {
+                    aria_label: t!("tags-parent"),
+                    placeholder: t!("tags-parent"),
+                    autocomplete: "off",
+                    spellcheck: "false",
+                    value: "{text}",
+                    oninput: move |e| text.set(e.value()),
+                }
+                button { class: "btn tonal small", r#type: "submit", disabled: busy || text().trim().is_empty(),
+                    {t!("tags-move")}
+                }
+            }
+            h3 { class: "sub-title", {t!("tags-children")} }
+            if detail.children.is_empty() {
+                p { class: "muted", {t!("tags-children-none")} }
+            } else {
+                div { class: "chips",
+                    for c in detail.children.iter() {
+                        Link { key: "{c.id}", class: category_class(c.category), to: Route::TagPage { name: c.name.clone() }, "{c.name}" }
                     }
                 }
             }
@@ -452,5 +668,59 @@ fn RelationCard(
                 p { class: "muted fine", {t!("tags-admins-only")} }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tag(name: &str, category: TagCategory, section: Option<&str>) -> PostTag {
+        PostTag {
+            name: name.into(),
+            category,
+            section: section.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn groups_follow_the_viewer_order() {
+        let tags = [
+            tag("highres", TagCategory::Meta, None),
+            tag("smile", TagCategory::General, Some("expression")),
+            tag("solo", TagCategory::General, Some("people")),
+            tag("sunflower", TagCategory::General, None),
+            tag("boots", TagCategory::General, Some("clothing")),
+            tag("hat", TagCategory::General, Some("clothing")),
+            tag("miku", TagCategory::Character, None),
+            tag("someone", TagCategory::Artist, Some("people")),
+            tag("ribbon_thing", TagCategory::General, Some("my_stuff")),
+            tag("vocaloid", TagCategory::Copyright, None),
+        ];
+        let groups = group_tags(&tags);
+        let order: Vec<(Group, Vec<&str>)> = groups
+            .iter()
+            .map(|(g, list)| (g.clone(), list.iter().map(|t| t.name.as_str()).collect()))
+            .collect();
+        assert_eq!(
+            order,
+            [
+                (Group::Category(TagCategory::Artist), vec!["someone"]),
+                (Group::Category(TagCategory::Copyright), vec!["vocaloid"]),
+                (Group::Category(TagCategory::Character), vec!["miku"]),
+                (Group::Section("people".into()), vec!["solo"]),
+                (Group::Section("expression".into()), vec!["smile"]),
+                (Group::Section("clothing".into()), vec!["boots", "hat"]),
+                (Group::Section("my_stuff".into()), vec!["ribbon_thing"]),
+                (Group::Other, vec!["sunflower"]),
+                (Group::Category(TagCategory::Meta), vec!["highres"]),
+            ]
+        );
+    }
+
+    #[test]
+    fn own_sections_get_readable_names() {
+        assert_eq!(section_label("hair_accessories"), "Hair accessories");
+        assert_eq!(section_label(""), "");
     }
 }

@@ -10,6 +10,7 @@ use starbooru_core::{
 
 use super::editor::EditorSheet;
 use super::share::{ShareSheet, copy_text};
+use super::tags::TagGroups;
 use super::{ErrorBanner, Spinner};
 use crate::Route;
 use crate::cache;
@@ -412,6 +413,7 @@ pub fn PostView(id: i64, q: String) -> Element {
                                 oninput: move |e| tag_text.set(e.value()),
                             }
                         }
+                        p { class: "muted hint", {t!("post-tags-hint")} }
                         TagSuggester { id, tag_text, rating }
                         RatingPicker { value: rating() , onchange: move |r| rating.set(r) }
                         div { class: "row-end",
@@ -425,11 +427,7 @@ pub fn PostView(id: i64, q: String) -> Element {
                         if p.tags.is_empty() {
                             p { class: "muted", {t!("post-no-tags")} }
                         }
-                        div { class: "chips",
-                            for tag in p.tags.iter() {
-                                Link { key: "{tag}", class: "chip", to: Route::Gallery { q: tag.clone() }, "{tag}" }
-                            }
-                        }
+                        TagGroups { details: p.tag_details.clone(), names: p.tags.clone() }
                     }
                 }
                 div { class: "card",

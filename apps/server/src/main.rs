@@ -65,6 +65,11 @@ async fn run() -> Result<(), StartupError> {
     let db = connect(&config.database_url).await?;
     sqlx::migrate!("./migrations").run(&db).await?;
     info!("database migrations applied");
+    match routes::seed_vocab(&db).await {
+        Ok(true) => info!("starter tag vocabulary added"),
+        Ok(false) => {}
+        Err(e) => warn!("starter tag vocabulary skipped: {e}"),
+    }
 
     let storage = storage::Storage::open(&config.data_dir)
         .await?

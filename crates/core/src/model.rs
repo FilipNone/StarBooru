@@ -292,6 +292,21 @@ pub struct Post {
     /// (`GET /posts/{id}`); `None` in lists and when there is none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ocr_text: Option<String>,
+    /// The tags with their category and section, for grouping them. Only in
+    /// the single-post response; empty in lists.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tag_details: Vec<PostTag>,
+}
+
+/// One of a post's tags, as the viewer groups it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PostTag {
+    pub name: String,
+    pub category: TagCategory,
+    /// The top of the tag's parent chain (like `clothing` for `boots`), or
+    /// the tag itself when it heads a tree. `None` for a tag on its own.
+    #[serde(default)]
+    pub section: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -517,9 +532,14 @@ pub struct DismissDuplicates {
     pub ids: Vec<i64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// `PATCH /tags/{name}`: fields left out stay as they are.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TagUpdate {
-    pub category: TagCategory,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<TagCategory>,
+    /// The parent tag's name (created if needed); `""` removes the parent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
 }
 
 /// A tag with its aliases and implications (`GET /tags/{name}`).
@@ -532,6 +552,12 @@ pub struct TagDetail {
     pub implies: Vec<Tag>,
     /// Tags that add this one.
     pub implied_by: Vec<Tag>,
+    /// The chain of parents, top first (`clothing`, `footwear` for `boots`).
+    #[serde(default)]
+    pub ancestors: Vec<Tag>,
+    /// Tags directly under this one; searching this tag finds them too.
+    #[serde(default)]
+    pub children: Vec<Tag>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

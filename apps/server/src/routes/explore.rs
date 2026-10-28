@@ -11,7 +11,7 @@ use starbooru_core::{
     DEFAULT_EXPLORE_DAYS, Explore, MAX_EXPLORE_DAYS, Post, TagTrend, parse_query,
 };
 
-use super::posts::{PostRow, end_page, push_filters, select_page, tag_ids, to_post};
+use super::posts::{PostRow, end_page, push_filters, select_page, tag_filter, to_post};
 use super::tags::{TagRow, to_tag};
 use crate::auth::AuthUser;
 use crate::error::AppResult;
@@ -46,15 +46,13 @@ pub async fn explore(
     let now = Utc::now();
     let since = now - Duration::days(i64::from(days));
 
-    let (include, wanted) = tag_ids(&state, &query.include).await?;
-    if include.len() < wanted {
+    let Some(filter) = tag_filter(&state, &query).await? else {
         // A required tag does not exist, so nothing matches.
         return Ok(Json(Explore {
             days,
             ..Explore::default()
         }));
-    }
-    let (exclude, _) = tag_ids(&state, &query.exclude).await?;
+    };
     let fetch_posts = |mut qb: QueryBuilder<sqlx::Postgres>| {
         let state = state.clone();
         async move {
@@ -72,7 +70,7 @@ pub async fn explore(
     qb.push(" JOIN (SELECT post_id, sum(value) AS heat FROM post_votes WHERE voted_at >= ")
         .push_bind(since)
         .push(" GROUP BY post_id HAVING sum(value) > 0) h ON h.post_id = p.id");
-    push_filters(&mut qb, &query, include.clone(), exclude.clone());
+    push_filters(&mut qb, &query, &filter);
     qb.push(" ORDER BY h.heat DESC, p.score DESC, p.id DESC LIMIT ")
         .push_bind(TRENDING_LIMIT);
     end_page(&mut qb);
@@ -84,12 +82,12 @@ pub async fn explore(
          (SELECT u.tag_id, count(*) AS recent \
           FROM posts p CROSS JOIN LATERAL unnest(p.tag_ids) AS u(tag_id)",
     );
-    push_filters(&mut qb, &query, include.clone(), exclude.clone());
+    push_filters(&mut qb, &query, &filter);
     qb.push(" AND p.created_at >= ").push_bind(since);
-    if !include.is_empty() {
+    if !filter.include.is_empty() {
         // Every match carries the searched tags; show what goes with them.
         qb.push(" AND NOT (u.tag_id = ANY(")
-            .push_bind(include.clone())
+            .push_bind(filter.include.clone())
             .push("))");
     }
     qb.push(" GROUP BY u.tag_id) c JOIN tags t ON t.id = c.tag_id ORDER BY c.recent DESC, t.name LIMIT ")
@@ -108,7 +106,7 @@ pub async fn explore(
     };
 
     let mut qb = select_page(user.id);
-    push_filters(&mut qb, &query, include.clone(), exclude.clone());
+    push_filters(&mut qb, &query, &filter);
     qb.push(" AND EXTRACT(MONTH FROM p.created_at AT TIME ZONE 'UTC')::int = ")
         .push_bind(i32::try_from(now.month()).unwrap_or(1))
         .push(" AND EXTRACT(DAY FROM p.created_at AT TIME ZONE 'UTC')::int = ")
@@ -128,7 +126,7 @@ pub async fn explore(
                     .push_bind(percent)
                     .push(")");
             }
-            push_filters(&mut qb, &query, include.clone(), exclude.clone());
+            push_filters(&mut qb, &query, &filter);
             qb.push(" ORDER BY random() LIMIT ").push_bind(RANDOM_LIMIT);
             end_page(&mut qb);
             fetch_posts(qb)

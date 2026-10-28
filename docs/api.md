@@ -128,7 +128,7 @@ A `Backup`'s `url` is a signed path relative to the server, valid for an hour. F
 | GET | `/posts?q=&page=&limit=` | | `PostPage {posts, page, limit, has_more}`. `page` starts at 1 (at most 10000); `limit` is at most 200, default 60. |
 | POST | `/posts` | multipart: `file` (required), `tags` (space-separated), `rating` (`g`/`s`/`q`/`e`), `source` | `Post`, or 409 `duplicate` if the same file exists |
 | POST | `/posts/import` | `ImportRequest {url, tags?, rating?, source?}`. `tags` is a list; `source` defaults to `url`. | `Post`, like an upload. 400 for a non-http(s) address, credentials in the URL, a private-network address (unless the server allows them) or import turned off; 413 over the upload limit; 409 `duplicate`; 502 `fetch_failed` when the remote server errors, times out or redirects more than 5 times. |
-| GET | `/posts/{id}` | | `Post` |
+| GET | `/posts/{id}` | | `Post`, with `ocr_text` and `tag_details: [PostTag {name, category, section}]`. `section` is the top of the tag's parent chain (`clothing` for `boots`), the tag itself when it heads a tree, or null for a tag on its own; the viewer groups general tags by it. The answers of `PATCH /posts/{id}`, the vote, restore and OCR rescan carry the same fields; lists leave them out. |
 | GET | `/posts/{id}/neighbors?q=` | | `Neighbors {prev, next}`: the ids just before and after the post in the results of search `q` (same filters and order), or null at either end. Both are null for `order:random` or when `q` matches nothing. |
 | GET | `/posts/{id}/related?limit=` | | `RelatedPosts {posts}`: up to `limit` live posts like this one (default 12, at most 48), most alike first. Shared tags count by rarity, so a tag on a handful of posts outweighs one on half the collection; posts whose look (difference hash) is close count too, even without tags. Candidates come from the post's 8 rarest tags and from look-alikes, so the list is a suggestion, not an exhaustive search. Empty when nothing is alike. |
 | PATCH | `/posts/{id}` | `PostUpdate {tags?, rating?, source?}` | `Post`. `tags` replaces the whole list. |
@@ -162,8 +162,9 @@ Terms are separated by spaces, with at most 40 terms.
 
 | Term | Meaning |
 |---|---|
-| `blue_sky` | must have the tag |
-| `-cloud` | must not have the tag |
+| `blue_sky` | must have the tag, or a tag under it in the tree (`footwear` finds `boots`) |
+| `-cloud` | must not have the tag, nor any tag under it |
+| `artist:name` | the tag `name`; the prefix (`artist:`, `character:`/`char:`, `copyright:`/`copy:`/`series:`, `meta:`, `general:`/`gen:`) is dropped |
 | `rating:g` / `-rating:e` | rating is (not) general, sensitive, questionable or explicit (`g s q e`); repeat to allow several, e.g. `rating:g rating:s` |
 | `type:image` / `type:animation` / `type:video` | media kind |
 | `order:newest` (default), `order:oldest`, `order:score`, `order:size`, `order:pixels`, `order:tags`, `order:updated`, `order:random` | sort (`sort:` works too). Add `_asc` or `_desc` to set the direction, e.g. `order:size_asc` for the smallest files first. `pixels` is width × height; `tags` is the tag count; `updated` is the last edit. |
@@ -197,12 +198,14 @@ Fingerprints for posts uploaded before this feature are computed in the backgrou
 | Method | Path | Body | Returns |
 |---|---|---|---|
 | GET | `/tags?q=&order=&page=&limit=` | | `Tag[]`. `order` is `count` (most used first, the default) or `name`. Without `q`, only tags in use are listed. With `q` it is the autocomplete list: tags whose name or alias starts with `q`. `limit` is 1–100 (default 20). |
-| GET | `/tags/{name}` | | `TagDetail {tag, aliases, implies, implied_by}`. An alias resolves to its tag. 404 if neither exists. |
-| PATCH | `/tags/{name}` | `{category}` | `Tag`. Categories: `general`, `artist`, `character`, `copyright`, `meta`. Any signed-in user. |
-| POST | `/tags/{name}/aliases` | `{alias}` | `TagDetail`. Admin only. If a tag called `alias` exists, it is merged in: its posts, aliases and implications move to `{name}` and it is deleted. 400 if `alias` is the tag itself. |
+| GET | `/tags/{name}` | | `TagDetail {tag, aliases, implies, implied_by, ancestors, children}`. `ancestors` is the parent chain, top first; `children` the tags directly under it. An alias resolves to its tag. 404 if neither exists. |
+| PATCH | `/tags/{name}` | `TagUpdate {category?, parent?}` | `Tag`. Categories: `general`, `artist`, `character`, `copyright`, `meta`. `parent` names the tag to put it under (created if needed); `""` moves it to the top. Missing fields stay as they are, and a missing `{name}` is created. 409 `parent_cycle` if the parent is already under it; 400 for itself. Any signed-in user. |
+| POST | `/tags/{name}/aliases` | `{alias}` | `TagDetail`. Admin only. If a tag called `alias` exists, it is merged in: its posts, aliases, implications and child tags move to `{name}`, which also takes its parent if it has none, and it is deleted. 400 if `alias` is the tag itself. |
 | DELETE | `/tags/{name}/aliases/{alias}` | | `TagDetail`. Admin only. |
 | POST | `/tags/{name}/implications` | `{implies}` | `TagDetail`. Admin only. Missing tags are created. Posts that already have `{name}` get the implied tags (transitively). 409 `implication_cycle` if `implies` already implies `{name}`; 400 if they are the same tag. |
 | DELETE | `/tags/{name}/implications/{implied}` | | `TagDetail`. Admin only. Posts keep the tags they already got. |
+
+Tags form a tree through their parents. Searching a tag finds posts with any tag below it, and the tops of the tree are the sections the viewer groups general tags under. At first start the server seeds a starter tree of Danbooru-style tags (sections `people`, `hair`, `eyes`, `skin`, `body`, `expression`, `pose`, `clothing`, `setting`, `style`, with groups such as `clothing › footwear › boots`); tags that already have a parent keep it. When tagging, a category prefix such as `artist:name` tags `name` and sets its category.
 
 Tags are resolved the same way everywhere: an alias in a post's tags or in a search means its tag, and implied tags are added whenever tags are set on a post. Implied tags are stored on the post, so they show up in its tag list and in searches. Path segments are percent-encoded.
 

@@ -144,6 +144,7 @@ pub(super) fn to_post(state: &AppState, row: PostRow) -> Post {
         thumb_url,
         sample_url,
         ocr_text: None,
+        tag_details: Vec::new(),
     }
 }
 
@@ -162,7 +163,7 @@ pub(super) async fn load(state: &AppState, user_id: i64, id: i64) -> AppResult<P
 
 /// Ids of the tags `names` refer to (aliases resolved), and how many distinct
 /// tags were asked for.
-pub(super) async fn tag_ids(state: &AppState, names: &[String]) -> AppResult<(Vec<i64>, usize)> {
+async fn tag_ids(state: &AppState, names: &[String]) -> AppResult<(Vec<i64>, usize)> {
     let names = super::tags::canonical_names(&state.db, names).await?;
     if names.is_empty() {
         return Ok((Vec::new(), 0));
@@ -172,6 +173,51 @@ pub(super) async fn tag_ids(state: &AppState, names: &[String]) -> AppResult<(Ve
         .fetch_all(&state.db)
         .await?;
     Ok((ids, names.len()))
+}
+
+/// The tags of a search, resolved. A searched tag also matches the tags
+/// below it in the tree, and an excluded one excludes them.
+#[derive(Clone, Debug, Default)]
+pub(super) struct TagFilter {
+    /// The searched tags themselves.
+    pub(super) include: Vec<i64>,
+    /// Searched tags without children: a post needs all of them.
+    all: Vec<i64>,
+    /// A searched parent and its tree: a post needs one of each group.
+    any: Vec<Vec<i64>>,
+    none: Vec<i64>,
+}
+
+/// Resolves a search's tags; `None` when a searched tag doesn't exist, so
+/// nothing can match.
+pub(super) async fn tag_filter(
+    state: &AppState,
+    query: &SearchQuery,
+) -> AppResult<Option<TagFilter>> {
+    let (include, wanted) = tag_ids(state, &query.include).await?;
+    if include.len() < wanted {
+        return Ok(None);
+    }
+    let (exclude, _) = tag_ids(state, &query.exclude).await?;
+    let mut trees = super::tags::descendants(&state.db, &include).await?;
+    let mut filter = TagFilter::default();
+    for id in &include {
+        match trees.remove(id) {
+            Some(tree) if tree.len() > 1 => filter.any.push(tree),
+            _ => filter.all.push(*id),
+        }
+    }
+    filter.include = include;
+    let mut none: Vec<i64> = super::tags::descendants(&state.db, &exclude)
+        .await?
+        .into_values()
+        .flatten()
+        .chain(exclude)
+        .collect();
+    none.sort_unstable();
+    none.dedup();
+    filter.none = none;
+    Ok(Some(filter))
 }
 
 /// Sort expression for a key; the id is always the tie-breaker. These match
@@ -187,24 +233,22 @@ fn sort_column(key: SortKey) -> Option<&'static str> {
     }
 }
 
-/// ` WHERE ...` for a parsed search, given its resolved tag ids.
-pub(super) fn push_filters(
-    qb: &mut QueryBuilder<Postgres>,
-    query: &SearchQuery,
-    include: Vec<i64>,
-    exclude: Vec<i64>,
-) {
+/// ` WHERE ...` for a parsed search, given its resolved tags.
+pub(super) fn push_filters(qb: &mut QueryBuilder<Postgres>, query: &SearchQuery, tags: &TagFilter) {
     qb.push(if query.deleted {
         " WHERE p.deleted_at IS NOT NULL"
     } else {
         " WHERE p.deleted_at IS NULL"
     });
-    if !include.is_empty() {
-        qb.push(" AND p.tag_ids @> ").push_bind(include);
+    if !tags.all.is_empty() {
+        qb.push(" AND p.tag_ids @> ").push_bind(tags.all.clone());
     }
-    if !exclude.is_empty() {
+    for group in &tags.any {
+        qb.push(" AND p.tag_ids && ").push_bind(group.clone());
+    }
+    if !tags.none.is_empty() {
         qb.push(" AND NOT (p.tag_ids && ")
-            .push_bind(exclude)
+            .push_bind(tags.none.clone())
             .push(")");
     }
     if !query.ratings.is_empty() {
@@ -264,14 +308,12 @@ pub async fn search(
         })
     };
 
-    let (include, wanted) = tag_ids(&state, &query.include).await?;
-    if include.len() < wanted {
+    let Some(tags) = tag_filter(&state, &query).await? else {
         return Ok(empty()); // a required tag does not exist
-    }
-    let (exclude, _) = tag_ids(&state, &query.exclude).await?;
+    };
 
     let mut qb = select_page(user.id);
-    push_filters(&mut qb, &query, include, exclude);
+    push_filters(&mut qb, &query, &tags);
     if query.order.key == SortKey::Random {
         qb.push(" ORDER BY random()");
     } else {
@@ -344,11 +386,9 @@ pub async fn neighbors(
     if query.order.key == SortKey::Random {
         return Ok(Json(none));
     }
-    let (include, wanted) = tag_ids(&state, &query.include).await?;
-    if include.len() < wanted {
+    let Some(tags) = tag_filter(&state, &query).await? else {
         return Ok(Json(none));
-    }
-    let (exclude, _) = tag_ids(&state, &query.exclude).await?;
+    };
     let column = step_column(query.order.key, query.order.descending);
 
     let step = |forward: bool| {
@@ -360,7 +400,7 @@ pub async fn neighbors(
             (" < ", " DESC")
         };
         let mut qb = QueryBuilder::<Postgres>::new("SELECT p.id FROM posts p");
-        push_filters(&mut qb, &query, include.clone(), exclude.clone());
+        push_filters(&mut qb, &query, &tags);
         qb.push(" AND p.id <> ").push_bind(id).push(" AND ");
         match column {
             Some(c) => {
@@ -567,9 +607,15 @@ pub async fn get_one(
     user: AuthUser,
     Path(id): Path<i64>,
 ) -> AppResult<Json<Post>> {
-    let mut post = load(&state, user.id, id).await?;
-    post.ocr_text = ocr_text(&state, id).await?;
-    Ok(Json(post))
+    Ok(Json(load_full(&state, user.id, id).await?))
+}
+
+/// The single-post response: the post with its OCR text and tag details.
+pub(super) async fn load_full(state: &AppState, user_id: i64, id: i64) -> AppResult<Post> {
+    let mut post = load(state, user_id, id).await?;
+    post.ocr_text = ocr_text(state, id).await?;
+    post.tag_details = super::tags::post_tags(&state.db, id).await?;
+    Ok(post)
 }
 
 /// The text OCR found in a post's image, if any.
@@ -588,15 +634,14 @@ pub async fn rescan_ocr(
     user: AuthUser,
     Path(id): Path<i64>,
 ) -> AppResult<Json<Post>> {
-    let mut post = load(&state, user.id, id).await?;
+    load(&state, user.id, id).await?; // 404 before 400
     if state.ocr.is_none() {
         return Err(AppError::BadRequest(
             "text in images (OCR) is off on this server".into(),
         ));
     }
     crate::ocr::scan_post(&state, id).await;
-    post.ocr_text = ocr_text(&state, id).await?;
-    Ok(Json(post))
+    Ok(Json(load_full(&state, user.id, id).await?))
 }
 
 fn multipart_error(e: MultipartError) -> AppError {
@@ -1112,7 +1157,7 @@ pub async fn update(
             .await?;
     }
     tx.commit().await?;
-    Ok(Json(load(&state, user.id, id).await?))
+    Ok(Json(load_full(&state, user.id, id).await?))
 }
 
 /// `POST /posts/bulk`: adds and removes tags and sets the rating on many
@@ -1217,7 +1262,7 @@ pub async fn restore(
     Path(id): Path<i64>,
 ) -> AppResult<Json<Post>> {
     set_deleted(&state, &user, id, false).await?;
-    Ok(Json(load(&state, user.id, id).await?))
+    Ok(Json(load_full(&state, user.id, id).await?))
 }
 
 pub(super) async fn set_deleted(
@@ -1301,7 +1346,7 @@ pub async fn vote(
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
-    Ok(Json(load(&state, user.id, id).await?))
+    Ok(Json(load_full(&state, user.id, id).await?))
 }
 
 /// `POST /posts/{id}/purge`: permanently deletes a post that is in the recycle bin.

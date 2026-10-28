@@ -18,6 +18,7 @@ pub mod remote;
 pub mod saved;
 pub mod share;
 pub mod tag;
+pub mod vocab;
 
 pub use admin::{
     AdminUser, Backup, BackupSchedule, Backups, DayCount, PasswordReset, ServerSettings,
@@ -46,6 +47,7 @@ pub use remote::{
 pub use saved::clean_saved_search;
 pub use share::{NewShare, Share, ShareError, SharedPost, SharedView};
 pub use tag::{normalize_tag, parse_tag_list};
+pub use vocab::{SECTIONS, VOCAB, VOCAB_VERSION, split_category};
 
 /// Path prefix of the versioned JSON API.
 pub const API_PREFIX: &str = "/api/v1";

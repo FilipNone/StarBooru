@@ -259,6 +259,11 @@ pub fn parse_query(input: &str) -> Result<SearchQuery, QueryError> {
             }
         }
         let tag = normalize_tag(body)?;
+        // `artist:name` searches the tag `name`
+        let tag = match crate::vocab::split_category(&tag) {
+            (Some(_), name) => name.to_owned(),
+            (None, _) => tag,
+        };
         push_unique(
             if negated {
                 &mut q.exclude
@@ -298,6 +303,13 @@ mod tests {
         );
         assert!(!q.deleted);
         assert!(parse_query("status:deleted").unwrap().deleted);
+    }
+
+    #[test]
+    fn category_prefixes_search_the_bare_tag() {
+        let q = parse_query("artist:Some_One -char:miku re:zero").unwrap();
+        assert_eq!(q.include, vec!["some_one", "re:zero"]);
+        assert_eq!(q.exclude, vec!["miku"]);
     }
 
     #[test]
