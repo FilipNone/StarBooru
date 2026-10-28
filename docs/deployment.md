@@ -88,6 +88,10 @@ Admins can change the name, open registration, the recycle-bin days and the back
 | `STARBOORU_FFMPEG` | `ffmpeg` | ffmpeg for video, AVIF and JPEG XL thumbnails (installed in the image); `off` disables it |
 | `STARBOORU_FFPROBE` | `ffprobe` | ffprobe, for video size and length |
 | `STARBOORU_URL_IMPORT` | `on` | Import from URL: `on` (public addresses only), `private` (also private-network addresses, e.g. a NAS; anyone with an account can then make the server fetch from your LAN), `off` |
+| `STARBOORU_AI_URL` | unset | Base URL of an OpenAI-compatible API for tag suggestions, such as `https://api.openai.com/v1`, `https://openrouter.ai/api/v1`, `https://generativelanguage.googleapis.com/v1beta/openai` or a local `http://ollama:11434/v1`. Unset turns AI off. Thumbnails of posts are sent to it; a local server keeps them on your network. Admins can change it in Administration › Server. |
+| `STARBOORU_AI_MODEL` | unset | A vision model, such as `gpt-4o-mini` or `llava` |
+| `STARBOORU_AI_KEY` | unset | API key, sent as a bearer token. Local servers usually need none. Never shown to clients or logged. |
+| `STARBOORU_AI_AUTOTAG` | `false` | Add suggested tags to every new upload in the background (two at a time) |
 | `STARBOORU_TRUST_PROXY` | `false` (`true` in `docker-compose.yml`) | Take the client address from the last `X-Forwarded-For` entry, for the sign-in limits. Turn it on only behind a reverse proxy that sets the header (Traefik does); otherwise clients could pick their own address. |
 | `STARBOORU_BIND` | `0.0.0.0:8080` | Listen address |
 | `STARBOORU_DATA_DIR` | `/data` in the image | Media storage |

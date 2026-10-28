@@ -5,6 +5,7 @@
 
 pub mod admin;
 pub mod agent;
+pub mod ai;
 pub mod autotag;
 pub mod edit;
 pub mod keys;
@@ -21,6 +22,10 @@ pub use admin::{
     ServerStats, Usage, UserUpdate, clean_settings,
 };
 pub use agent::describe_user_agent;
+pub use ai::{
+    AiSettings, AiSettingsUpdate, AiStatus, TagSuggestion, TagSuggestions, clean_ai_settings,
+    parse_suggestions,
+};
 pub use autotag::{META_TAGS, MediaFacts, meta_tags};
 pub use edit::{Crop, EditError, EditKind, MediaEdit, Trim, edit_kind};
 pub use keys::clean_api_key;

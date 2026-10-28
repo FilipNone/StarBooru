@@ -1,5 +1,6 @@
 //! StarBooru server: JSON API, media storage and web app hosting.
 
+mod ai;
 mod auth;
 mod backup;
 #[cfg(test)]

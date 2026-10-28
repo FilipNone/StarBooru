@@ -1,6 +1,7 @@
 //! HTTP routing. API reference: `docs/api.md`.
 
 mod admin;
+mod ai;
 mod auth;
 mod autotag;
 mod backups;
@@ -36,6 +37,8 @@ use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
 use tracing::{error, warn};
 
+pub(crate) use posts::set_tags as set_post_tags;
+
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 
@@ -70,6 +73,9 @@ pub fn router(state: AppState) -> Router {
             "/admin/settings",
             get(admin::get_settings).put(admin::put_settings),
         )
+        .route("/admin/ai", get(ai::get_settings).put(ai::put_settings))
+        .route("/ai", get(ai::status))
+        .route("/posts/{id}/suggest-tags", post(ai::suggest_tags))
         .route("/admin/users", get(admin::users))
         .route(
             "/admin/users/{id}",

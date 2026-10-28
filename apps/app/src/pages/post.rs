@@ -4,7 +4,8 @@ use dioxus::html::geometry::{ClientPoint, PixelsRect};
 use dioxus::prelude::*;
 use starbooru_client::{Client, ClientError};
 use starbooru_core::{
-    EditKind, MediaKind, Neighbors, Post, PostUpdate, Rating, SAMPLE_SIZE, edit_kind,
+    EditKind, MediaKind, Neighbors, Post, PostUpdate, Rating, SAMPLE_SIZE, TagSuggestion,
+    TagSuggestions, edit_kind,
 };
 
 use super::editor::EditorSheet;
@@ -410,6 +411,7 @@ pub fn PostView(id: i64, q: String) -> Element {
                                 oninput: move |e| tag_text.set(e.value()),
                             }
                         }
+                        TagSuggester { id, tag_text, rating }
                         RatingPicker { value: rating() , onchange: move |r| rating.set(r) }
                         div { class: "row-end",
                             button { class: "btn text", r#type: "button", onclick: move |_| editing.set(false), {t!("cancel")} }
@@ -474,6 +476,119 @@ const SCROLL_TOP: &str = r#"
 const smooth = !matchMedia("(prefers-reduced-motion: reduce)").matches;
 window.scrollTo({ top: 0, behavior: smooth ? "smooth" : "auto" });
 "#;
+
+/// Adds `name` to a whitespace-separated tag text unless it is there.
+fn with_tag(text: &str, name: &str) -> String {
+    if text.split_whitespace().any(|t| t == name) {
+        return text.to_owned();
+    }
+    let mut out = text.trim_end().to_owned();
+    if !out.is_empty() {
+        out.push(' ');
+    }
+    out.push_str(name);
+    out
+}
+
+/// "Suggest tags" in the tag editor, shown only when the server has an AI
+/// provider. Suggestions are chips: tap one to add it, or add them all.
+#[component]
+fn TagSuggester(id: i64, tag_text: Signal<String>, rating: Signal<Rating>) -> Element {
+    let status = use_resource(|| async move {
+        let client = store::client()?;
+        client.ai_status().await.ok()
+    });
+    let mut suggestions = use_signal(|| None::<TagSuggestions>);
+    let mut busy = use_signal(|| false);
+    let mut error = use_signal(|| None::<String>);
+    let enabled = matches!(&*status.read(), Some(Some(s)) if s.enabled);
+    if !enabled {
+        return rsx! {};
+    }
+    let ask = move |_| {
+        let Some(client) = store::client() else {
+            return;
+        };
+        busy.set(true);
+        error.set(None);
+        spawn(async move {
+            match client.suggest_tags(id).await {
+                Ok(s) => suggestions.set(Some(s)),
+                Err(e) => error.set(Some(e.to_string())),
+            }
+            busy.set(false);
+        });
+    };
+    let current = tag_text();
+    let shown: Vec<TagSuggestion> = suggestions
+        .read()
+        .as_ref()
+        .map(|s| {
+            s.tags
+                .iter()
+                .filter(|t| !current.split_whitespace().any(|c| c == t.name))
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default();
+    let suggested_rating = suggestions.read().as_ref().and_then(|s| s.rating);
+    rsx! {
+        div { class: "suggest",
+            button { class: "btn text", r#type: "button", disabled: busy(), onclick: ask,
+                if busy() { {t!("ai-suggesting")} } else { {t!("ai-suggest")} }
+            }
+            if let Some(message) = error() {
+                ErrorBanner { message }
+            }
+            if suggestions.read().is_some() {
+                if shown.is_empty() && suggested_rating.is_none() {
+                    p { class: "muted hint", {t!("ai-no-suggestions")} }
+                }
+                div { class: "chips",
+                    for s in shown.clone() {
+                        button {
+                            key: "{s.name}",
+                            r#type: "button",
+                            class: if s.exists { "chip" } else { "chip suggest-new" },
+                            onclick: move |_| {
+                                let next = with_tag(&tag_text.peek(), &s.name);
+                                tag_text.set(next);
+                            },
+                            "{s.name}"
+                            if !s.exists {
+                                span { class: "suggest-badge", {t!("ai-new-tag")} }
+                            }
+                        }
+                    }
+                }
+                div { class: "row-end",
+                    if let Some(r) = suggested_rating.filter(|r| *r != rating()) {
+                        button {
+                            class: "btn text",
+                            r#type: "button",
+                            onclick: move |_| rating.set(r),
+                            {t!("ai-rating", rating = rating_label(r))}
+                        }
+                    }
+                    if !shown.is_empty() {
+                        button {
+                            class: "btn text",
+                            r#type: "button",
+                            onclick: move |_| {
+                                let mut next = tag_text.peek().clone();
+                                for s in &shown {
+                                    next = with_tag(&next, &s.name);
+                                }
+                                tag_text.set(next);
+                            },
+                            {t!("ai-add-all")}
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 
 /// Posts like this one (shared rare tags, or a look-alike), as small
 /// thumbnails. Nothing shows until there are some.
@@ -932,6 +1047,13 @@ mod tests {
         // Not measured yet, or no size.
         assert!(sample_is_sharp(photo, (0.0, 0.0), 2.0));
         assert!(sample_is_sharp((0, 0), (900.0, 700.0), 1.0));
+    }
+
+    #[test]
+    fn adds_suggested_tags_once() {
+        assert_eq!(with_tag("", "sky"), "sky");
+        assert_eq!(with_tag("cat  ", "sky"), "cat sky");
+        assert_eq!(with_tag("cat sky", "sky"), "cat sky");
     }
 
     #[test]

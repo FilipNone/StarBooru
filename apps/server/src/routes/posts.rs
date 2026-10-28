@@ -648,7 +648,10 @@ pub(super) async fn create_post(
     }
 
     match insert_post(state, user, &info, file_size, rating, source, tags).await {
-        Ok(id) => load(state, user.id, id).await,
+        Ok(id) => {
+            crate::ai::autotag_later(state, id);
+            load(state, user.id, id).await
+        }
         Err(e) => {
             discard_orphan(state, &info).await;
             Err(e)
@@ -966,7 +969,7 @@ fn clean_source(raw: String) -> AppResult<Option<String>> {
 
 /// Replaces a live post's tags (aliases resolved, implications added),
 /// creating missing tags and keeping `tags.post_count` in step.
-pub(super) async fn set_tags(
+pub(crate) async fn set_tags(
     tx: &mut Transaction<'_, Postgres>,
     post_id: i64,
     names: &[String],

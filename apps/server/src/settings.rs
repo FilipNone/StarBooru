@@ -86,3 +86,47 @@ pub async fn save_backup_schedule(state: &AppState, schedule: BackupSchedule) ->
     .await?;
     Ok(())
 }
+
+/// The AI provider in force: admin overrides over `STARBOORU_AI_*`.
+pub async fn ai(state: &AppState) -> AppResult<crate::ai::Provider> {
+    type Row = (Option<String>, Option<String>, Option<String>, Option<bool>);
+    let row: Option<Row> =
+        sqlx::query_as("SELECT ai_url, ai_key, ai_model, ai_autotag FROM server_settings")
+            .fetch_optional(&state.db)
+            .await?;
+    let (url, key, model, autotag) = row.unwrap_or_default();
+    let env = &state.config.ai;
+    Ok(crate::ai::Provider {
+        url: url.unwrap_or_else(|| env.url.clone()),
+        key: key.unwrap_or_else(|| env.key.clone()),
+        model: model.unwrap_or_else(|| env.model.clone()),
+        autotag: autotag.unwrap_or(env.autotag),
+    })
+}
+
+/// Saves the AI provider (already cleaned). `key`: `None` keeps the stored
+/// one. Values equal to the environment's are stored as unset, like [`save`].
+pub async fn save_ai(
+    state: &AppState,
+    url: &str,
+    model: &str,
+    key: Option<&str>,
+    autotag: bool,
+) -> AppResult<()> {
+    let env = &state.config.ai;
+    let current = ai(state).await?;
+    let key = key.map_or(current.key.as_str(), str::trim);
+    sqlx::query(
+        "INSERT INTO server_settings (id, ai_url, ai_model, ai_key, ai_autotag) \
+         VALUES (true, $1, $2, $3, $4) \
+         ON CONFLICT (id) DO UPDATE SET ai_url = $1, ai_model = $2, ai_key = $3, \
+         ai_autotag = $4, updated_at = now()",
+    )
+    .bind((url != env.url).then_some(url))
+    .bind((model != env.model).then_some(model))
+    .bind((key != env.key).then_some(key))
+    .bind((autotag != env.autotag).then_some(autotag))
+    .execute(&state.db)
+    .await?;
+    Ok(())
+}

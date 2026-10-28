@@ -19,6 +19,7 @@ use starbooru_core::{
     SessionInfo, Share, SharedView, SignInMethods, Tag, TagDetail, TagOrder, TagUpdate, Usage,
     User, UserUpdate, VoteRequest,
 };
+use starbooru_core::{AiSettings, AiSettingsUpdate, AiStatus, TagSuggestions};
 use std::time::Duration;
 use thiserror::Error;
 use url::Url;
@@ -382,6 +383,24 @@ impl Client {
 
     pub async fn set_admin_settings(&self, settings: &ServerSettings) -> Result<ServerSettings> {
         self.json(Method::PUT, "/admin/settings", settings).await
+    }
+
+    /// Whether the server offers AI features.
+    pub async fn ai_status(&self) -> Result<AiStatus> {
+        Self::send(self.request(Method::GET, "/ai")?).await
+    }
+
+    /// Tags an AI model suggests for a post. The post is not changed.
+    pub async fn suggest_tags(&self, id: i64) -> Result<TagSuggestions> {
+        Self::send(self.request(Method::POST, &format!("/posts/{id}/suggest-tags"))?).await
+    }
+
+    pub async fn admin_ai(&self) -> Result<AiSettings> {
+        Self::send(self.request(Method::GET, "/admin/ai")?).await
+    }
+
+    pub async fn set_admin_ai(&self, update: &AiSettingsUpdate) -> Result<AiSettings> {
+        self.json(Method::PUT, "/admin/ai", update).await
     }
 
     pub async fn admin_users(&self) -> Result<Vec<AdminUser>> {

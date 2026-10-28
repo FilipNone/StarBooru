@@ -53,6 +53,28 @@ pub struct Config {
     pub backup_keep: u32,
     /// Sign-in through an OpenID Connect provider. `None` turns it off.
     pub oidc: Option<OidcConfig>,
+    /// OpenAI-compatible AI provider (`STARBOORU_AI_*`); admins can override it.
+    pub ai: AiConfig,
+}
+
+/// The AI provider from the environment. An empty URL turns AI features off.
+#[derive(Clone, Default)]
+pub struct AiConfig {
+    pub url: String,
+    pub key: String,
+    pub model: String,
+    pub autotag: bool,
+}
+
+impl std::fmt::Debug for AiConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Never print the key.
+        f.debug_struct("AiConfig")
+            .field("url", &self.url)
+            .field("model", &self.model)
+            .field("autotag", &self.autotag)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -204,6 +226,22 @@ impl Config {
             backup_days,
             backup_keep,
             oidc,
+            ai: AiConfig {
+                url: get("STARBOORU_AI_URL")
+                    .unwrap_or_default()
+                    .trim()
+                    .trim_end_matches('/')
+                    .to_owned(),
+                key: get("STARBOORU_AI_KEY")
+                    .unwrap_or_default()
+                    .trim()
+                    .to_owned(),
+                model: get("STARBOORU_AI_MODEL")
+                    .unwrap_or_default()
+                    .trim()
+                    .to_owned(),
+                autotag: flag(get("STARBOORU_AI_AUTOTAG")),
+            },
         })
     }
 
@@ -230,6 +268,7 @@ impl Config {
             backup_days: 0,
             backup_keep: 7,
             oidc: None,
+            ai: AiConfig::default(),
         }
     }
 }
