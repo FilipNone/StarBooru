@@ -112,11 +112,25 @@ pub async fn chat(provider: &Provider, prompt: &str, jpeg: Option<&[u8]>) -> App
     let mut resp = req.send().await.map_err(|e| request_error(&e))?;
     let status = resp.status();
     if !status.is_success() {
-        return Err(AppError::Upstream(format!(
-            "AI provider answered {}",
-            status.as_u16()
-        )));
+        // The provider's own reason ("rate limited", "no credits") is what
+        // the admin can act on. It can't hold the key: that went out only
+        // in the header.
+        let reason = read_capped(&mut resp)
+            .await
+            .ok()
+            .and_then(|b| error_reason(&b));
+        return Err(AppError::Upstream(match reason {
+            Some(r) => format!("AI provider answered {}: {r}", status.as_u16()),
+            None => format!("AI provider answered {}", status.as_u16()),
+        }));
     }
+    let answer = read_capped(&mut resp).await?;
+    answer_text(&answer)
+        .ok_or_else(|| AppError::Upstream("the AI provider's answer is not understood".into()))
+}
+
+/// Reads a whole answer, at most `MAX_ANSWER_BYTES`.
+async fn read_capped(resp: &mut reqwest::Response) -> AppResult<Vec<u8>> {
     let mut answer = Vec::new();
     while let Some(chunk) = resp.chunk().await.map_err(|e| request_error(&e))? {
         if answer.len().saturating_add(chunk.len()) > MAX_ANSWER_BYTES {
@@ -126,8 +140,7 @@ pub async fn chat(provider: &Provider, prompt: &str, jpeg: Option<&[u8]>) -> App
         }
         answer.extend_from_slice(&chunk);
     }
-    answer_text(&answer)
-        .ok_or_else(|| AppError::Upstream("the AI provider's answer is not understood".into()))
+    Ok(answer)
 }
 
 /// The text of the first choice of a chat completion.
@@ -150,6 +163,39 @@ fn answer_text(body: &[u8]) -> Option<String> {
         ),
         _ => None,
     }
+}
+
+/// Most characters of a provider's error message passed on.
+const MAX_REASON_CHARS: usize = 200;
+
+/// The message of an OpenAI-style error body (`{"error": {"message": …}}`),
+/// on one line and capped. OpenRouter puts the upstream's reason in
+/// `metadata.raw`; it is used when the message alone is generic.
+fn error_reason(body: &[u8]) -> Option<String> {
+    let value: Value = serde_json::from_slice(body).ok()?;
+    let error = value.get("error")?;
+    let message = match error {
+        Value::String(s) => s.as_str(),
+        _ => error.get("message").and_then(Value::as_str)?,
+    };
+    let raw = error
+        .get("metadata")
+        .and_then(|m| m.get("raw"))
+        .and_then(Value::as_str)
+        .filter(|r| !r.trim().is_empty());
+    let text = match raw {
+        Some(raw) if message.len() < 80 => format!("{message} ({raw})"),
+        _ => message.to_owned(),
+    };
+    let text: String = text
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(MAX_REASON_CHARS)
+        .collect();
+    (!text.is_empty()).then_some(text)
 }
 
 /// The post's thumbnail (a JPEG), for showing to a model.
@@ -267,5 +313,28 @@ mod tests {
         assert_eq!(answer_text(parts).as_deref(), Some("ab"));
         assert_eq!(answer_text(b"{}"), None);
         assert_eq!(answer_text(b"not json"), None);
+    }
+
+    #[test]
+    fn reads_error_reasons() {
+        let openai = br#"{"error":{"message":"Incorrect API key\nprovided","type":"invalid"}}"#;
+        assert_eq!(
+            error_reason(openai).as_deref(),
+            Some("Incorrect API key provided")
+        );
+        let openrouter = br#"{"error":{"message":"Provider returned error","code":429,
+            "metadata":{"raw":"qwen is temporarily rate-limited upstream"}}}"#;
+        assert_eq!(
+            error_reason(openrouter).as_deref(),
+            Some("Provider returned error (qwen is temporarily rate-limited upstream)")
+        );
+        assert_eq!(
+            error_reason(br#"{"error":"busy"}"#).as_deref(),
+            Some("busy")
+        );
+        let long = format!(r#"{{"error":{{"message":"{}"}}}}"#, "x".repeat(500));
+        assert_eq!(error_reason(long.as_bytes()).map(|r| r.len()), Some(200));
+        assert_eq!(error_reason(b"<html>bad gateway</html>"), None);
+        assert_eq!(error_reason(br#"{"error":{"message":"  "}}"#), None);
     }
 }
