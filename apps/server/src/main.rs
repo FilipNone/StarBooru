@@ -74,7 +74,8 @@ async fn run() -> Result<(), StartupError> {
     tokio::spawn(async move {
         routes::backfill_media(backfill.clone()).await;
         routes::backfill_hashes(backfill.clone()).await;
-        routes::backfill_samples(backfill).await;
+        routes::backfill_samples(backfill.clone()).await;
+        routes::backfill_meta_tags(backfill).await;
     });
 
     let listener = tokio::net::TcpListener::bind(state.config.bind).await?;

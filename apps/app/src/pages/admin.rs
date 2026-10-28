@@ -481,6 +481,7 @@ fn ServerCard() -> Element {
     let mut name = use_signal(String::new);
     let mut open = use_signal(|| false);
     let mut days = use_signal(String::new);
+    let mut meta_tags = use_signal(|| true);
     let mut loaded = use_signal(|| false);
     let mut busy = use_signal(|| false);
     let mut error = use_signal(|| None::<String>);
@@ -489,6 +490,7 @@ fn ServerCard() -> Element {
         name.set(s.name);
         open.set(s.allow_registration);
         days.set(s.trash_days.to_string());
+        meta_tags.set(s.auto_meta_tags);
         loaded.set(true);
     };
     use_hook(move || {
@@ -516,6 +518,7 @@ fn ServerCard() -> Element {
             name: name.peek().clone(),
             allow_registration: *open.peek(),
             trash_days,
+            auto_meta_tags: *meta_tags.peek(),
         };
         busy.set(true);
         error.set(None);
@@ -576,6 +579,17 @@ fn ServerCard() -> Element {
                             oninput: move |e| days.set(e.value()),
                         }
                         span { class: "muted field-hint", {t!("admin-trash-days-hint")} }
+                    }
+                    div { class: "field",
+                        label { class: "check",
+                            input {
+                                r#type: "checkbox",
+                                checked: meta_tags(),
+                                onchange: move |e| meta_tags.set(e.checked()),
+                            }
+                            span { {t!("admin-auto-tags")} }
+                        }
+                        span { class: "muted field-hint", {t!("admin-auto-tags-hint")} }
                     }
                     div { class: "row-end",
                         if saved() {

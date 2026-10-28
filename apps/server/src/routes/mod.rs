@@ -2,6 +2,7 @@
 
 mod admin;
 mod auth;
+mod autotag;
 mod backups;
 mod duplicates;
 mod edit;
@@ -15,6 +16,7 @@ mod shares;
 mod tags;
 mod trash;
 
+pub use autotag::backfill_meta_tags;
 pub use posts::{backfill_hashes, backfill_media, backfill_samples};
 pub use trash::auto_purge;
 

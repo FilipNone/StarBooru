@@ -25,6 +25,14 @@ pub struct ServerSettings {
     /// Posts in the recycle bin are purged after this many days; 0 keeps
     /// them (`STARBOORU_TRASH_DAYS`).
     pub trash_days: u32,
+    /// New posts get automatic metadata tags such as `highres` and `video`
+    /// (`STARBOORU_AUTO_TAGS`). Missing from older clients, it means on.
+    #[serde(default = "default_true")]
+    pub auto_meta_tags: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -66,6 +74,7 @@ pub fn clean_settings(settings: &ServerSettings) -> Result<ServerSettings, Setti
         name,
         allow_registration: settings.allow_registration,
         trash_days: settings.trash_days,
+        auto_meta_tags: settings.auto_meta_tags,
     })
 }
 
@@ -236,6 +245,7 @@ mod tests {
             name: name.into(),
             allow_registration: true,
             trash_days,
+            auto_meta_tags: true,
         }
     }
 

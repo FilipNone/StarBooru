@@ -19,6 +19,7 @@ fn sections() -> [(String, Vec<(&'static str, String)>); 4] {
                 ("blue_sky night", t!("help-tag-all")),
                 ("-cloud", t!("help-tag-not")),
                 ("blue sky", t!("help-tag-spaces")),
+                ("highres -sound", t!("help-tag-meta")),
             ],
         ),
         (

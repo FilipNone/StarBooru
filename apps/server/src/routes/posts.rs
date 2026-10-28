@@ -696,6 +696,7 @@ async fn insert_post(
     source: Option<String>,
     tags: &[String],
 ) -> AppResult<i64> {
+    let auto_tags = crate::settings::current(state).await?.auto_meta_tags;
     let mut tx = state.db.begin().await?;
     check_quota(&mut *tx, user.id, file_size).await?;
     let id: i64 = sqlx::query_scalar(
@@ -725,6 +726,16 @@ async fn insert_post(
         other => other,
     })?;
     set_tags(&mut tx, id, tags).await?;
+    if auto_tags {
+        let facts = super::autotag::facts(
+            info.kind,
+            info.width,
+            info.height,
+            info.duration_ms,
+            info.has_audio,
+        );
+        super::autotag::tag_post(&mut tx, id, &facts).await?;
+    }
     tx.commit().await?;
     Ok(id)
 }

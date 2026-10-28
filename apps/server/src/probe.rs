@@ -43,6 +43,8 @@ pub struct Probed {
     pub width: Option<i32>,
     pub height: Option<i32>,
     pub duration_ms: Option<i64>,
+    /// Whether the file has an audio stream; `None` when it wasn't probed.
+    pub has_audio: Option<bool>,
     /// A PNG still, at most `FRAME_SIZE` px on its longest side.
     pub frame: Option<Vec<u8>>,
 }
@@ -56,6 +58,7 @@ struct ProbeOutput {
 
 #[derive(Deserialize)]
 struct ProbeStream {
+    codec_type: Option<String>,
     width: Option<i64>,
     height: Option<i64>,
     #[serde(default)]
@@ -92,17 +95,18 @@ impl Tools {
         out
     }
 
-    fn metadata(&self, path: &Path) -> Option<Probed> {
+    /// Dimensions, duration and audio, without a frame. Call from a
+    /// blocking thread.
+    pub fn metadata(&self, path: &Path) -> Option<Probed> {
         let mut cmd = Command::new(&self.ffprobe);
         cmd.args([
             "-v",
             "error",
             "-protocol_whitelist",
             "file",
-            "-select_streams",
-            "v:0",
             "-show_entries",
-            "stream=width,height:stream_side_data=rotation:stream_tags=rotate:format=duration",
+            "stream=codec_type,width,height:stream_side_data=rotation:\
+             stream_tags=rotate:format=duration",
             "-of",
             "json",
         ])
@@ -252,7 +256,16 @@ fn file_arg(path: &Path) -> std::ffi::OsString {
 
 fn parse_probe(json: &[u8]) -> Option<Probed> {
     let parsed: ProbeOutput = serde_json::from_slice(json).ok()?;
-    let stream = parsed.streams.first();
+    // The first video stream; a stream that doesn't say counts as one.
+    let stream = parsed
+        .streams
+        .iter()
+        .find(|s| s.codec_type.as_deref() == Some("video"))
+        .or_else(|| parsed.streams.iter().find(|s| s.codec_type.is_none()));
+    let has_audio = parsed
+        .streams
+        .iter()
+        .any(|s| s.codec_type.as_deref() == Some("audio"));
     let dim = |v: Option<i64>| v.and_then(|v| i32::try_from(v).ok()).filter(|v| *v > 0);
     let mut width = dim(stream.and_then(|s| s.width));
     let mut height = dim(stream.and_then(|s| s.height));
@@ -279,6 +292,7 @@ fn parse_probe(json: &[u8]) -> Option<Probed> {
         width,
         height,
         duration_ms,
+        has_audio: Some(has_audio),
         frame: None,
     })
 }
@@ -397,9 +411,25 @@ pub mod tests {
             br#"{"streams":[{"width":-1,"height":99999999999}],"format":{"duration":"NaN"}}"#,
         )
         .unwrap();
-        assert_eq!(p, Probed::default());
+        assert_eq!(
+            p,
+            Probed {
+                has_audio: Some(false),
+                ..Probed::default()
+            }
+        );
         assert!(parse_probe(b"not json").is_none());
-        assert_eq!(parse_probe(b"{}").unwrap(), Probed::default());
+        assert_eq!(parse_probe(b"{}").unwrap().has_audio, Some(false));
+        // Audio first, then video: the video stream gives the size.
+        let p = parse_probe(
+            br#"{"streams":[{"codec_type":"audio"},
+                            {"codec_type":"video","width":320,"height":240}]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            (p.width, p.height, p.has_audio),
+            (Some(320), Some(240), Some(true))
+        );
     }
 
     #[test]
@@ -431,6 +461,7 @@ pub mod tests {
         let p = tools.probe(&dir.path().join("clip.mp4"), true);
         assert_eq!((p.width, p.height), (Some(160), Some(90)));
         assert_eq!(p.duration_ms, Some(2_000));
+        assert_eq!(p.has_audio, Some(false));
         let frame = image::load_from_memory(&p.frame.unwrap()).unwrap();
         assert_eq!((frame.width(), frame.height()), (160, 90));
         // Garbage is not an error, just nothing.

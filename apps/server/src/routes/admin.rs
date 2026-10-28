@@ -352,7 +352,12 @@ mod tests {
         let r = app.get("/api/v1/admin/settings", &admin).await;
         assert_eq!(
             r.json(),
-            json!({ "name": "StarBooru", "allow_registration": false, "trash_days": 0 })
+            json!({
+                "name": "StarBooru",
+                "allow_registration": false,
+                "trash_days": 0,
+                "auto_meta_tags": false
+            })
         );
         let put = |token: &str, body: serde_json::Value| {
             let (app, token) = (&app, token.to_owned());
@@ -368,7 +373,12 @@ mod tests {
         };
         let r = put(
             &admin,
-            json!({ "name": "  Home   booru ", "allow_registration": true, "trash_days": 30 }),
+            json!({
+                "name": "  Home   booru ",
+                "allow_registration": true,
+                "trash_days": 30,
+                "auto_meta_tags": false
+            }),
         )
         .await;
         assert_eq!(r.status, 200, "{:?}", r.json());

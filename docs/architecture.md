@@ -54,10 +54,10 @@ PostgreSQL schema: `apps/server/migrations/`.
 | `users` | Usernames are case-insensitively unique. Roles are `admin` and `user`; the first account becomes admin. `disabled_at` blocks sign-in and every token; `quota_bytes` caps the bytes of originals the account may upload (checked under a row lock at insert). |
 | `user_identities` | Provider accounts (`issuer`, `subject`, unique together) linked to a user, with the provider's `label` and `last_used_at`. `users.password_hash` is NULL for accounts that only sign in this way. |
 | `oidc_logins` | Provider sign-ins in progress, at most 10 minutes: hashes of the `state`, the client's handle and the result code, the nonce and PKCE verifier, `return_to`, the account linking it (if any), then the provider's issuer, subject and label once the browser is back |
-| `server_settings` | One row of admin overrides (name, open registration, recycle-bin days, backup schedule); NULL follows the environment variable |
+| `server_settings` | One row of admin overrides (name, open registration, recycle-bin days, automatic meta tags, backup schedule); NULL follows the environment variable |
 | `sessions` | The SHA-256 of each bearer token (`sb_<64 hex>`) and its expiry, 90 days. The plain token is never stored. Also an `id` for the settings page, `last_used_at` (refreshed at most every 5 minutes) and `client`, a short description like "Firefox on Linux" (`starbooru_core::agent`); the raw User-Agent is not kept. Native apps send `StarBooru-app/<version> (<os>)`. |
 | `tags` | Normalised name, category (general / artist / character / copyright / meta) and a `post_count` kept in step inside the same transaction as post edits |
-| `posts` | One per file: `sha256` (unique, so duplicates are refused), format, size, dimensions, rating, source, score, `tag_ids BIGINT[]`, `deleted_at` (soft delete), and `phash`/`pcolor`, the duplicate finder's fingerprint of the thumbnail |
+| `posts` | One per file: `sha256` (unique, so duplicates are refused), format, size, dimensions, rating, source, score, `tag_ids BIGINT[]`, `deleted_at` (soft delete), `phash`/`pcolor`, the duplicate finder's fingerprint of the thumbnail, and `meta_tagged_at`, when the automatic meta tags were added (NULL: not yet) |
 | `duplicate_dismissals` | Pairs of posts (`post_a < post_b`) marked as not duplicates |
 | `post_votes` | One vote per user and post, −1 or +1, with `voted_at` (set when the vote is cast or changed). `posts.score` is their sum. |
 | `tag_aliases` | `alias → tag_id`. Aliases are resolved when tagging, searching and in autocomplete. |
@@ -65,6 +65,24 @@ PostgreSQL schema: `apps/server/migrations/`.
 | `api_keys` | Per user: a name, the SHA-256 of the token, its first 12 characters (`prefix`, for telling keys apart), `read_only`, `last_used_at` (null until used) and an optional `expires_at` |
 | `saved_searches` | Per user: a name (unique per user, case-insensitively) and a query string |
 | `tag_implications` | `tag_id → implied_id`. Expanded transitively (a recursive CTE) when tags are set, so implied tags are stored on posts. Cycles are refused. Edits take an advisory lock, since they may rewrite many posts. |
+
+### Automatic meta tags
+
+Like Danbooru, the server tags each post with facts it reads from the file, in the `meta` category. The rules are a pure function, `starbooru_core::autotag::meta_tags`, with Danbooru's names and thresholds:
+
+| Tag | When |
+|---|---|
+| `lowres` | width ≤ 500 and height ≤ 500 |
+| `highres` | width ≥ 1600 or height ≥ 1200 |
+| `absurdres` | width ≥ 3200 or height ≥ 2400 (also `highres`) |
+| `incredibly_absurdres` | width or height ≥ 10000 (also the two above) |
+| `wide_image` / `tall_image` | the long side is ≥ 1024 px and ≥ 4 × the short one |
+| `animated` | GIFs (every GIF counts, the server doesn't count frames) and videos |
+| `video` | videos |
+| `sound` | videos with an audio stream (ffprobe; unknown without it) |
+| `long_video` | videos of 30 s or more |
+
+Every new post goes through `insert_post` (uploads, URL and booru imports, editor copies), which adds them in the same transaction as the post's own tags: a missing tag is made in `meta`, an existing one keeps its category, aliases and implications apply, `post_count` is kept in step. `posts.meta_tagged_at` is set then, so a post is tagged only once and a tag someone removes stays removed. At startup a backfill tags live posts with `meta_tagged_at IS NULL` (older posts, or ones uploaded while this was off), probing videos for audio. `STARBOORU_AUTO_TAGS` or the admin toggle turns both off.
 
 ### Search
 

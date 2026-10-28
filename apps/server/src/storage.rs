@@ -71,6 +71,8 @@ pub struct Ingested {
     pub width: Option<i32>,
     pub height: Option<i32>,
     pub duration_ms: Option<i64>,
+    /// Whether ffprobe found an audio stream; `None` when not probed.
+    pub has_audio: Option<bool>,
     pub has_thumb: bool,
     /// The thumbnail's fingerprint for the duplicate finder.
     pub print: Option<Fingerprint>,
@@ -85,6 +87,7 @@ pub struct Derived {
     pub width: Option<i32>,
     pub height: Option<i32>,
     pub duration_ms: Option<i64>,
+    pub has_audio: Option<bool>,
     pub has_thumb: bool,
     pub print: Option<Fingerprint>,
 }
@@ -247,6 +250,7 @@ impl Storage {
             width,
             height,
             duration_ms: None,
+            has_audio: None,
             has_thumb: thumb.is_some(),
             print: thumb.as_deref().and_then(fingerprint_jpeg),
         };
@@ -262,6 +266,7 @@ impl Storage {
             width: derived.width,
             height: derived.height,
             duration_ms: derived.duration_ms,
+            has_audio: derived.has_audio,
             has_thumb: derived.has_thumb,
             print: derived.print,
             has_sample,
@@ -327,9 +332,21 @@ impl Storage {
             width: probed.width,
             height: probed.height,
             duration_ms: probed.duration_ms,
+            has_audio: probed.has_audio,
             has_thumb: thumb.is_some(),
             print: thumb.as_deref().and_then(fingerprint_jpeg),
         })
+    }
+
+    /// Whether a stored original has an audio stream; `None` without the
+    /// tools or when they can't read it. Call from a blocking thread.
+    pub fn has_audio(&self, sha_hex: &str, ext: &str) -> Option<bool> {
+        let tools = self.tools.as_ref()?;
+        let original = self.path_for_file(
+            Variant::Original,
+            &Self::file_name(Variant::Original, sha_hex, ext),
+        )?;
+        tools.metadata(&original)?.has_audio
     }
 
     /// The fingerprint of a stored thumbnail, or `None` without a readable

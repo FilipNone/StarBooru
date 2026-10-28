@@ -33,6 +33,9 @@ pub struct Config {
     pub trash_days: u32,
     /// Make smaller copies of big images for viewing (`STARBOORU_SAMPLES`, on by default).
     pub samples: bool,
+    /// Tag posts with what the file shows, like `highres` or `video`
+    /// (`STARBOORU_AUTO_TAGS`, on by default).
+    pub auto_meta_tags: bool,
     /// ffmpeg and ffprobe, for video, AVIF and JPEG XL thumbnails. `None` turns them off.
     pub tools: Option<Tools>,
     /// Which addresses URL import may fetch. `None` turns it off.
@@ -193,6 +196,7 @@ impl Config {
             instance_name: get("STARBOORU_NAME").unwrap_or_else(|| "StarBooru".into()),
             trash_days,
             samples: get("STARBOORU_SAMPLES").is_none_or(|v| flag(Some(v))),
+            auto_meta_tags: get("STARBOORU_AUTO_TAGS").is_none_or(|v| flag(Some(v))),
             tools,
             url_import,
             backup_dir,
@@ -216,6 +220,8 @@ impl Config {
             instance_name: "StarBooru".into(),
             trash_days: 0,
             samples: true,
+            // Off, so other tests see only the tags they set.
+            auto_meta_tags: false,
             tools: None,
             url_import: Some(Reach::Public),
             trust_proxy: false,
@@ -359,13 +365,16 @@ mod tests {
         assert!(c.web_dir.is_none());
         assert_eq!(c.trash_days, 0);
         assert!(c.samples);
+        assert!(c.auto_meta_tags);
         let no_samples = cfg(&[
             ("DATABASE_URL", "x"),
             ("STARBOORU_SECRET", SECRET),
             ("STARBOORU_SAMPLES", "off"),
+            ("STARBOORU_AUTO_TAGS", "false"),
         ])
         .unwrap();
         assert!(!no_samples.samples);
+        assert!(!no_samples.auto_meta_tags);
         let tools = c.tools.unwrap();
         assert_eq!(tools.ffmpeg, std::path::Path::new("ffmpeg"));
         assert_eq!(tools.ffprobe, std::path::Path::new("ffprobe"));
