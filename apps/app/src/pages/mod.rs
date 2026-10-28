@@ -11,6 +11,7 @@ mod help;
 mod legal;
 mod login;
 mod post;
+mod select;
 mod settings;
 mod share;
 mod shell;
@@ -28,6 +29,7 @@ pub use gallery::Gallery;
 pub use help::Help;
 pub use legal::{LegalLinks, Privacy, Terms};
 pub use post::PostView;
+pub use select::{Choice, Select};
 pub use settings::Settings;
 pub use share::SharedPage;
 #[cfg_attr(not(feature = "desktop"), allow(unused_imports))]

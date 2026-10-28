@@ -5,7 +5,7 @@ use dioxus::prelude::*;
 use starbooru_core::keys::MAX_API_KEY_NAME_CHARS;
 use starbooru_core::{ApiKey, CreatedApiKey, NewApiKey};
 
-use super::{ErrorBanner, Spinner};
+use super::{Choice, ErrorBanner, Select, Spinner};
 use crate::icons::{Ico, Icon};
 use crate::store;
 use crate::util::{short_date, time_ago};
@@ -207,18 +207,16 @@ pub fn ApiKeysCard() -> Element {
                             }
                         }
                     }
-                    label { class: "field",
-                        span { {t!("keys-lifetime")} }
-                        select {
-                            onchange: move |e| lifetime.set(e.value().parse().ok()),
-                            for days in LIFETIMES {
-                                option {
-                                    key: "{days:?}",
-                                    value: days.map(|d| d.to_string()).unwrap_or_default(),
-                                    selected: lifetime() == days,
-                                    {lifetime_label(days)}
-                                }
-                            }
+                    div { class: "field",
+                        span { aria_hidden: "true", {t!("keys-lifetime")} }
+                        Select {
+                            aria_label: t!("keys-lifetime"),
+                            value: lifetime().map(|d| d.to_string()).unwrap_or_default(),
+                            options: LIFETIMES
+                                .into_iter()
+                                .map(|d| Choice::new(d.map(|d| d.to_string()).unwrap_or_default(), lifetime_label(d)))
+                                .collect::<Vec<_>>(),
+                            onchange: move |v: String| lifetime.set(v.parse().ok()),
                         }
                     }
                 }

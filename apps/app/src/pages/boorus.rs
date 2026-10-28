@@ -8,7 +8,7 @@ use dioxus::prelude::*;
 use starbooru_core::tag::{MAX_TAGS_PER_POST, TagError};
 use starbooru_core::{BooruApi, ImportRequest, RemotePost, RemoteSearch, SITES, parse_tag_list};
 
-use super::{ErrorBanner, Spinner};
+use super::{Choice, ErrorBanner, Select, Spinner};
 use crate::Route;
 use crate::icons::{Ico, Icon};
 use crate::store::{self, PREFS, SavedBooru};
@@ -241,15 +241,18 @@ pub fn Boorus() -> Element {
             p { class: "muted boorus-hint", {t!("boorus-hint")} }
             div { class: "card boorus-site",
                 div { class: "boorus-fields",
-                    label { class: "field",
-                        span { {t!("boorus-site")} }
-                        select {
-                            class: "boorus-select",
-                            onchange: move |e| choose(e.value()),
-                            for site in SITES {
-                                option { key: "{site.base}", value: "{site.base}", selected: picker == site.base, "{site.name}" }
-                            }
-                            option { value: CUSTOM, selected: picker == CUSTOM, {t!("boorus-custom")} }
+                    div { class: "field",
+                        span { aria_hidden: "true", {t!("boorus-site")} }
+                        Select {
+                            class: "boxed",
+                            aria_label: t!("boorus-site"),
+                            value: picker.to_string(),
+                            options: SITES
+                                .iter()
+                                .map(|s| Choice::new(s.base, s.name))
+                                .chain(std::iter::once(Choice::new(CUSTOM, t!("boorus-custom"))))
+                                .collect::<Vec<_>>(),
+                            onchange: move |v: String| choose(v),
                         }
                     }
                     if custom() {
@@ -269,18 +272,18 @@ pub fn Boorus() -> Element {
                                 },
                             }
                         }
-                        label { class: "field",
-                            span { {t!("boorus-api")} }
-                            select {
-                                class: "boorus-select",
-                                onchange: move |e| {
-                                    if let Some(a) = api_of(&e.value()) {
+                        div { class: "field",
+                            span { aria_hidden: "true", {t!("boorus-api")} }
+                            Select {
+                                class: "boxed",
+                                aria_label: t!("boorus-api"),
+                                value: api().as_str().to_string(),
+                                options: BooruApi::ALL.into_iter().map(|a| Choice::new(a.as_str(), a.name())).collect::<Vec<_>>(),
+                                onchange: move |v: String| {
+                                    if let Some(a) = api_of(&v) {
                                         api.set(a);
                                     }
                                 },
-                                for a in BooruApi::ALL {
-                                    option { key: "{a.as_str()}", value: "{a.as_str()}", selected: api() == a, "{a.name()}" }
-                                }
                             }
                         }
                     }

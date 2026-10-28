@@ -8,7 +8,7 @@ use starbooru_core::{
 
 use super::post::OPENING;
 use super::share::ShareSheet;
-use super::{ErrorBanner, Spinner};
+use super::{Choice, ErrorBanner, Select, Spinner};
 use crate::Route;
 use crate::cache;
 use crate::icons::{Ico, Icon};
@@ -376,14 +376,14 @@ fn BulkBar(
                 value: "{tags}",
                 oninput: move |e| tags.set(e.value()),
             }
-            select {
+            Select {
                 class: "bulk-rating",
                 aria_label: t!("rating"),
-                onchange: move |e| rating.set(Rating::parse(&e.value())),
-                option { value: "", selected: rating().is_none(), {t!("bulk-keep-rating")} }
-                for r in Rating::ALL {
-                    option { key: "{r.as_str()}", value: r.as_str(), selected: rating() == Some(r), {rating_label(r)} }
-                }
+                value: rating().map(|r| r.as_str().to_string()).unwrap_or_default(),
+                options: std::iter::once(Choice::new("", t!("bulk-keep-rating")))
+                    .chain(Rating::ALL.into_iter().map(|r| Choice::new(r.as_str(), rating_label(r))))
+                    .collect::<Vec<_>>(),
+                onchange: move |v: String| rating.set(Rating::parse(&v)),
             }
             button {
                 class: "btn",
@@ -518,22 +518,15 @@ fn SavedList(saved: Signal<Option<Vec<SavedSearch>>>) -> Element {
 fn SortMenu(q: String) -> Element {
     let current = parse_query(&q).map(|p| p.order).unwrap_or_default();
     rsx! {
-        label { class: "sort",
-            span { class: "muted", {t!("sort")} }
-            select {
+        div { class: "sort",
+            span { class: "muted", aria_hidden: "true", {t!("sort")} }
+            Select {
                 aria_label: t!("sort-by"),
-                onchange: move |e| {
-                    let order = Order::parse(&e.value());
-                    navigator().push(Route::Gallery { q: with_order(&q, order) });
+                value: SORTS.iter().find(|v| Order::parse(v) == Some(current)).copied().unwrap_or_default().to_string(),
+                options: SORTS.iter().map(|v| Choice::new(*v, sort_label(v))).collect::<Vec<_>>(),
+                onchange: move |v: String| {
+                    navigator().push(Route::Gallery { q: with_order(&q, Order::parse(&v)) });
                 },
-                for value in SORTS {
-                    option {
-                        key: "{value}",
-                        value,
-                        selected: Order::parse(value) == Some(current),
-                        {sort_label(value)}
-                    }
-                }
             }
         }
     }

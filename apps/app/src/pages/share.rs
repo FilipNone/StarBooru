@@ -7,7 +7,7 @@ use starbooru_client::Client;
 use starbooru_core::share::{MAX_SHARE_TITLE_CHARS, share_path};
 use starbooru_core::{MediaKind, NewShare, Share, SharedView};
 
-use super::{ErrorBanner, Spinner};
+use super::{Choice, ErrorBanner, Select, Spinner};
 use crate::icons::{Ico, Icon};
 use crate::power;
 use crate::store;
@@ -163,18 +163,16 @@ pub fn ShareSheet(post_ids: Vec<i64>, onclose: EventHandler<()>) -> Element {
                             }
                         }
                         div { class: "key-options",
-                            label { class: "field",
-                                span { {t!("share-lifetime")} }
-                                select {
-                                    onchange: move |e| lifetime.set(e.value().parse().ok()),
-                                    for days in LIFETIMES {
-                                        option {
-                                            key: "{days:?}",
-                                            value: days.map(|d| d.to_string()).unwrap_or_default(),
-                                            selected: lifetime() == days,
-                                            {lifetime_label(days)}
-                                        }
-                                    }
+                            div { class: "field",
+                                span { aria_hidden: "true", {t!("share-lifetime")} }
+                                Select {
+                                    aria_label: t!("share-lifetime"),
+                                    value: lifetime().map(|d| d.to_string()).unwrap_or_default(),
+                                    options: LIFETIMES
+                                        .into_iter()
+                                        .map(|d| Choice::new(d.map(|d| d.to_string()).unwrap_or_default(), lifetime_label(d)))
+                                        .collect::<Vec<_>>(),
+                                    onchange: move |v: String| lifetime.set(v.parse().ok()),
                                 }
                             }
                         }

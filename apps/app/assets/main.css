@@ -405,18 +405,55 @@ input[type="range"] { width: 100%; accent-color: var(--primary); margin-top: 12p
 .saved-searches .chip { gap: 6px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .saved-searches .chip svg { flex: none; color: var(--primary); }
 .sort { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; font-size: 14px; }
-.sort select, .bulk-rating, .key-options select, .cache-limit select {
-  min-height: 40px; padding: 0 36px 0 14px; border: 1px solid var(--outline); border-radius: 999px;
-  font: inherit; font-weight: 600; color: var(--on-surface); cursor: pointer; appearance: none;
+
+/* drop-down (pages/select.rs): a pill button and a themed list */
+.select { position: relative; display: inline-block; max-width: 100%; }
+.select-button {
+  display: inline-grid; align-items: center; width: 100%; min-height: 40px; padding: 0 38px 0 16px;
+  border: 1px solid var(--outline); border-radius: 999px; text-align: left;
+  font: inherit; font-weight: 600; color: var(--on-surface); cursor: pointer;
   background-color: var(--surface);
   /* chevron drawn from two triangles, so it follows the theme */
   background-image: linear-gradient(45deg, transparent 50%, var(--on-surface-2) 50%),
     linear-gradient(135deg, var(--on-surface-2) 50%, transparent 50%);
-  background-position: right 18px center, right 13px center;
+  background-position: right 19px center, right 14px center;
   background-size: 5px 5px, 5px 5px;
   background-repeat: no-repeat;
+  transition: background-color var(--fast) var(--ease), border-color var(--fast) var(--ease);
 }
-.sort select:focus-visible, .key-options select:focus-visible, .cache-limit select:focus-visible { outline: 3px solid var(--primary); outline-offset: 2px; }
+.select-button:hover { background-color: var(--surface-2); }
+.select-button[aria-expanded="true"] { border-color: var(--primary); background-color: var(--surface-2); }
+.select-button:focus-visible { outline: 3px solid var(--primary); outline-offset: 2px; }
+/* the button is as wide as its longest option, like a native select */
+.select-sizer, .select-value { grid-area: 1 / 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.select-sizer { display: grid; visibility: hidden; height: 0; }
+.select-sizer > span { grid-area: 1 / 1; }
+.select-backdrop { position: fixed; inset: 0; z-index: 30; cursor: default; }
+/* placed by script (pages/select.rs); hidden until then */
+.select-list {
+  position: fixed; left: 0; top: 0; z-index: 31;
+  max-height: 440px; overflow-y: auto; overscroll-behavior: contain;
+  margin: 0; padding: 6px; list-style: none; border-radius: var(--radius-m);
+  background: var(--surface); color: var(--on-surface);
+  border: 1px solid oklch(from var(--outline) l c h / 0.4); box-shadow: var(--shadow-2);
+  animation: drop-in var(--med) var(--ease); transform-origin: top;
+}
+.select-list:not([data-placed]) { visibility: hidden; }
+.select-list[data-placed="up"] { transform-origin: bottom; animation-name: fade-up; }
+.select-list li {
+  position: relative; padding: 10px 40px 10px 14px; border-radius: 10px;
+  white-space: nowrap; cursor: pointer;
+}
+.select-list li.active { background: var(--surface-2); }
+.select-list li[aria-selected="true"] { color: var(--on-primary-container); background: var(--primary-container); font-weight: 600; }
+/* check mark on the chosen option */
+.select-list li[aria-selected="true"]::after {
+  content: ""; position: absolute; right: 16px; top: 50%; width: 5px; height: 10px; margin-top: -7px;
+  border: solid currentColor; border-width: 0 2px 2px 0; transform: rotate(45deg);
+}
+.select.boxed { display: block; }
+.select.boxed .select-button { min-height: 48px; border-radius: var(--radius-s); font-weight: 400; }
+.select.boxed .select-list li { white-space: normal; }
 .gallery .page-head .select-toggle { margin-left: -4px; }
 
 /* selection mode */
@@ -451,13 +488,13 @@ button.thumb { width: 100%; padding: 0; border: 0; font: inherit; color: inherit
   background: var(--surface); color: var(--on-surface); font: inherit; font-size: 14px;
 }
 .bulk-tags:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px oklch(from var(--primary) l c h / 0.25); }
-.bulk-rating:focus-visible { outline: 3px solid var(--primary); outline-offset: 2px; }
 .bulk-error { flex-basis: 100%; margin: 0; padding: 0 8px; color: var(--danger); font-size: 14px; }
 @media (max-width: 760px) {
   .bulk-bar { bottom: calc(88px + env(safe-area-inset-bottom)); width: calc(100% - 16px); padding: 8px 8px 8px 14px; }
   .snackbar-slot { bottom: calc(96px + env(safe-area-inset-bottom)); }
   .bulk-tags { flex-basis: 100%; order: 1; }
   .bulk-rating { order: 2; flex: 3 1 0; min-width: 0; }
+  .bulk-rating .select-sizer { display: none; }
   .bulk-bar .btn { order: 3; flex: 1 1 auto; padding: 0 12px; }
   .bulk-bar .btn.tonal { flex: none; width: 48px; padding: 0; }
   .bulk-bar .btn[type="submit"] { flex: 2 1 0; }
@@ -1049,16 +1086,6 @@ pre.command {
 
 .boorus-hint { margin: -12px 0 16px; max-width: 72ch; }
 .boorus-fields { display: grid; gap: 0 16px; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); }
-.boorus-select {
-  width: 100%; min-height: 48px; padding: 0 36px 0 14px; border: 1px solid var(--outline); border-radius: var(--radius-s);
-  font: inherit; color: var(--on-surface); cursor: pointer; appearance: none; background-color: var(--surface);
-  background-image: linear-gradient(45deg, transparent 50%, var(--on-surface-2) 50%),
-    linear-gradient(135deg, var(--on-surface-2) 50%, transparent 50%);
-  background-position: right 18px center, right 13px center;
-  background-size: 5px 5px, 5px 5px;
-  background-repeat: no-repeat;
-}
-.boorus-select:focus-visible { outline: 3px solid var(--primary); outline-offset: 2px; }
 .boorus-account summary { cursor: pointer; font-weight: 600; padding: 4px 0; color: var(--on-surface-2); }
 .boorus-account[open] summary { margin-bottom: 4px; }
 .boorus-account .hint { margin: 0 0 12px; font-size: 14px; }

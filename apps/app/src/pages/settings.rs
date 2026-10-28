@@ -4,7 +4,7 @@ use starbooru_core::{Identity, Role, SessionInfo, SignInMethods, Usage};
 
 use super::api_keys::ApiKeysCard;
 use super::share::SharesCard;
-use super::{ErrorBanner, Spinner};
+use super::{Choice, ErrorBanner, Select, Spinner};
 use crate::Route;
 use crate::cache;
 use crate::i18n::Lang;
@@ -714,17 +714,17 @@ fn CacheCard() -> Element {
         section { class: "card",
             h2 { class: "card-title", {t!("cache-title")} }
             p { class: "muted hint", {t!("cache-hint")} }
-            label { class: "field cache-limit",
-                span { {t!("cache-limit")} }
-                select {
-                    onchange: move |e| {
-                        if let Ok(mb) = e.value().parse() {
+            div { class: "field cache-limit",
+                span { aria_hidden: "true", {t!("cache-limit")} }
+                Select {
+                    aria_label: t!("cache-limit"),
+                    value: limit.to_string(),
+                    options: cache::LIMITS_MB.into_iter().map(|mb| Choice::new(mb.to_string(), label(mb))).collect::<Vec<_>>(),
+                    onchange: move |v: String| {
+                        if let Ok(mb) = v.parse() {
                             PREFS.write().cache_mb = mb;
                         }
                     },
-                    for mb in cache::LIMITS_MB {
-                        option { key: "{mb}", value: "{mb}", selected: limit == mb, {label(mb)} }
-                    }
                 }
             }
             div { class: "row-end",
