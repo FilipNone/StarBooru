@@ -76,6 +76,7 @@ pub fn router(state: AppState) -> Router {
         .route("/admin/ai", get(ai::get_settings).put(ai::put_settings))
         .route("/ai", get(ai::status))
         .route("/posts/{id}/suggest-tags", post(ai::suggest_tags))
+        .route("/posts/{id}/translate", post(ai::translate))
         .route("/admin/users", get(admin::users))
         .route(
             "/admin/users/{id}",

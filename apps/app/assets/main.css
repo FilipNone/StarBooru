@@ -623,7 +623,8 @@ button.thumb { width: 100%; padding: 0; border: 0; font: inherit; color: inherit
 .ocr-head .card-title { margin: 0; }
 .ocr-text { margin: 0; font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--on-surface); }
 .ocr-text.folded { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 6; line-clamp: 6; overflow: hidden; }
-.ocr .btn.text { margin-top: 8px; }
+.ocr-note { margin: 6px 0 0; }
+.ocr-foot { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
 .edit .field:last-of-type { margin-bottom: 20px; }
 .related-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 6px; }
 .related-grid .thumb, .related-grid .thumb:hover { border-radius: var(--radius-s); }

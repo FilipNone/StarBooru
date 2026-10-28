@@ -23,8 +23,9 @@ pub use admin::{
 };
 pub use agent::describe_user_agent;
 pub use ai::{
-    AiSettings, AiSettingsUpdate, AiStatus, TagSuggestion, TagSuggestions, clean_ai_settings,
-    parse_suggestions,
+    AiSettings, AiSettingsUpdate, AiStatus, TagSuggestion, TagSuggestions, TranslateRequest,
+    Translation, clean_ai_settings, clean_language, clean_translation, parse_suggestions,
+    translate_prompt,
 };
 pub use autotag::{META_TAGS, MediaFacts, meta_tags};
 pub use edit::{Crop, EditError, EditKind, MediaEdit, Trim, edit_kind};

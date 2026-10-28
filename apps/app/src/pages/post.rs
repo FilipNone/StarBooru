@@ -14,6 +14,7 @@ use super::{ErrorBanner, Spinner};
 use crate::Route;
 use crate::cache;
 use crate::download::DownloadLink;
+use crate::i18n::LANG;
 use crate::icons::{Ico, Icon};
 use crate::power;
 use crate::store;
@@ -454,7 +455,7 @@ pub fn PostView(id: i64, q: String) -> Element {
                     }
                 }
                 if let Some(text) = p.ocr_text.clone().filter(|t| !t.trim().is_empty()) {
-                    OcrText { key: "{p.id}", text }
+                    OcrText { key: "{p.id}", id: p.id, text }
                 }
                 Related {
                     id: p.id,
@@ -475,15 +476,56 @@ pub fn PostView(id: i64, q: String) -> Element {
 const OCR_FOLD_CHARS: usize = 280;
 const OCR_FOLD_LINES: usize = 6;
 
-/// "Text in image": what OCR read in the picture, with a copy button.
-/// Long text starts folded.
+/// Whether the server has an AI provider, for showing AI buttons.
+fn use_ai_enabled() -> bool {
+    let status = use_resource(|| async move {
+        let client = store::client()?;
+        client.ai_status().await.ok()
+    });
+    matches!(&*status.read(), Some(Some(s)) if s.enabled)
+}
+
+/// "Text in image": what OCR read in the picture, with a copy button and,
+/// when the server has an AI provider, a translation into the app's
+/// language. Long text starts folded.
 #[component]
-fn OcrText(text: String) -> Element {
+fn OcrText(id: i64, text: String) -> Element {
     let copied = use_signal(|| false);
-    let long = text.chars().count() > OCR_FOLD_CHARS || text.lines().count() > OCR_FOLD_LINES;
+    let ai = use_ai_enabled();
+    let mut translation = use_signal(|| None::<String>);
+    let mut translated = use_signal(|| false);
+    let mut busy = use_signal(|| false);
+    let mut error = use_signal(|| None::<String>);
+    let shown = match (translated(), translation()) {
+        (true, Some(t)) => t,
+        _ => text.clone(),
+    };
+    let long = shown.chars().count() > OCR_FOLD_CHARS || shown.lines().count() > OCR_FOLD_LINES;
     let mut open = use_signal(|| false);
     let folded = long && !open();
-    let copy = text.clone();
+    let copy = shown.clone();
+    let translate = move |_| {
+        if translation.peek().is_some() {
+            translated.toggle();
+            return;
+        }
+        let Some(client) = store::client() else {
+            return;
+        };
+        let to = LANG.peek().code();
+        busy.set(true);
+        error.set(None);
+        spawn(async move {
+            match client.translate_text(id, to).await {
+                Ok(t) => {
+                    translation.set(Some(t.text));
+                    translated.set(true);
+                }
+                Err(e) => error.set(Some(e.to_string())),
+            }
+            busy.set(false);
+        });
+    };
     rsx! {
         div { class: "card ocr",
             div { class: "ocr-head",
@@ -496,14 +538,44 @@ fn OcrText(text: String) -> Element {
                     if copied() { {t!("post-ocr-copied")} } else { {t!("post-ocr-copy")} }
                 }
             }
-            p { class: if folded { "ocr-text folded" } else { "ocr-text" }, "{text}" }
-            if long {
-                button {
-                    class: "btn text",
-                    r#type: "button",
-                    aria_expanded: "{open()}",
-                    onclick: move |_| open.toggle(),
-                    if open() { {t!("post-ocr-less")} } else { {t!("post-ocr-more")} }
+            if let Some(message) = error() {
+                ErrorBanner { message }
+            }
+            p {
+                class: if folded { "ocr-text folded" } else { "ocr-text" },
+                lang: if translated() { LANG.read().code() },
+                "{shown}"
+            }
+            if translated() {
+                p { class: "muted hint ocr-note", {t!("post-ocr-machine")} }
+            }
+            if long || ai {
+                div { class: "ocr-foot",
+                    if long {
+                        button {
+                            class: "btn text",
+                            r#type: "button",
+                            aria_expanded: "{open()}",
+                            onclick: move |_| open.toggle(),
+                            if open() { {t!("post-ocr-less")} } else { {t!("post-ocr-more")} }
+                        }
+                    }
+                    if ai {
+                        button {
+                            class: "btn text",
+                            r#type: "button",
+                            disabled: busy(),
+                            aria_pressed: "{translated()}",
+                            onclick: translate,
+                            if busy() {
+                                {t!("post-ocr-translating")}
+                            } else if translated() {
+                                {t!("post-ocr-original")}
+                            } else {
+                                {t!("post-ocr-translate")}
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -536,14 +608,10 @@ fn with_tag(text: &str, name: &str) -> String {
 /// provider. Suggestions are chips: tap one to add it, or add them all.
 #[component]
 fn TagSuggester(id: i64, tag_text: Signal<String>, rating: Signal<Rating>) -> Element {
-    let status = use_resource(|| async move {
-        let client = store::client()?;
-        client.ai_status().await.ok()
-    });
+    let enabled = use_ai_enabled();
     let mut suggestions = use_signal(|| None::<TagSuggestions>);
     let mut busy = use_signal(|| false);
     let mut error = use_signal(|| None::<String>);
-    let enabled = matches!(&*status.read(), Some(Some(s)) if s.enabled);
     if !enabled {
         return rsx! {};
     }

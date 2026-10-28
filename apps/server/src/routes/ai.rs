@@ -1,10 +1,12 @@
-//! AI features: status, tag suggestions and the admin's provider settings.
+//! AI features: status, tag suggestions, translation of the text in an image
+//! and the admin's provider settings.
 
 use axum::Json;
 use axum::extract::{Path, State};
 use starbooru_core::{
     AiSettings, AiSettingsUpdate, AiStatus, TagCategory, TagSuggestion, TagSuggestions,
-    clean_ai_settings,
+    TranslateRequest, Translation, clean_ai_settings, clean_language, clean_translation,
+    translate_prompt,
 };
 
 use super::admin::require_admin_session;
@@ -74,6 +76,40 @@ pub async fn suggest_tags(
     }))
 }
 
+/// `POST /posts/{id}/translate`: translates the text OCR read in the post's
+/// image. Only the text is sent, not the image. Nothing is stored.
+pub async fn translate(
+    State(state): State<AppState>,
+    _user: AuthUser,
+    Path(id): Path<i64>,
+    Json(req): Json<TranslateRequest>,
+) -> AppResult<Json<Translation>> {
+    let to = clean_language(&req.to).map_err(AppError::BadRequest)?;
+    let provider = settings::ai(&state).await?;
+    if !provider.enabled() {
+        return Err(AppError::BadRequest(
+            "AI features are turned off on this server".into(),
+        ));
+    }
+    let text: Option<Option<String>> =
+        sqlx::query_scalar("SELECT ocr_text FROM posts WHERE id = $1 AND deleted_at IS NULL")
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await?;
+    let text = text
+        .ok_or(AppError::NotFound)?
+        .filter(|t| !t.trim().is_empty())
+        .ok_or_else(|| AppError::BadRequest("this post has no text to translate".into()))?;
+    let answer = ai::chat(&provider, &translate_prompt(&text, &to), None).await?;
+    let text = clean_translation(&answer);
+    if text.is_empty() {
+        return Err(AppError::Upstream(
+            "the AI provider gave an empty translation".into(),
+        ));
+    }
+    Ok(Json(Translation { text }))
+}
+
 fn to_settings(p: &ai::Provider) -> AiSettings {
     AiSettings {
         url: p.url.clone(),
@@ -135,6 +171,28 @@ mod tests {
                     (StatusCode::OK, reply.to_string())
                 },
             ),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        format!("http://{addr}/v1")
+    }
+
+    /// A fake provider for text-only requests: answers `answer` when the
+    /// message is a plain string with the fenced text in it.
+    async fn text_provider(answer: &'static str) -> String {
+        let app = Router::new().route(
+            "/v1/chat/completions",
+            post(move |body: axum::Json<Value>| async move {
+                let content = body["messages"][0]["content"].as_str().unwrap_or_default();
+                if !content.contains("<text>\nTOW AWAY ZONE\n</text>")
+                    || !content.contains("\"it\"")
+                {
+                    return (StatusCode::BAD_REQUEST, "{}".to_owned());
+                }
+                let reply = json!({ "choices": [{ "message": { "content": answer } }] });
+                (StatusCode::OK, reply.to_string())
+            }),
         );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -319,6 +377,75 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
         assert!(tagged);
+        app.finish().await;
+    }
+
+    #[tokio::test]
+    async fn translates_the_text_in_an_image() {
+        let url = text_provider("```\nZONA RIMOZIONE FORZATA\n```").await;
+        let Some(app) = testing::app_with(|c| {
+            c.ai.url = url;
+            c.ai.model = "llama".into();
+        })
+        .await
+        else {
+            return;
+        };
+        let admin = app.register("admin").await;
+        let id = app.upload_png(&admin, 6, "").await;
+        let other = app.upload_png(&admin, 7, "").await;
+        sqlx::query("UPDATE posts SET ocr_text = 'TOW AWAY ZONE', ocr_at = now() WHERE id = $1")
+            .bind(id)
+            .execute(app.db())
+            .await
+            .unwrap();
+        let translate = |post: i64, to: &str| {
+            let body = json!({ "to": to });
+            let app = &app;
+            let admin = &admin;
+            async move {
+                app.call(
+                    Method::POST,
+                    &format!("/api/v1/posts/{post}/translate"),
+                    Some(admin),
+                    Some(body),
+                )
+                .await
+            }
+        };
+
+        let r = translate(id, "it").await;
+        assert_eq!(r.status, StatusCode::OK, "{:?}", r.json());
+        assert_eq!(r.json(), json!({ "text": "ZONA RIMOZIONE FORZATA" }));
+
+        // A bad language, a post without text, a missing post.
+        assert_eq!(
+            translate(id, "italian!").await.status,
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(translate(other, "it").await.status, StatusCode::BAD_REQUEST);
+        assert_eq!(translate(999_999, "it").await.status, StatusCode::NOT_FOUND);
+        // The provider refusing the request is a clean 502.
+        assert_eq!(translate(id, "en").await.status, StatusCode::BAD_GATEWAY);
+        app.finish().await;
+    }
+
+    #[tokio::test]
+    async fn translation_needs_a_provider() {
+        let Some(app) = testing::app().await else {
+            return;
+        };
+        let admin = app.register("admin").await;
+        let id = app.upload_png(&admin, 8, "").await;
+        let r = app
+            .call(
+                Method::POST,
+                &format!("/api/v1/posts/{id}/translate"),
+                Some(&admin),
+                Some(json!({ "to": "en" })),
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::BAD_REQUEST);
         app.finish().await;
     }
 }

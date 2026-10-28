@@ -19,7 +19,9 @@ use starbooru_core::{
     SessionInfo, Share, SharedView, SignInMethods, Tag, TagDetail, TagOrder, TagUpdate, Usage,
     User, UserUpdate, VoteRequest,
 };
-use starbooru_core::{AiSettings, AiSettingsUpdate, AiStatus, TagSuggestions};
+use starbooru_core::{
+    AiSettings, AiSettingsUpdate, AiStatus, TagSuggestions, TranslateRequest, Translation,
+};
 use std::time::Duration;
 use thiserror::Error;
 use url::Url;
@@ -393,6 +395,14 @@ impl Client {
     /// Tags an AI model suggests for a post. The post is not changed.
     pub async fn suggest_tags(&self, id: i64) -> Result<TagSuggestions> {
         Self::send(self.request(Method::POST, &format!("/posts/{id}/suggest-tags"))?).await
+    }
+
+    /// Translates the text in a post's image (OCR) into the language with
+    /// BCP 47 code `to`, through the server's AI provider.
+    pub async fn translate_text(&self, id: i64, to: &str) -> Result<Translation> {
+        let req = TranslateRequest { to: to.to_owned() };
+        self.json(Method::POST, &format!("/posts/{id}/translate"), &req)
+            .await
     }
 
     pub async fn admin_ai(&self) -> Result<AiSettings> {
