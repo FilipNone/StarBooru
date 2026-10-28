@@ -488,10 +488,27 @@ fn icc_profile(bytes: &[u8]) -> Option<Vec<u8>> {
 /// Fits the image in `THUMB_SIZE`² (never enlarging it), flattens
 /// transparency onto white, JPEG.
 fn make_thumbnail(img: &DynamicImage) -> AppResult<Vec<u8>> {
-    let small = if img.width() <= THUMB_SIZE && img.height() <= THUMB_SIZE {
+    fit_jpeg(img, THUMB_SIZE, FilterKind::Fast)
+}
+
+/// How [`fit_jpeg`] scales down.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FilterKind {
+    /// Quick, for thumbnails.
+    Fast,
+    /// Sharper, for images a model has to read text in.
+    Sharp,
+}
+
+/// Fits the image in `size`² (never enlarging it), flattens transparency
+/// onto white, JPEG.
+pub fn fit_jpeg(img: &DynamicImage, size: u32, filter: FilterKind) -> AppResult<Vec<u8>> {
+    let small = if img.width() <= size && img.height() <= size {
         img.to_rgba8()
+    } else if filter == FilterKind::Sharp {
+        img.resize(size, size, FilterType::CatmullRom).to_rgba8()
     } else {
-        img.thumbnail(THUMB_SIZE, THUMB_SIZE).to_rgba8()
+        img.thumbnail(size, size).to_rgba8()
     };
     let rgb = RgbImage::from_fn(small.width(), small.height(), |x, y| {
         let [r, g, b, a] = small.get_pixel(x, y).0;

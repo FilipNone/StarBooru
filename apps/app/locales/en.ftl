@@ -315,7 +315,7 @@ privacy-9 = What stays on your device
 privacy-10 = The app remembers the server address, your sign-in token and your preferences, such as the theme. Signing out removes the token.
 privacy-11 = What StarBooru does not do
 privacy-12 = No analytics, advertising or tracking, and no third-party services beyond an identity provider the operator chooses to set up.
-privacy-13 = The server only contacts other sites when you import from a URL, and the operator’s identity provider when you sign in through it. Imports carry a generic user agent and none of your details. If an administrator sets up an AI provider, thumbnails of posts are sent to it to suggest tags, and the text read in an image when you translate it; a provider on the operator’s own network keeps them there.
+privacy-13 = The server only contacts other sites when you import from a URL, and the operator’s identity provider when you sign in through it. Imports carry a generic user agent and none of your details. If an administrator sets up an AI provider, thumbnails of posts are sent to it to suggest tags, the text read in an image when you translate it, and the image itself when its comic or manga panels are translated; a provider on the operator’s own network keeps them there.
 privacy-14 = File contents, passwords and tokens are never written to the server's logs.
 privacy-15 = Who can see your posts
 privacy-16 = Everyone with an account on this server can see the posts on it. Media links handed to the app are signed and expire, so a copied link stops working within 12 hours. If you make a share link, anyone who has it can see the posts in it, without their tags, until it expires or you remove it.
@@ -627,7 +627,9 @@ admin-ai-lead = Tag suggestions and translation of the text in images. Each can 
 admin-ai-tagging = Tag suggestions
 admin-ai-tagging-hint = Reads a thumbnail and suggests tags and a rating.
 admin-ai-translation = Translation
-admin-ai-translation-hint = Translates the text found in images.
+admin-ai-translation-hint = Translates the text found in images: as text under it, or drawn over comic and manga panels.
+admin-ai-auto-translate = Translate new images automatically into
+admin-ai-auto-translate-hint = A language code such as en, it or pt-BR. When OCR finds text in a new upload, its translation is drawn over the image. Empty: only when someone asks. Each image is sent to the translation AI.
 admin-ai-route-off = Off
 admin-ai-route-hosted = Hosted
 admin-ai-route-local = Local
@@ -831,6 +833,15 @@ post-ocr-translate = Translate
 post-ocr-translating = Translating…
 post-ocr-original = Show original
 post-ocr-machine = Translated by AI; it may contain mistakes.
+
+## Translated text over the image (comics and manga)
+
+post-panels-make = Translate the image
+post-panels-make-title = Translate the text in the image, over the picture. The image is sent to the server's translation AI.
+post-panels-making = Translating the image…
+post-panels-show = Show the translation
+post-panels-hide = Hide the translation
+post-panels-none = No text found to translate.
 settings-originals = Always open originals in the viewer
 settings-originals-hint = Big images otherwise open as a smaller copy, which loads faster and uses less data. The original still opens when you zoom in, or when the screen has more pixels than the copy.
 

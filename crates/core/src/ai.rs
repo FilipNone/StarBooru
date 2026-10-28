@@ -98,6 +98,10 @@ pub struct AiSettings {
     pub tagging: AiRoute,
     /// Where translations run (`STARBOORU_AI_TRANSLATION`).
     pub translation: AiRoute,
+    /// Translate the text in new images into this language (BCP 47) when
+    /// OCR finds some (`STARBOORU_AI_TRANSLATE_TO`). Empty is off.
+    #[serde(default)]
+    pub auto_translate: String,
 }
 
 /// `PUT /admin/ai`.
@@ -113,6 +117,8 @@ pub struct AiSettingsUpdate {
     pub local: LocalAiSettings,
     pub tagging: AiRoute,
     pub translation: AiRoute,
+    #[serde(default)]
+    pub auto_translate: String,
 }
 
 /// Checks an admin's AI settings. Returns them trimmed: URLs without a
@@ -157,6 +163,13 @@ pub fn clean_ai_settings(update: &AiSettingsUpdate) -> Result<AiSettingsUpdate, 
     if update.local.enabled && local_url.is_empty() {
         return Err("enter the address of the local AI runtime".into());
     }
+    let auto_translate = match update.auto_translate.trim() {
+        "" => String::new(),
+        lang => clean_language(lang)?,
+    };
+    if !auto_translate.is_empty() && update.translation == AiRoute::Off {
+        return Err("turn translation on to translate new images".into());
+    }
     for route in [update.tagging, update.translation] {
         if route == AiRoute::Hosted && url.is_empty() {
             return Err("set up the hosted provider first, or pick local".into());
@@ -177,6 +190,7 @@ pub fn clean_ai_settings(update: &AiSettingsUpdate) -> Result<AiSettingsUpdate, 
         },
         tagging: update.tagging,
         translation: update.translation,
+        auto_translate,
     })
 }
 
@@ -496,6 +510,28 @@ mod tests {
         u.tagging = AiRoute::Off;
         u.translation = AiRoute::Off;
         assert!(clean_ai_settings(&u).is_ok());
+    }
+
+    #[test]
+    fn checks_auto_translate() {
+        let mut u = AiSettingsUpdate {
+            local: LocalAiSettings {
+                enabled: true,
+                url: "http://ollama:11434".into(),
+                model: String::new(),
+            },
+            translation: AiRoute::Local,
+            auto_translate: " pt-BR ".into(),
+            ..AiSettingsUpdate::default()
+        };
+        assert_eq!(clean_ai_settings(&u).unwrap().auto_translate, "pt-BR");
+        u.auto_translate = "portuguese please".into();
+        assert!(clean_ai_settings(&u).is_err());
+        u.auto_translate = "it".into();
+        u.translation = AiRoute::Off;
+        assert!(clean_ai_settings(&u).is_err());
+        u.auto_translate = " ".into();
+        assert_eq!(clean_ai_settings(&u).unwrap().auto_translate, "");
     }
 
     #[test]

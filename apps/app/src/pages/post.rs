@@ -4,8 +4,8 @@ use dioxus::html::geometry::{ClientPoint, PixelsRect};
 use dioxus::prelude::*;
 use starbooru_client::{Client, ClientError};
 use starbooru_core::{
-    AiStatus, EditKind, MediaKind, Neighbors, Post, PostUpdate, Rating, SAMPLE_SIZE, TagSuggestion,
-    TagSuggestions, edit_kind,
+    AiStatus, EditKind, MediaKind, Neighbors, PanelTranslation, Post, PostUpdate, Rating,
+    SAMPLE_SIZE, TagSuggestion, TagSuggestions, TextBlock, edit_kind,
 };
 
 use super::editor::EditorSheet;
@@ -924,6 +924,120 @@ fn StageImage(
     }
 }
 
+/// Narrowest block of translated text, in thousandths of the image width:
+/// vertical Japanese balloons are much narrower than a translated line.
+const MIN_BLOCK_W: u16 = 160;
+
+/// Where a block of translated text goes, in percent of the image. Narrow
+/// boxes widen around their centre and stay inside the image.
+fn block_style(b: &TextBlock) -> String {
+    let pc = |v: u16| f32::from(v) / 10.0;
+    let w = b.w.clamp(MIN_BLOCK_W, 1000);
+    let centre = b.x.saturating_add(b.w / 2);
+    let x = centre.saturating_sub(w / 2).min(1000 - w);
+    format!(
+        "left: {}%; top: {}%; width: {}%; min-height: {}%",
+        pc(x),
+        pc(b.y),
+        pc(w),
+        pc(b.h)
+    )
+}
+
+/// Which kept translation to draw: the one in the app's language (just
+/// made, or kept), else, when the server can't make one, any kept one.
+fn pick_translation(
+    made: Option<PanelTranslation>,
+    kept: &[PanelTranslation],
+    lang: &str,
+    can_make: bool,
+) -> Option<PanelTranslation> {
+    made.filter(|t| t.lang == lang)
+        .or_else(|| kept.iter().find(|t| t.lang == lang).cloned())
+        .or_else(|| (!can_make).then(|| kept.first().cloned()).flatten())
+}
+
+/// Translated text drawn over the image (comic and manga panels), sized and
+/// zoomed with it, and the button that shows it or asks the server to make
+/// it in the app's language.
+#[component]
+fn PanelOverlay(id: i64, size: (i32, i32), transform: String) -> Element {
+    let can_make = use_ai_status().translation;
+    let kept = use_resource(move || async move {
+        let client = store::client()?;
+        client.panel_translations(id).await.ok()
+    });
+    let mut made = use_signal(|| None::<PanelTranslation>);
+    let mut shown = use_signal(|| false);
+    let mut busy = use_signal(|| false);
+    let mut note = use_signal(|| None::<String>);
+    let lang = LANG.read().code();
+    let kept = kept.read().clone().flatten().unwrap_or_default();
+    let pick = pick_translation(made(), &kept, lang, can_make);
+    if pick.is_none() && !can_make {
+        return rsx! {};
+    }
+    let have = pick.is_some();
+    let onclick = move |_| {
+        note.set(None);
+        if have {
+            shown.toggle();
+            return;
+        }
+        let Some(client) = store::client() else {
+            return;
+        };
+        busy.set(true);
+        spawn(async move {
+            match client.translate_panels(id, lang).await {
+                Ok(t) => {
+                    if t.blocks.is_empty() {
+                        note.set(Some(t!("post-panels-none")));
+                    }
+                    made.set(Some(t));
+                    shown.set(true);
+                }
+                Err(e) => note.set(Some(e.to_string())),
+            }
+            busy.set(false);
+        });
+    };
+    let (label, title) = if busy() {
+        (t!("post-panels-making"), t!("post-panels-making"))
+    } else if !have {
+        (t!("post-panels-make"), t!("post-panels-make-title"))
+    } else if shown() {
+        (t!("post-panels-hide"), t!("post-panels-hide"))
+    } else {
+        (t!("post-panels-show"), t!("post-panels-show"))
+    };
+    let layer_style = format!("{transform}{}", fit_style(Some(size)));
+    rsx! {
+        if shown() && let Some(t) = pick.filter(|t| !t.blocks.is_empty()) {
+            div { class: "panel-layer", style: layer_style, lang: "{t.lang}",
+                for (i, b) in t.blocks.iter().enumerate() {
+                    div { key: "{i}", class: "panel-block", style: block_style(b), title: "{b.text}",
+                        "{b.translation}"
+                    }
+                }
+            }
+        }
+        if let Some(message) = note() {
+            p { class: "stage-note", role: "status", "{message}" }
+        }
+        button {
+            class: if busy() { "stage-btn stage-translate busy" } else { "stage-btn stage-translate" },
+            r#type: "button",
+            title,
+            aria_label: label,
+            aria_pressed: if have { "{shown()}" },
+            disabled: busy(),
+            onclick,
+            Ico { icon: Icon::Translate }
+        }
+    }
+}
+
 /// The media, with zoom and pan for images, previous/next and fullscreen.
 #[component]
 fn Stage(
@@ -1081,6 +1195,9 @@ fn Stage(
                 },
                 _ => rsx! {
                     StageImage { key: "{id}", src, thumb, alt, size, transform: z.css(), enter }
+                    if let Some(size) = size.filter(|_| kind == MediaKind::Image) {
+                        PanelOverlay { key: "{id}", id, size, transform: z.css() }
+                    }
                 },
             }
             if let Some(prev) = nav.prev {
@@ -1164,6 +1281,64 @@ mod tests {
         assert_eq!(with_tag("", "sky"), "sky");
         assert_eq!(with_tag("cat  ", "sky"), "cat sky");
         assert_eq!(with_tag("cat sky", "sky"), "cat sky");
+    }
+
+    #[test]
+    fn places_and_picks_translations() {
+        let b = TextBlock {
+            x: 600,
+            y: 45,
+            w: 300,
+            h: 125,
+            text: String::new(),
+            translation: "Ciao".into(),
+        };
+        assert_eq!(
+            block_style(&b),
+            "left: 60%; top: 4.5%; width: 30%; min-height: 12.5%"
+        );
+        // A narrow vertical balloon widens around its centre…
+        let narrow = TextBlock {
+            x: 500,
+            w: 40,
+            ..b.clone()
+        };
+        assert!(block_style(&narrow).starts_with("left: 44%; top: 4.5%; width: 16%;"));
+        // …without leaving the image.
+        let edge = TextBlock {
+            x: 960,
+            w: 40,
+            ..b.clone()
+        };
+        assert!(block_style(&edge).starts_with("left: 84%;"));
+        let edge = TextBlock {
+            x: 0,
+            w: 40,
+            ..b.clone()
+        };
+        assert!(block_style(&edge).starts_with("left: 0%;"));
+        let t = |lang: &str| PanelTranslation {
+            lang: lang.into(),
+            blocks: vec![b.clone()],
+            model: "m".into(),
+            created_at: chrono::Utc::now(),
+        };
+        let kept = [t("en"), t("it")];
+        assert_eq!(
+            pick_translation(None, &kept, "it", true).map(|t| t.lang),
+            Some("it".into())
+        );
+        // None in the app's language: made on request when the server can.
+        assert_eq!(pick_translation(None, &kept[..1], "it", true), None);
+        assert_eq!(
+            pick_translation(None, &kept[..1], "it", false).map(|t| t.lang),
+            Some("en".into())
+        );
+        assert_eq!(
+            pick_translation(Some(t("it")), &[], "it", true).map(|t| t.lang),
+            Some("it".into())
+        );
+        assert_eq!(pick_translation(None, &[], "it", false), None);
     }
 
     #[test]

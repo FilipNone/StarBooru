@@ -78,6 +78,9 @@ pub struct AiConfig {
     /// local when it is on, else off.
     pub tagging: Option<AiRoute>,
     pub translation: Option<AiRoute>,
+    /// Language (BCP 47) new images with text are translated into; empty
+    /// is off.
+    pub translate_to: String,
 }
 
 impl std::fmt::Debug for AiConfig {
@@ -92,6 +95,7 @@ impl std::fmt::Debug for AiConfig {
             .field("local_model", &self.local_model)
             .field("tagging", &self.tagging)
             .field("translation", &self.translation)
+            .field("translate_to", &self.translate_to)
             .finish_non_exhaustive()
     }
 }
@@ -293,6 +297,18 @@ impl Config {
                     .to_owned(),
                 tagging: route(&get, "STARBOORU_AI_TAGGING")?,
                 translation: route(&get, "STARBOORU_AI_TRANSLATION")?,
+                translate_to: match get("STARBOORU_AI_TRANSLATE_TO")
+                    .map(|v| v.trim().to_owned())
+                    .filter(|v| !v.is_empty())
+                {
+                    None => String::new(),
+                    Some(v) => starbooru_core::clean_language(&v).map_err(|reason| {
+                        ConfigError::Invalid {
+                            name: "STARBOORU_AI_TRANSLATE_TO",
+                            reason,
+                        }
+                    })?,
+                },
             },
         })
     }

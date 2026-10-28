@@ -13,6 +13,7 @@ mod local_ai;
 mod media;
 mod ocr;
 mod oidc;
+mod panels;
 mod probe;
 mod remote;
 mod routes;

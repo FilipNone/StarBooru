@@ -33,6 +33,9 @@ body { background: #111; }
   /* controls over media: the stage is dark in both themes */
   --scrim: oklch(0.12 0.01 var(--h) / 0.55);
   --on-scrim: oklch(0.97 0.01 var(--h));
+  /* translated text over panels: light like speech balloons in both themes */
+  --paper: oklch(0.985 0.006 var(--h));
+  --on-paper: oklch(0.2 0.02 var(--h));
   --shadow-1: 0 1px 2px oklch(0.2 0.04 var(--h) / 0.08), 0 2px 8px oklch(0.2 0.04 var(--h) / 0.06);
   --shadow-2: 0 2px 4px oklch(0.2 0.04 var(--h) / 0.08), 0 12px 32px oklch(0.2 0.04 var(--h) / 0.14);
 
@@ -593,14 +596,40 @@ button.thumb { width: 100%; padding: 0; border: 0; font: inherit; color: inherit
   transition: opacity var(--med) var(--ease);
 }
 .stage-tools .stage-btn { width: 40px; height: 40px; background: transparent; }
+/* translated text over the image: same cell, box and zoom as the image */
+.stage > img, .stage > video, .stage > .panel-layer { grid-area: 1 / 1; }
+.panel-layer {
+  position: relative; max-width: 100%; max-height: var(--fit-h); pointer-events: none;
+  transform-origin: center; transition: transform var(--fast) var(--ease);
+  container-type: inline-size;
+}
+.stage.dragging .panel-layer { transition: none; }
+.stage.full .panel-layer { max-width: 100vw; }
+.panel-block {
+  position: absolute; display: grid; place-items: center; box-sizing: border-box;
+  padding: 0.25em 0.35em; border-radius: 0.8em; pointer-events: auto;
+  background: var(--paper); color: var(--on-paper); box-shadow: 0 0 0 1px var(--scrim);
+  font-size: clamp(8px, 1.8cqw, 22px); font-weight: 600; line-height: 1.15;
+  text-align: center; overflow-wrap: anywhere; white-space: pre-line;
+}
+.stage-translate { position: absolute; left: 12px; bottom: 12px; }
+.app[data-hand="left"] .stage-translate { left: auto; right: 12px; }
+.stage-translate[aria-pressed="true"] { background: var(--primary); color: var(--on-primary); }
+.stage-translate.busy { animation: pulse 1.2s var(--ease) infinite; }
+.stage-note {
+  position: absolute; top: 12px; left: 50%; transform: translateX(-50%); max-width: calc(100% - 24px);
+  margin: 0; padding: 6px 14px; border-radius: 999px; background: var(--scrim); color: var(--on-scrim);
+  font-size: 13px; text-align: center;
+}
 .stage-zoom {
   min-width: 5ch; min-height: 40px; border: 0; border-radius: 999px; background: transparent;
   color: var(--on-scrim); font: inherit; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; cursor: pointer;
 }
 @media (hover: hover) {
-  .stage .stage-prev, .stage .stage-next, .stage .stage-tools { opacity: 0; }
-  .stage:hover .stage-prev, .stage:hover .stage-next, .stage:hover .stage-tools,
-  .stage:focus-within .stage-prev, .stage:focus-within .stage-next, .stage:focus-within .stage-tools { opacity: 1; }
+  .stage .stage-prev, .stage .stage-next, .stage .stage-tools, .stage .stage-translate:not(.busy) { opacity: 0; }
+  .stage:hover .stage-prev, .stage:hover .stage-next, .stage:hover .stage-tools, .stage:hover .stage-translate,
+  .stage:focus-within .stage-prev, .stage:focus-within .stage-next, .stage:focus-within .stage-tools,
+  .stage:focus-within .stage-translate { opacity: 1; }
   .stage .stage-btn:disabled { opacity: 0.4; }
 }
 .actions { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 8px 12px; }

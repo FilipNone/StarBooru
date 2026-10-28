@@ -146,6 +146,7 @@ pub fn AiCard() -> Element {
     let mut local_model = use_signal(String::new);
     let mut tagging = use_signal(|| AiRoute::Off);
     let mut translation = use_signal(|| AiRoute::Off);
+    let mut auto_translate = use_signal(String::new);
     let mut loaded = use_signal(|| false);
     let mut busy = use_signal(|| false);
     let mut error = use_signal(|| None::<String>);
@@ -164,6 +165,7 @@ pub fn AiCard() -> Element {
         local_model.set(s.local.model);
         tagging.set(s.tagging);
         translation.set(s.translation);
+        auto_translate.set(s.auto_translate);
         loaded.set(true);
     };
     use_hook(move || {
@@ -202,6 +204,12 @@ pub fn AiCard() -> Element {
             },
             tagging: *tagging.peek(),
             translation: *translation.peek(),
+            // Translation off turns automatic translation off with it.
+            auto_translate: if *translation.peek() == AiRoute::Off {
+                String::new()
+            } else {
+                auto_translate.peek().trim().to_owned()
+            },
         };
         busy.set(true);
         error.set(None);
@@ -253,6 +261,20 @@ pub fn AiCard() -> Element {
                         label: t!("admin-ai-translation"),
                         hint: t!("admin-ai-translation-hint"),
                         route: translation,
+                    }
+                    if translation() != AiRoute::Off {
+                        label { class: "field",
+                            span { {t!("admin-ai-auto-translate")} }
+                            input {
+                                placeholder: "en, it, pt-BR",
+                                maxlength: "35",
+                                autocapitalize: "off",
+                                spellcheck: "false",
+                                value: "{auto_translate}",
+                                oninput: move |e| auto_translate.set(e.value()),
+                            }
+                            span { class: "muted field-hint", {t!("admin-ai-auto-translate-hint")} }
+                        }
                     }
 
                     h3 { class: "ai-section", {t!("admin-ai-hosted")} }

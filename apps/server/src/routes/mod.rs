@@ -80,6 +80,10 @@ pub fn router(state: AppState) -> Router {
         .route("/ai", get(ai::status))
         .route("/posts/{id}/suggest-tags", post(ai::suggest_tags))
         .route("/posts/{id}/translate", post(ai::translate))
+        .route(
+            "/posts/{id}/translations",
+            get(ai::panel_translations).post(ai::translate_panels),
+        )
         .route("/admin/users", get(admin::users))
         .route(
             "/admin/users/{id}",

@@ -81,6 +81,8 @@ pub struct AiSetup {
     pub local_model: String,
     pub tagging: AiRoute,
     pub translation: AiRoute,
+    /// Language new images with text are translated into; empty is off.
+    pub auto_translate: String,
 }
 
 impl AiSetup {

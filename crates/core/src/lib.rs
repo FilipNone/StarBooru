@@ -12,6 +12,7 @@ pub mod keys;
 pub mod local_ai;
 pub mod model;
 pub mod oidc;
+pub mod panels;
 pub mod query;
 pub mod remote;
 pub mod saved;
@@ -37,6 +38,7 @@ pub use local_ai::{
 };
 pub use model::*;
 pub use oidc::{Identity, OidcBegin, OidcError, OidcFinish, OidcStart, SignInMethods};
+pub use panels::{PanelTranslation, TextBlock, panel_prompt, parse_panel_blocks};
 pub use query::{Order, SearchQuery, SortKey, parse_query, with_order};
 pub use remote::{
     BooruApi, BooruSite, RemoteError, RemotePage, RemotePost, RemoteSearch, SITES, remote_tags,

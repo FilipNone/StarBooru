@@ -88,7 +88,7 @@ Admins can change the name, open registration, the recycle-bin days and the back
 | `STARBOORU_FFMPEG` | `ffmpeg` | ffmpeg for video, AVIF and JPEG XL thumbnails (installed in the image); `off` disables it |
 | `STARBOORU_FFPROBE` | `ffprobe` | ffprobe, for video size and length |
 | `STARBOORU_OCR` | `true` | Read text in still images with tesseract (installed in the image), for `text:` search and the viewer's *Text in image*. Runs on the server only; no image leaves it. `off` turns it off; a path picks another tesseract. Without tesseract it is quietly off (logged once at start). Older posts are read in the background at each start. |
-| `STARBOORU_OCR_LANGS` | `eng` | tesseract languages, joined with `+`, e.g. `eng+ita`. The image has English only: add a language's package (`tesseract-ocr-ita`) in the `Dockerfile` first. |
+| `STARBOORU_OCR_LANGS` | `eng` (`eng+jpn+jpn_vert` in `docker-compose.yml`) | tesseract languages, joined with `+`, e.g. `eng+ita`. The image has English and Japanese (`jpn` across, `jpn_vert` down, for manga); fewer languages read faster. For another language add its package (`tesseract-ocr-ita`) in the `Dockerfile` first. |
 | `STARBOORU_URL_IMPORT` | `on` | Import from URL: `on` (public addresses only), `private` (also private-network addresses, e.g. a NAS; anyone with an account can then make the server fetch from your LAN), `off` |
 | `STARBOORU_AI_URL` | unset | Base URL of a hosted OpenAI-compatible API, such as `https://openrouter.ai/api/v1`, `https://api.openai.com/v1` or `https://generativelanguage.googleapis.com/v1beta/openai`. Unset turns the hosted provider off. Thumbnails of posts, and the text of images being translated, are sent to it. Admins can change every AI setting in Administration › Server. |
 | `STARBOORU_AI_MODEL` | unset | A vision model, such as `google/gemini-2.5-flash-lite` or `gpt-4o-mini` |
@@ -99,6 +99,7 @@ Admins can change the name, open registration, the recycle-bin days and the back
 | `STARBOORU_LOCAL_AI_MODEL` | unset | Ollama model; unset picks the preset that suits the hardware |
 | `STARBOORU_AI_TAGGING` | see meaning | Where tag suggestions run: `off`, `hosted` or `local`. Unset: hosted when `STARBOORU_AI_URL` is set, else local when it is on, else off. |
 | `STARBOORU_AI_TRANSLATION` | see meaning | Where translations run, the same way |
+| `STARBOORU_AI_TRANSLATE_TO` | unset | Translate new uploads in which OCR finds text into this language (`en`, `it`, `pt-BR`), drawn over the image (see *Comics and manga* below). Unset: only when someone asks in the viewer. |
 | `STARBOORU_TRUST_PROXY` | `false` (`true` in `docker-compose.yml`) | Take the client address from the last `X-Forwarded-For` entry, for the sign-in limits. Turn it on only behind a reverse proxy that sets the header (Traefik does); otherwise clients could pick their own address. |
 | `STARBOORU_BIND` | `0.0.0.0:8080` | Listen address |
 | `STARBOORU_DATA_DIR` | `/data` in the image | Media storage |
@@ -128,6 +129,17 @@ Tag suggestions and translation can run on the server's own hardware instead of 
 | Large | `qwen3-vl:8b-instruct` | 6.2 GB | Desktops with a graphics card of 8 GB or more |
 
 Any other Ollama model that reads images works too (*Another model*). The check reads the hardware where StarBooru runs; when Ollama runs on another machine, point `STARBOORU_LOCAL_AI_URL` at it and trust the speed test instead. Local answers may take up to five minutes before they time out.
+
+The *Recommended* preset, which is also the one used when no model is picked, counts all of the graphics card's memory, so it doesn't change with what else is running. The fit shown for each preset counts only the memory free right now: on a desktop that also drives a screen, the largest preset may show *slowly, partly on the graphics card* while a game or browser holds video memory.
+
+## Comics and manga
+
+OCR is what finds text in images, for `text:` search and the viewer's *Text in image*. For comic and manga pages, translation goes further: a vision model reads the page and its translation is drawn over each balloon, caption and sound effect.
+
+- In the viewer, the translate button on the image (bottom left) translates the page into the app's language and shows it over the picture; it then toggles the translation on and off. Hovering a balloon shows the original text. Translations are kept per post and language, so each page is translated once.
+- To translate new uploads automatically, set *Translate new images automatically into* (Administration › Server › AI) or `STARBOORU_AI_TRANSLATE_TO`. A new image is translated after OCR finds text in it, one at a time, so OCR has to be on. Older posts aren't translated in bulk.
+- The image goes to the translation model (fit in 1536 px), unlike the text-only *Translate* under *Text in image*. With local AI it stays on the server; with a hosted provider, the provider sees the page.
+- Quality depends on the model. On a generated test page, `google/gemini-2.5-flash` (hosted) and `qwen3-vl:8b-instruct` (local, about 13 s on an 8 GB AMD graphics card) both read every balloon; smaller models miss more text and place boxes less exactly. Very dense pages may need a longer Ollama context (`OLLAMA_CONTEXT_LENGTH=8192` on the `ollama` service), at the cost of more memory.
 
 ## Plain Docker Compose
 

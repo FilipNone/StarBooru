@@ -6,8 +6,8 @@ use axum::extract::{Path, State};
 use starbooru_core::local_ai::clean_model_name;
 use starbooru_core::{
     AiSettings, AiSettingsUpdate, AiStatus, LocalAiSettings, LocalAiStatus, LocalTestResult,
-    PullRequest, TagCategory, TagSuggestion, TagSuggestions, TranslateRequest, Translation,
-    clean_ai_settings, clean_language, clean_translation, translate_prompt,
+    PanelTranslation, PullRequest, TagCategory, TagSuggestion, TagSuggestions, TranslateRequest,
+    Translation, clean_ai_settings, clean_language, clean_translation, translate_prompt,
 };
 
 use super::admin::require_admin_session;
@@ -110,6 +110,35 @@ pub async fn translate(
     Ok(Json(Translation { text }))
 }
 
+/// `GET /posts/{id}/translations`: the translated text kept for the post's
+/// image, one per language.
+pub async fn panel_translations(
+    State(state): State<AppState>,
+    _user: AuthUser,
+    Path(id): Path<i64>,
+) -> AppResult<Json<Vec<PanelTranslation>>> {
+    Ok(Json(crate::panels::list(&state, id).await?))
+}
+
+/// `POST /posts/{id}/translations`: reads the text in the post's image with
+/// the translation model, translates it, keeps and returns it. The image is
+/// sent to the model.
+pub async fn translate_panels(
+    State(state): State<AppState>,
+    _user: AuthUser,
+    Path(id): Path<i64>,
+    Json(req): Json<TranslateRequest>,
+) -> AppResult<Json<PanelTranslation>> {
+    let to = clean_language(&req.to).map_err(AppError::BadRequest)?;
+    let provider = settings::ai(&state)
+        .await?
+        .translation()
+        .ok_or_else(ai::turned_off)?;
+    Ok(Json(
+        crate::panels::translate(&state, &provider, id, &to).await?,
+    ))
+}
+
 fn to_settings(s: &ai::AiSetup) -> AiSettings {
     AiSettings {
         url: s.hosted.url.clone(),
@@ -123,6 +152,7 @@ fn to_settings(s: &ai::AiSetup) -> AiSettings {
         },
         tagging: s.tagging,
         translation: s.translation,
+        auto_translate: s.auto_translate.clone(),
     }
 }
 
@@ -406,8 +436,18 @@ mod tests {
         assert_eq!(
             r,
             json!({ "url": "", "model": "", "key_set": false, "autotag": false,
-                "local": no_local(), "tagging": "off", "translation": "off" })
+                "local": no_local(), "tagging": "off", "translation": "off", "auto_translate": "" })
         );
+        let path = format!("/api/v1/posts/{id}/translations");
+        let r = app
+            .call(
+                Method::POST,
+                &path,
+                Some(&admin),
+                Some(json!({ "to": "it" })),
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::BAD_REQUEST);
         app.finish().await;
     }
 
@@ -742,6 +782,159 @@ mod tests {
                 .unwrap()
                 .contains("local AI runtime")
         );
+        app.finish().await;
+    }
+
+    const PANELS: &str = "Sure:\n```json\n{\"blocks\": [\
+        {\"box\": [600, 40, 950, 300], \"text\": \"なにっ!?\", \"translation\": \"Cosa?!\"}, \
+        {\"box\": [50, 700, 400, 900], \"text\": \"ドン\", \"translation\": \"BUM\"}, \
+        {\"box\": [1, 2], \"translation\": \"dropped\"}]}\n```";
+
+    #[tokio::test]
+    async fn translates_panels_and_keeps_them() {
+        let url = provider(PANELS).await;
+        let Some(app) = testing::app_with(|c| {
+            c.ai.url = url;
+            c.ai.key = "sk-test".into();
+            c.ai.model = "llava".into();
+        })
+        .await
+        else {
+            return;
+        };
+        let admin = app.register("admin").await;
+        let id = app.upload_png(&admin, 3, "").await;
+        let path = format!("/api/v1/posts/{id}/translations");
+        assert_eq!(app.get(&path, &admin).await.json(), json!([]));
+
+        let r = app
+            .call(
+                Method::POST,
+                &path,
+                Some(&admin),
+                Some(json!({ "to": "it" })),
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::OK, "{:?}", r.json());
+        let made = r.json();
+        assert_eq!(made["lang"], "it");
+        assert_eq!(made["model"], "llava");
+        assert_eq!(
+            made["blocks"],
+            json!([
+                { "x": 600, "y": 40, "w": 350, "h": 260, "text": "なにっ!?", "translation": "Cosa?!" },
+                { "x": 50, "y": 700, "w": 350, "h": 200, "text": "ドン", "translation": "BUM" },
+            ])
+        );
+        // Kept, and asking again replaces it instead of adding one.
+        let r = app
+            .call(
+                Method::POST,
+                &path,
+                Some(&admin),
+                Some(json!({ "to": "it" })),
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::OK);
+        let kept = app.get(&path, &admin).await.json();
+        assert_eq!(kept.as_array().map(Vec::len), Some(1));
+        assert_eq!(kept[0]["blocks"], made["blocks"]);
+
+        let r = app
+            .call(
+                Method::POST,
+                &path,
+                Some(&admin),
+                Some(json!({ "to": "no way" })),
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::BAD_REQUEST);
+        let r = app
+            .call(
+                Method::POST,
+                "/api/v1/posts/999999/translations",
+                Some(&admin),
+                Some(json!({ "to": "it" })),
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::NOT_FOUND);
+        let r = app
+            .call(
+                Method::GET,
+                "/api/v1/posts/999999/translations",
+                Some(&admin),
+                None,
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::NOT_FOUND);
+
+        // Automatic translation: off until a language is set.
+        let other = app.upload_png(&admin, 4, "").await;
+        crate::panels::auto_translate(&app.state, other)
+            .await
+            .unwrap();
+        let other_path = format!("/api/v1/posts/{other}/translations");
+        assert_eq!(app.get(&other_path, &admin).await.json(), json!([]));
+        let mut settings = app.get("/api/v1/admin/ai", &admin).await.json();
+        assert_eq!(settings["auto_translate"], "");
+        settings["auto_translate"] = json!("pt-BR");
+        let r = app
+            .call(
+                Method::PUT,
+                "/api/v1/admin/ai",
+                Some(&admin),
+                Some(settings),
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::OK, "{:?}", r.json());
+        crate::panels::auto_translate(&app.state, other)
+            .await
+            .unwrap();
+        let kept = app.get(&other_path, &admin).await.json();
+        assert_eq!(kept[0]["lang"], "pt-BR");
+        assert_eq!(kept[0]["blocks"].as_array().map(Vec::len), Some(2));
+
+        // An answer with no blocks is an error; one with no text is not
+        // kept over a good translation.
+        for (answer, status) in [
+            ("Sorry, I can't read this.", StatusCode::BAD_GATEWAY),
+            ("{\"blocks\": []}", StatusCode::OK),
+        ] {
+            let mut settings = app.get("/api/v1/admin/ai", &admin).await.json();
+            settings["url"] = json!(provider(answer).await);
+            let r = app
+                .call(
+                    Method::PUT,
+                    "/api/v1/admin/ai",
+                    Some(&admin),
+                    Some(settings),
+                )
+                .await;
+            assert_eq!(r.status, StatusCode::OK, "{:?}", r.json());
+            let r = app
+                .call(
+                    Method::POST,
+                    &path,
+                    Some(&admin),
+                    Some(json!({ "to": "it" })),
+                )
+                .await;
+            assert_eq!(r.status, status, "{:?}", r.json());
+            let kept = app.get(&path, &admin).await.json();
+            assert_eq!(kept[0]["blocks"], made["blocks"]);
+        }
+
+        // Deleting the post takes its translations with it.
+        sqlx::query("DELETE FROM posts WHERE id = $1")
+            .bind(other)
+            .execute(app.db())
+            .await
+            .unwrap();
+        let left: i64 = sqlx::query_scalar("SELECT count(*) FROM post_translations")
+            .fetch_one(app.db())
+            .await
+            .unwrap();
+        assert_eq!(left, 1);
         app.finish().await;
     }
 }

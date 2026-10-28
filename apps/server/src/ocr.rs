@@ -102,7 +102,7 @@ pub fn clean(raw: &str) -> String {
 
 /// The file to scan for a post, or `None` when it is not a still image
 /// tesseract can read.
-fn source_path(
+pub(crate) fn source_path(
     storage: &Storage,
     sha_hex: &str,
     ext: &str,
@@ -127,10 +127,10 @@ fn source_path(
 type ScanRow = (Vec<u8>, String, i16, Option<bool>);
 
 /// Scans one post and stores the result. Errors are logged, never returned:
-/// OCR must not fail anything else.
-pub async fn scan_post(state: &AppState, id: i64) {
+/// OCR must not fail anything else. True when text was found and stored.
+pub async fn scan_post(state: &AppState, id: i64) -> bool {
     let Some(ocr) = state.ocr.clone() else {
-        return;
+        return false;
     };
     let row: Result<Option<ScanRow>, _> =
         sqlx::query_as("SELECT sha256, ext, kind, has_sample FROM posts WHERE id = $1")
@@ -139,10 +139,10 @@ pub async fn scan_post(state: &AppState, id: i64) {
             .await;
     let (sha, ext, kind, has_sample) = match row {
         Ok(Some(r)) => r,
-        Ok(None) => return,
+        Ok(None) => return false,
         Err(e) => {
             warn!("OCR: post {id}: {e}");
-            return;
+            return false;
         }
     };
     let path = (kind == 0)
@@ -151,7 +151,7 @@ pub async fn scan_post(state: &AppState, id: i64) {
     let text = match path {
         Some(path) => {
             let Ok(_permit) = RUNNING.acquire().await else {
-                return;
+                return false;
             };
             match tokio::task::spawn_blocking(move || ocr.scan(&path)).await {
                 Ok(Some(text)) => Some(text),
@@ -160,30 +160,40 @@ pub async fn scan_post(state: &AppState, id: i64) {
                 Ok(None) => None,
                 Err(e) => {
                     warn!("OCR: post {id}: {e}");
-                    return;
+                    return false;
                 }
             }
         }
         None => None,
     };
     let text = text.filter(|t| !t.is_empty());
+    let found = text.is_some();
     let updated = sqlx::query("UPDATE posts SET ocr_text = $2, ocr_at = now() WHERE id = $1")
         .bind(id)
         .bind(text)
         .execute(&state.db)
         .await;
-    if let Err(e) = updated {
-        warn!("OCR: post {id}: {e}");
+    match updated {
+        Ok(_) => found,
+        Err(e) => {
+            warn!("OCR: post {id}: {e}");
+            false
+        }
     }
 }
 
-/// Scans a new post in the background.
+/// Scans a new post in the background, then translates it when text was
+/// found and automatic translation is on.
 pub fn spawn_scan(state: &AppState, id: i64) {
     if state.ocr.is_none() {
         return;
     }
     let state = state.clone();
-    tokio::spawn(async move { scan_post(&state, id).await });
+    tokio::spawn(async move {
+        if scan_post(&state, id).await {
+            crate::panels::auto_translate_later(&state, id);
+        }
+    });
 }
 
 /// At startup: scans still images not scanned yet, one at a time.

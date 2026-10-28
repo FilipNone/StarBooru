@@ -20,8 +20,8 @@ use starbooru_core::{
     User, UserUpdate, VoteRequest,
 };
 use starbooru_core::{
-    AiSettings, AiSettingsUpdate, AiStatus, LocalAiStatus, LocalTestResult, PullRequest,
-    TagSuggestions, TranslateRequest, Translation,
+    AiSettings, AiSettingsUpdate, AiStatus, LocalAiStatus, LocalTestResult, PanelTranslation,
+    PullRequest, TagSuggestions, TranslateRequest, Translation,
 };
 use std::time::Duration;
 use thiserror::Error;
@@ -403,6 +403,20 @@ impl Client {
     pub async fn translate_text(&self, id: i64, to: &str) -> Result<Translation> {
         let req = TranslateRequest { to: to.to_owned() };
         self.json(Method::POST, &format!("/posts/{id}/translate"), &req)
+            .await
+    }
+
+    /// The translated text kept for a post's image, one per language.
+    pub async fn panel_translations(&self, id: i64) -> Result<Vec<PanelTranslation>> {
+        Self::send(self.request(Method::GET, &format!("/posts/{id}/translations"))?).await
+    }
+
+    /// Reads and translates the text in a post's image (comic and manga
+    /// panels) into `to`; the server keeps the result. Sends the image to
+    /// the server's translation model.
+    pub async fn translate_panels(&self, id: i64, to: &str) -> Result<PanelTranslation> {
+        let req = TranslateRequest { to: to.to_owned() };
+        self.json(Method::POST, &format!("/posts/{id}/translations"), &req)
             .await
     }
 

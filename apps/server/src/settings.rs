@@ -101,10 +101,11 @@ pub async fn ai(state: &AppState) -> AppResult<crate::ai::AiSetup> {
         ai_local_model: Option<String>,
         ai_tagging: Option<String>,
         ai_translation: Option<String>,
+        ai_auto_translate: Option<String>,
     }
     let row: Option<Row> = sqlx::query_as(
         "SELECT ai_url, ai_key, ai_model, ai_autotag, ai_local_enabled, ai_local_url, \
-         ai_local_model, ai_tagging, ai_translation FROM server_settings",
+         ai_local_model, ai_tagging, ai_translation, ai_auto_translate FROM server_settings",
     )
     .fetch_optional(&state.db)
     .await?;
@@ -124,6 +125,9 @@ pub async fn ai(state: &AppState) -> AppResult<crate::ai::AiSetup> {
             .unwrap_or_else(|| env.local_model.clone()),
         tagging: AiRoute::Off,
         translation: AiRoute::Off,
+        auto_translate: row
+            .ai_auto_translate
+            .unwrap_or_else(|| env.translate_to.clone()),
     };
     // Defaults follow what is set up after the overrides.
     let default = if !setup.hosted.url.is_empty() {
@@ -157,11 +161,12 @@ pub async fn save_ai(state: &AppState, update: &AiSettingsUpdate) -> AppResult<(
     let local = &update.local;
     sqlx::query(
         "INSERT INTO server_settings (id, ai_url, ai_model, ai_key, ai_autotag, \
-         ai_local_enabled, ai_local_url, ai_local_model, ai_tagging, ai_translation) \
-         VALUES (true, $1, $2, $3, $4, $5, $6, $7, $8, $9) \
+         ai_local_enabled, ai_local_url, ai_local_model, ai_tagging, ai_translation, \
+         ai_auto_translate) \
+         VALUES (true, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10) \
          ON CONFLICT (id) DO UPDATE SET ai_url = $1, ai_model = $2, ai_key = $3, \
          ai_autotag = $4, ai_local_enabled = $5, ai_local_url = $6, ai_local_model = $7, \
-         ai_tagging = $8, ai_translation = $9, updated_at = now()",
+         ai_tagging = $8, ai_translation = $9, ai_auto_translate = $10, updated_at = now()",
     )
     .bind((update.url != env.url).then_some(&update.url))
     .bind((update.model != env.model).then_some(&update.model))
@@ -173,6 +178,7 @@ pub async fn save_ai(state: &AppState, update: &AiSettingsUpdate) -> AppResult<(
     // Routes are always stored: their default depends on the other settings.
     .bind(update.tagging.as_str())
     .bind(update.translation.as_str())
+    .bind((update.auto_translate != env.translate_to).then_some(&update.auto_translate))
     .execute(&state.db)
     .await?;
     Ok(())

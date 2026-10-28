@@ -315,7 +315,7 @@ privacy-9 = Cosa resta sul tuo dispositivo
 privacy-10 = L'app ricorda l'indirizzo del server, il tuo token di accesso e le tue preferenze, come il tema. Uscendo il token viene rimosso.
 privacy-11 = Cosa StarBooru non fa
 privacy-12 = Niente statistiche d'uso, pubblicità o tracciamento, e nessun servizio di terze parti oltre a un provider di identità che il gestore sceglie di configurare.
-privacy-13 = Il server contatta altri siti solo quando importi da un URL, e il provider di identità del gestore quando accedi tramite esso. Le importazioni usano un user agent generico e nessuno dei tuoi dati. Se un amministratore configura un fornitore di IA, le miniature dei post gli vengono inviate per suggerire i tag, e il testo letto in un’immagine quando lo traduci; un fornitore sulla rete dell’operatore le tiene lì.
+privacy-13 = Il server contatta altri siti solo quando importi da un URL, e il provider di identità del gestore quando accedi tramite esso. Le importazioni usano un user agent generico e nessuno dei tuoi dati. Se un amministratore configura un fornitore di IA, le miniature dei post gli vengono inviate per suggerire i tag, il testo letto in un’immagine quando lo traduci, e l’immagine stessa quando se ne traducono le vignette di fumetti o manga; un fornitore sulla rete dell’operatore le tiene lì.
 privacy-14 = Il contenuto dei file, le password e i token non vengono mai scritti nei log del server.
 privacy-15 = Chi può vedere i tuoi post
 privacy-16 = Chiunque abbia un account su questo server può vedere i post che contiene. I link ai file forniti all'app sono firmati e scadono, quindi un link copiato smette di funzionare entro 12 ore. Se crei un link di condivisione, chiunque lo abbia può vedere i post che contiene, senza i loro tag, finché non scade o non lo rimuovi.
@@ -627,7 +627,9 @@ admin-ai-lead = Suggerimenti di tag e traduzione del testo nelle immagini. Ognun
 admin-ai-tagging = Suggerimenti di tag
 admin-ai-tagging-hint = Guarda una miniatura e suggerisce tag e classificazione.
 admin-ai-translation = Traduzione
-admin-ai-translation-hint = Traduce il testo trovato nelle immagini.
+admin-ai-translation-hint = Traduce il testo trovato nelle immagini: come testo sotto l’immagine, o disegnato sopra le vignette di fumetti e manga.
+admin-ai-auto-translate = Traduci automaticamente le nuove immagini in
+admin-ai-auto-translate-hint = Un codice di lingua come en, it o pt-BR. Quando l’OCR trova testo in un nuovo caricamento, la traduzione viene disegnata sopra l’immagine. Vuoto: solo quando qualcuno la chiede. Ogni immagine viene inviata all’IA di traduzione.
 admin-ai-route-off = Spento
 admin-ai-route-hosted = Online
 admin-ai-route-local = Locale
@@ -831,6 +833,15 @@ post-ocr-translate = Traduci
 post-ocr-translating = Traduzione…
 post-ocr-original = Mostra originale
 post-ocr-machine = Tradotto dall’IA; può contenere errori.
+
+## Testo tradotto sull’immagine (fumetti e manga)
+
+post-panels-make = Traduci l’immagine
+post-panels-make-title = Traduce il testo dell’immagine e lo mostra sopra la figura. L’immagine viene inviata all’IA di traduzione del server.
+post-panels-making = Traduzione dell’immagine…
+post-panels-show = Mostra la traduzione
+post-panels-hide = Nascondi la traduzione
+post-panels-none = Nessun testo da tradurre.
 settings-originals = Apri sempre gli originali nel visualizzatore
 settings-originals-hint = Altrimenti le immagini grandi si aprono come copia più leggera, più veloce e con meno dati. L’originale si apre comunque quando ingrandisci, o quando lo schermo ha più pixel della copia.
 
