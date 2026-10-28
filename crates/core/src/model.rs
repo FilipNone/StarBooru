@@ -315,6 +315,72 @@ pub struct ImportRequest {
     pub source: Option<String>,
 }
 
+/// Most addresses one `POST /imports` takes.
+pub const MAX_IMPORT_BATCH: usize = 500;
+
+/// `POST /imports`: addresses the server downloads in the background, so the
+/// import goes on with every app closed.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ImportBatch {
+    pub items: Vec<ImportRequest>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum JobState {
+    Queued,
+    Running,
+    Done,
+    /// The file was already here; `post_id` is that post when known.
+    Duplicate,
+    Failed,
+}
+
+impl JobState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            JobState::Queued => "queued",
+            JobState::Running => "running",
+            JobState::Done => "done",
+            JobState::Duplicate => "duplicate",
+            JobState::Failed => "failed",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        [
+            JobState::Queued,
+            JobState::Running,
+            JobState::Done,
+            JobState::Duplicate,
+            JobState::Failed,
+        ]
+        .into_iter()
+        .find(|j| j.as_str() == s)
+    }
+
+    /// Still waiting or running.
+    pub fn is_active(self) -> bool {
+        matches!(self, JobState::Queued | JobState::Running)
+    }
+}
+
+/// One background import.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ImportJob {
+    pub id: i64,
+    pub url: String,
+    pub source: Option<String>,
+    pub tags: Vec<String>,
+    pub rating: Rating,
+    pub state: JobState,
+    pub post_id: Option<i64>,
+    /// Why it failed, for people.
+    pub error: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub finished_at: Option<DateTime<Utc>>,
+}
+
 /// A search a user kept, listed on their gallery page.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SavedSearch {
@@ -546,5 +612,17 @@ mod tests {
             "\"explicit\""
         );
         assert_eq!(serde_json::to_string(&Role::Admin).unwrap(), "\"admin\"");
+    }
+
+    #[test]
+    fn job_states_round_trip() {
+        for s in ["queued", "running", "done", "duplicate", "failed"] {
+            let state = JobState::parse(s).unwrap();
+            assert_eq!(state.as_str(), s);
+            assert_eq!(serde_json::to_value(state).unwrap(), s);
+        }
+        assert_eq!(JobState::parse("cancelled"), None);
+        assert!(JobState::Queued.is_active() && JobState::Running.is_active());
+        assert!(!JobState::Done.is_active() && !JobState::Failed.is_active());
     }
 }

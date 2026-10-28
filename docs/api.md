@@ -224,12 +224,25 @@ The server searches another booru for you, so the app needs no cross-site access
 - `base` is the site's http(s) address without query or credentials; a trailing slash is dropped. `tags` is in the site's own syntax. `page` starts at 1 and goes up to 1000. Each page asks for 40 posts.
 - `login` and `api_key` are the account on that site, sent only to it, in the query as it names them (`user_id` for Gelbooru, `password_hash` for Moebooru). They are used only when both are given, and are never stored or logged by the server. Each field is at most 512 bytes.
 - A `RemotePost` is `{id, page_url, preview_url, file_url, tags, rating, width, height}`. `tags` holds only tags valid here (the rest are dropped); `rating` is mapped to StarBooru's scale. Posts without a file the account may see are left out. `more` is true when the site sent a full page.
-- Import a result with `POST /posts/import`, `url` = `file_url` and `source` = `page_url`.
+- Import results with `POST /imports` (in the background) or `POST /posts/import` (one, waiting for it), `url` = `file_url` and `source` = `page_url`.
 
 Errors:
 - 400 `bad_request`: a bad request, an address the server won't reach, URL import turned off, a site that wants an account (401/403 from it), or a search it refused (400/422, e.g. Danbooru's two-tag limit without an account).
 - 429 `rate_limited` with `Retry-After: 5` when the site is busy (429/503).
 - 502 `fetch_failed` when the site errors, times out, or answers with something that isn't that API's search.
+
+## Background imports
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| POST | `/imports` | `ImportBatch {items: [ImportRequest]}`, 1 to 500 items | `ImportJob[]`, all `queued` |
+| GET | `/imports` | | `ImportJob[]`: the caller's imports still waiting or running, and those finished in the last 24 hours, newest first |
+| DELETE | `/imports/{id}` | | 204; cancels a waiting import or hides a finished one. 409 `running` while it downloads; 404 if it isn't yours. |
+| DELETE | `/imports` | | 204; hides the caller's finished imports |
+
+The server downloads each address on its own, so an import goes on when every app is closed and survives a restart (an import a restart interrupts starts over). Each item follows the rules of `POST /posts/import`; the whole batch is refused (400) when one address is not http(s), has credentials, is on a private network (unless the server allows it), has a bad tag, or URL import is off. 409 `too_many_imports` past 2000 waiting imports per account. Two imports run at once, server-wide, oldest first. Finished imports are deleted after 7 days.
+
+`ImportJob` is `{id, url, source, tags, rating, state, post_id, error, created_at, finished_at}`. `state` is `queued`, `running`, `done` (`post_id` is the new post), `duplicate` (the file was already here; `error` says which post) or `failed` (`error` says why, e.g. the site answered 404, the file is over the upload limit, the storage limit, a disabled account). File uploads (`POST /posts`) are sent by the app, so they stop when it closes.
 
 ## Saved searches
 

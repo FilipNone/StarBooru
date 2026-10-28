@@ -76,6 +76,13 @@ impl Fetcher {
         Ok(Self { client, reach })
     }
 
+    /// Whether `raw` could be fetched, without fetching it (host names are
+    /// still checked when they resolve).
+    pub fn check(&self, raw: &str) -> Result<(), FetchError> {
+        let url = Url::parse(raw.trim()).map_err(|_| FetchError::BadUrl)?;
+        check_url(&url, self.reach)
+    }
+
     /// Downloads `raw` into memory, refusing bodies over `max_bytes`.
     pub async fn get(&self, raw: &str, max_bytes: usize) -> Result<Vec<u8>, FetchError> {
         let url = Url::parse(raw.trim()).map_err(|_| FetchError::BadUrl)?;

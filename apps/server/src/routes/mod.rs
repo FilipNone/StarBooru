@@ -8,6 +8,7 @@ mod backups;
 mod duplicates;
 mod edit;
 mod explore;
+mod imports;
 mod keys;
 mod oidc;
 mod posts;
@@ -18,6 +19,7 @@ mod tags;
 mod trash;
 
 pub use autotag::backfill_meta_tags;
+pub use imports::run_imports;
 pub use posts::{backfill_hashes, backfill_media, backfill_samples};
 pub use trash::auto_purge;
 
@@ -111,6 +113,13 @@ pub fn router(state: AppState) -> Router {
                 .delete(posts::delete),
         )
         .route("/posts/import", post(posts::import))
+        .route(
+            "/imports",
+            get(imports::list)
+                .post(imports::create)
+                .delete(imports::clear),
+        )
+        .route("/imports/{id}", axum::routing::delete(imports::delete))
         .route("/remote/search", post(remote::search))
         .route("/posts/bulk", post(posts::bulk))
         .route("/posts/{id}/neighbors", get(posts::neighbors))

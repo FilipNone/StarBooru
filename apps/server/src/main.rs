@@ -74,6 +74,7 @@ async fn run() -> Result<(), StartupError> {
     let app = routes::router(state.clone());
     tokio::spawn(routes::auto_purge(state.clone()));
     tokio::spawn(backup::auto_backup(state.clone()));
+    tokio::spawn(routes::run_imports(state.clone()));
     let backfill = state.clone();
     tokio::spawn(async move {
         routes::backfill_media(backfill.clone()).await;

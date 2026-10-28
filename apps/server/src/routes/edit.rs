@@ -95,7 +95,7 @@ pub async fn edit(
 
     let copy = posts::create_post(
         &state,
-        &user,
+        user.id,
         Bytes::from(bytes),
         post.rating,
         post.source.clone(),

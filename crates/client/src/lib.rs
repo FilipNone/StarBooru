@@ -12,12 +12,12 @@ use serde::de::DeserializeOwned;
 use starbooru_core::{
     API_PREFIX, AdminUser, AliasRequest, ApiError, ApiKey, AuthResponse, Backup, BackupSchedule,
     Backups, BulkEdit, BulkResult, CreatedApiKey, Credentials, DismissDuplicates, Duplicates,
-    Explore, Identity, ImplicationRequest, ImportRequest, MediaEdit, Neighbors, NewApiKey,
-    NewShare, OidcBegin, OidcFinish, OidcStart, PasswordChange, PasswordReset, Post, PostPage,
-    PostUpdate, PurgeResult, Rating, RelatedPosts, RemotePage, RemoteSearch, ResolveDuplicates,
-    RevokeResult, SaveSearchRequest, SavedSearch, ServerInfo, ServerSettings, ServerStats,
-    SessionInfo, Share, SharedView, SignInMethods, Tag, TagDetail, TagOrder, TagUpdate, Usage,
-    User, UserUpdate, VoteRequest,
+    Explore, Identity, ImplicationRequest, ImportBatch, ImportJob, ImportRequest, MediaEdit,
+    Neighbors, NewApiKey, NewShare, OidcBegin, OidcFinish, OidcStart, PasswordChange,
+    PasswordReset, Post, PostPage, PostUpdate, PurgeResult, Rating, RelatedPosts, RemotePage,
+    RemoteSearch, ResolveDuplicates, RevokeResult, SaveSearchRequest, SavedSearch, ServerInfo,
+    ServerSettings, ServerStats, SessionInfo, Share, SharedView, SignInMethods, Tag, TagDetail,
+    TagOrder, TagUpdate, Usage, User, UserUpdate, VoteRequest,
 };
 use starbooru_core::{
     AiSettings, AiSettingsUpdate, AiStatus, LocalAiStatus, LocalTestResult, PanelTranslation,
@@ -586,6 +586,29 @@ impl Client {
     /// Asks the server to download `request.url` and add it as a post.
     pub async fn import_url(&self, request: &ImportRequest) -> Result<Post> {
         self.json(Method::POST, "/posts/import", request).await
+    }
+
+    /// Queues addresses for the server to download in the background; the
+    /// import goes on when this app is closed. Follow it with [`Client::imports`].
+    pub async fn queue_imports(&self, items: Vec<ImportRequest>) -> Result<Vec<ImportJob>> {
+        self.json(Method::POST, "/imports", &ImportBatch { items })
+            .await
+    }
+
+    /// Background imports still waiting or running, and those finished in the
+    /// last day, newest first.
+    pub async fn imports(&self) -> Result<Vec<ImportJob>> {
+        Self::send(self.request(Method::GET, "/imports")?).await
+    }
+
+    /// Cancels a waiting import or hides a finished one.
+    pub async fn delete_import(&self, id: i64) -> Result<()> {
+        Self::send_empty(self.request(Method::DELETE, &format!("/imports/{id}"))?).await
+    }
+
+    /// Hides finished imports.
+    pub async fn clear_imports(&self) -> Result<()> {
+        Self::send_empty(self.request(Method::DELETE, "/imports")?).await
     }
 
     /// One page of a search on another booru, fetched by the server. Import

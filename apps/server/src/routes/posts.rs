@@ -631,7 +631,7 @@ pub async fn upload(
         }
     }
     let bytes = file.ok_or_else(|| AppError::BadRequest("missing `file` field".into()))?;
-    create_post(&state, &user, bytes, rating, source, &tags)
+    create_post(&state, user.id, bytes, rating, source, &tags)
         .await
         .map(Json)
 }
@@ -642,6 +642,15 @@ pub async fn import(
     user: AuthUser,
     Json(req): Json<ImportRequest>,
 ) -> AppResult<Json<Post>> {
+    import_one(&state, user.id, req).await.map(Json)
+}
+
+/// Downloads `req.url` and adds it for `user_id`; also runs background imports.
+pub(super) async fn import_one(
+    state: &AppState,
+    user_id: i64,
+    req: ImportRequest,
+) -> AppResult<Post> {
     let fetcher = state
         .fetcher
         .as_ref()
@@ -657,21 +666,20 @@ pub async fn import(
             _ => AppError::Upstream(e.to_string()),
         })?;
     create_post(
-        &state,
-        &user,
+        state,
+        user_id,
         Bytes::from(fetched),
         req.rating,
         source,
         &tags,
     )
     .await
-    .map(Json)
 }
 
 /// Stores `bytes` and inserts the post, refusing exact duplicates.
 pub(super) async fn create_post(
     state: &AppState,
-    user: &AuthUser,
+    user_id: i64,
     bytes: Bytes,
     rating: Rating,
     source: Option<String>,
@@ -679,7 +687,7 @@ pub(super) async fn create_post(
 ) -> AppResult<Post> {
     let file_size = i64::try_from(bytes.len()).map_err(AppError::internal)?;
     // Early, so a file over the limit isn't processed; checked again below.
-    check_quota(&state.db, user.id, file_size).await?;
+    check_quota(&state.db, user_id, file_size).await?;
 
     let worker = state.clone();
     let info = tokio::task::spawn_blocking(move || worker.storage.ingest(&bytes)).await??;
@@ -692,11 +700,11 @@ pub(super) async fn create_post(
         return Err(duplicate(id));
     }
 
-    match insert_post(state, user, &info, file_size, rating, source, tags).await {
+    match insert_post(state, user_id, &info, file_size, rating, source, tags).await {
         Ok(id) => {
             crate::ai::autotag_later(state, id);
             crate::ocr::spawn_scan(state, id);
-            load(state, user.id, id).await
+            load(state, user_id, id).await
         }
         Err(e) => {
             discard_orphan(state, &info).await;
@@ -738,7 +746,7 @@ async fn discard_orphan(state: &AppState, info: &Ingested) {
 
 async fn insert_post(
     state: &AppState,
-    user: &AuthUser,
+    user_id: i64,
     info: &Ingested,
     file_size: i64,
     rating: Rating,
@@ -747,7 +755,7 @@ async fn insert_post(
 ) -> AppResult<i64> {
     let auto_tags = crate::settings::current(state).await?.auto_meta_tags;
     let mut tx = state.db.begin().await?;
-    check_quota(&mut *tx, user.id, file_size).await?;
+    check_quota(&mut *tx, user_id, file_size).await?;
     let id: i64 = sqlx::query_scalar(
         "INSERT INTO posts (sha256, ext, mime, kind, file_size, width, height, duration_ms, \
          has_thumb, rating, source, uploader_id, phash, pcolor, has_sample) \
@@ -764,7 +772,7 @@ async fn insert_post(
     .bind(info.has_thumb)
     .bind(rating.to_db())
     .bind(source)
-    .bind(user.id)
+    .bind(user_id)
     .bind(info.print.map(|p| p.hash_db()))
     .bind(info.print.map(|p| p.color_db()))
     .bind(info.has_sample)
@@ -1002,7 +1010,7 @@ fn duplicate(id: i64) -> AppError {
     }
 }
 
-fn clean_source(raw: String) -> AppResult<Option<String>> {
+pub(super) fn clean_source(raw: String) -> AppResult<Option<String>> {
     let s = raw.trim();
     if s.is_empty() {
         return Ok(None);
