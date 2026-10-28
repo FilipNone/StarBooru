@@ -1,6 +1,6 @@
 # Roadmap
 
-_Status as of 2026-10-27. Scope comes from `docs/checklist.md`._
+_Status as of 2026-10-28. Scope comes from `docs/checklist.md`._
 
 **Legend:**
 - ✅ done
@@ -16,7 +16,7 @@ _Status as of 2026-10-27. Scope comes from `docs/checklist.md`._
 2. **M2, daily driver.** Video thumbnails, a recycle bin page, mass edit, saved searches, an explore/trending page, a duplicate finder, keyboard navigation, i18n scaffolding.
 3. **M3, admin and safety.** Done: sign-in with an OpenID Connect provider, login rate limiting, API keys, admin settings, server stats, usage stats and limits, and database backups.
 4. **M4, native polish.** Caching and offline use, a keyring token store, Android dynamic colour, in-app updates, multiple booru backends, sync.
-5. **M5, AI.** Embeddings with pgvector for similar-image search (and content-aware related media), automatic tagging, OCR, translation, upscaling and background removal (with a bring-your-own API key).
+5. **M5, AI.** Done: automatic tagging (meta tags from the file, and AI tag suggestions), OCR and translation, with a bring-your-own OpenAI-compatible provider. Left: embeddings with pgvector for similar-image search (and content-aware related media), upscaling and background removal.
 
 ## Server (docker)
 
@@ -35,7 +35,7 @@ _Status as of 2026-10-27. Scope comes from `docs/checklist.md`._
 | video preview | ✅ | Thumbnails for video, AVIF and JPEG XL through ffmpeg (bundled in the image), length badge, muted preview on mouse hover, plays in the viewer. Older posts get thumbnails at the next start. |
 | media importer / upload tab | ✅ | Multi-file drag and drop; folder import (only images and videos, optionally tagged with the folder name); import from URLs (downloaded by the server, public addresses only by default); shared tags and rating plus tags per file. |
 | saved search | ✅ | Star a search in the gallery header to save it, or tap it again to forget it. Saved searches show as chips on the unfiltered gallery. Per user, at most 200. |
-| automatic tagging, AI features, OCR | ⬜ | M5 |
+| automatic tagging, AI features, OCR | 🟡 | **Automatic tags:** every new post gets Danbooru's meta tags from the file (`lowres`, `highres`, `absurdres`, `wide_image`, `tall_image`, `animated`, `video`, `sound`, `long_video`), once per post so a removed tag stays removed; older posts are tagged at the next start; Administration › Server or `STARBOORU_AUTO_TAGS` turns it off. **AI:** an admin sets an OpenAI-compatible provider (OpenAI, OpenRouter, Gemini, or a local Ollama / LM Studio, which keeps images on the network) in Administration › Server › AI or by environment. *Suggest tags* in the tag editor asks a vision model about the thumbnail and shows chips to add (new tags marked), with a suggested rating; optionally new uploads are tagged in the background. **OCR:** tesseract on the server reads the text in still images after upload (and older ones at start); the viewer shows it with Copy and, with a provider, *Translate* into the app's language; `text:word` / `text:"two words"` search it. Not done: embeddings (pgvector), upscaling, background removal. |
 | explore tab with trending | ✅ | An Explore tab: trending posts (net upvotes in the last day, week, month or year), popular tags on recent posts, *On this day* from earlier years, and shuffleable random picks. A search narrows it all. |
 | login system | ✅ | Accounts, Argon2id, revocable tokens, first user becomes admin. Failed sign-ins are limited per account and address (429 with `Retry-After`). Optional sign-in with an OpenID Connect provider (Authentik, Keycloak, Google…): PKCE, accounts made on first sign-in when registration is open, and provider accounts linked and unlinked in Settings. The desktop app gets the answer through the system browser and a loopback listener. |
 | profile settings | ✅ | Theme, accent and language; password change (signs out other devices); a list of signed-in devices with last activity, sign-out per device and *Sign out everywhere else*. |
@@ -93,4 +93,6 @@ _Status as of 2026-10-27. Scope comes from `docs/checklist.md`._
 
 - **Plaintext token on desktop.** The token is stored in the user's config directory. Moving it to the OS keyring is M4.
 - **Orphan files.** Fixed for failed inserts (the files are removed unless another post owns them) and interrupted writes (`tmp/` is cleared at startup). Files left by a crash between the write and the insert are not swept yet.
+- **AI key in the database.** An API key entered in Administration › AI is stored as plain text in `server_settings`, so it is also in database backups. Setting it with `STARBOORU_AI_KEY` keeps it out of both.
+- **OCR coverage.** GIFs and videos are not read, and a scan that failed or timed out counts as done (`POST /posts/{id}/ocr` redoes it; there is no button for that in the app yet). The Docker image has English only; other languages need their `tesseract-ocr-*` package.
 - **Sideways photos from before EXIF orientation.** Images are now decoded upright, but posts uploaded earlier keep the thumbnail and the width/height they got without it. For such a photo the editor's crop can be refused as "outside the image"; turning it still works. Rebuilding those thumbnails and sizes needs a backfill.
