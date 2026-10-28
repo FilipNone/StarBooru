@@ -9,6 +9,7 @@ mod config;
 mod edit;
 mod error;
 mod fetch;
+mod local_ai;
 mod media;
 mod ocr;
 mod oidc;

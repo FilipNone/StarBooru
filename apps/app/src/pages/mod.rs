@@ -1,4 +1,5 @@
 mod admin;
+mod admin_ai;
 mod admin_backups;
 mod api_keys;
 mod boorus;

@@ -223,7 +223,7 @@ pub async fn backfill(state: AppState) {
 /// Runs a tool and returns its stdout if it exits successfully within
 /// `timeout`. Output beyond `max_out` bytes stalls the child until the
 /// timeout kills it.
-fn run(cmd: &mut Command, max_out: u64, timeout: Duration) -> Option<Vec<u8>> {
+pub(crate) fn run(cmd: &mut Command, max_out: u64, timeout: Duration) -> Option<Vec<u8>> {
     let mut child = cmd
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

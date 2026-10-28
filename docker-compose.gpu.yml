@@ -1,0 +1,9 @@
+# Gives the local AI runtime the GPU, through Vulkan: integrated Intel and
+# AMD graphics and AMD Radeon cards. Use it with the local-ai profile:
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml --profile local-ai up -d
+# NVIDIA cards need the NVIDIA Container Toolkit and a `deploy` block
+# instead; see docs/deployment.md.
+services:
+  ollama:
+    devices:
+      - /dev/dri:/dev/dri

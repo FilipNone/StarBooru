@@ -32,6 +32,11 @@ services:
       STARBOORU_AI_MODEL: ${STARBOORU_AI_MODEL:-}
       STARBOORU_AI_KEY: ${STARBOORU_AI_KEY:-}
       STARBOORU_AI_AUTOTAG: ${STARBOORU_AI_AUTOTAG:-false}
+      STARBOORU_AI_TAGGING: ${STARBOORU_AI_TAGGING:-}
+      STARBOORU_AI_TRANSLATION: ${STARBOORU_AI_TRANSLATION:-}
+      STARBOORU_LOCAL_AI: ${STARBOORU_LOCAL_AI:-false}
+      STARBOORU_LOCAL_AI_URL: ${STARBOORU_LOCAL_AI_URL:-http://ollama:11434}
+      STARBOORU_LOCAL_AI_MODEL: ${STARBOORU_LOCAL_AI_MODEL:-}
       # Behind Dokploy's Traefik the client address is in X-Forwarded-For.
       STARBOORU_TRUST_PROXY: ${STARBOORU_TRUST_PROXY:-true}
     volumes:
@@ -57,7 +62,20 @@ services:
       timeout: 5s
       retries: 30
 
+  # Local AI (optional): start it with `--profile local-ai` and set
+  # STARBOORU_LOCAL_AI=true. CPU only as is; docker-compose.gpu.yml adds a
+  # GPU (see docs/deployment.md).
+  ollama:
+    image: ollama/ollama:0.40.12
+    profiles: ["local-ai"]
+    restart: unless-stopped
+    volumes:
+      - ollama:/root/.ollama
+    expose:
+      - "11434"
+
 # Named volumes, so Dokploy's Volume Backups can back them up.
 volumes:
   media:
   pgdata:
+  ollama:

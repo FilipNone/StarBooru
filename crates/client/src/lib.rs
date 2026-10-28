@@ -20,7 +20,8 @@ use starbooru_core::{
     User, UserUpdate, VoteRequest,
 };
 use starbooru_core::{
-    AiSettings, AiSettingsUpdate, AiStatus, TagSuggestions, TranslateRequest, Translation,
+    AiSettings, AiSettingsUpdate, AiStatus, LocalAiStatus, LocalTestResult, PullRequest,
+    TagSuggestions, TranslateRequest, Translation,
 };
 use std::time::Duration;
 use thiserror::Error;
@@ -411,6 +412,26 @@ impl Client {
 
     pub async fn set_admin_ai(&self, update: &AiSettingsUpdate) -> Result<AiSettings> {
         self.json(Method::PUT, "/admin/ai", update).await
+    }
+
+    /// The server's hardware, how each local preset would run on it, and
+    /// the local runtime's models and download.
+    pub async fn local_ai(&self) -> Result<LocalAiStatus> {
+        Self::send(self.request(Method::GET, "/admin/ai/local")?).await
+    }
+
+    /// Starts downloading a model into the local runtime.
+    pub async fn pull_local_model(&self, model: &str) -> Result<LocalAiStatus> {
+        let req = PullRequest {
+            model: model.to_owned(),
+        };
+        self.json(Method::POST, "/admin/ai/local/pull", &req).await
+    }
+
+    /// Times one tagging request on the local model. Can take minutes on
+    /// slow hardware.
+    pub async fn test_local_ai(&self) -> Result<LocalTestResult> {
+        Self::send(self.request(Method::POST, "/admin/ai/local/test")?).await
     }
 
     pub async fn admin_users(&self) -> Result<Vec<AdminUser>> {

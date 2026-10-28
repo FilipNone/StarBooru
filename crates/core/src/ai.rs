@@ -24,19 +24,68 @@ character, copyright, meta; only name characters, series or artists you are sure
 Give at most 30 tags, most important first. Rating is one of general, sensitive, \
 questionable, explicit.";
 
-/// `GET /ai`: whether AI features are available to clients.
+/// Where an AI tool runs.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AiRoute {
+    #[default]
+    Off,
+    /// The OpenAI-compatible provider (OpenAI, OpenRouter, …).
+    Hosted,
+    /// The local runtime on the server's own hardware.
+    Local,
+}
+
+impl AiRoute {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "off" | "none" | "false" => Some(Self::Off),
+            "hosted" | "remote" => Some(Self::Hosted),
+            "local" => Some(Self::Local),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Hosted => "hosted",
+            Self::Local => "local",
+        }
+    }
+}
+
+/// `GET /ai`: which AI features clients should offer.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AiStatus {
+    /// Any AI tool is on.
     pub enabled: bool,
-    /// The configured model, when enabled.
+    /// The tagging model, when tagging is on.
     pub model: Option<String>,
+    /// Tag suggestions.
+    pub tagging: bool,
+    /// Translation of the text in images.
+    pub translation: bool,
+}
+
+/// The local runtime (an Ollama server).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LocalAiSettings {
+    /// Off by default (`STARBOORU_LOCAL_AI`).
+    pub enabled: bool,
+    /// Ollama's address, such as `http://ollama:11434`
+    /// (`STARBOORU_LOCAL_AI_URL`).
+    pub url: String,
+    /// Ollama model name (`STARBOORU_LOCAL_AI_MODEL`). Empty: the preset
+    /// recommended for this machine.
+    pub model: String,
 }
 
 /// `GET /admin/ai`. The key itself is never returned.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AiSettings {
     /// Base URL of an OpenAI-compatible API, such as `https://api.openai.com/v1`
-    /// (`STARBOORU_AI_URL`). Empty turns AI features off.
+    /// (`STARBOORU_AI_URL`). Empty turns the hosted provider off.
     pub url: String,
     /// Model name (`STARBOORU_AI_MODEL`).
     pub model: String,
@@ -44,6 +93,11 @@ pub struct AiSettings {
     pub key_set: bool,
     /// Tag new uploads automatically (`STARBOORU_AI_AUTOTAG`).
     pub autotag: bool,
+    pub local: LocalAiSettings,
+    /// Where tag suggestions run (`STARBOORU_AI_TAGGING`).
+    pub tagging: AiRoute,
+    /// Where translations run (`STARBOORU_AI_TRANSLATION`).
+    pub translation: AiRoute,
 }
 
 /// `PUT /admin/ai`.
@@ -56,13 +110,27 @@ pub struct AiSettingsUpdate {
     #[serde(default)]
     pub key: Option<String>,
     pub autotag: bool,
+    pub local: LocalAiSettings,
+    pub tagging: AiRoute,
+    pub translation: AiRoute,
 }
 
-/// Checks an admin's AI settings. Returns the trimmed URL and model.
-pub fn clean_ai_settings(update: &AiSettingsUpdate) -> Result<(String, String), String> {
+/// Checks an admin's AI settings. Returns them trimmed: URLs without a
+/// trailing `/` (and the local one without `/v1`, which is added per call).
+pub fn clean_ai_settings(update: &AiSettingsUpdate) -> Result<AiSettingsUpdate, String> {
     let url = update.url.trim().trim_end_matches('/').to_owned();
     let model = update.model.trim().to_owned();
-    for (what, value) in [("address", &url), ("model", &model)] {
+    let local_url = update.local.url.trim().trim_end_matches('/');
+    let local_url = local_url
+        .strip_suffix("/v1")
+        .unwrap_or(local_url)
+        .to_owned();
+    let local_model = update.local.model.trim().to_owned();
+    for (what, value) in [
+        ("address", &url),
+        ("model", &model),
+        ("local address", &local_url),
+    ] {
         if value.chars().count() > MAX_AI_FIELD_CHARS {
             return Err(format!("the {what} is too long"));
         }
@@ -70,8 +138,10 @@ pub fn clean_ai_settings(update: &AiSettingsUpdate) -> Result<(String, String), 
             return Err(format!("the {what} contains a control character"));
         }
     }
-    if !url.is_empty() && !(url.starts_with("http://") || url.starts_with("https://")) {
-        return Err("the address must start with http:// or https://".into());
+    for value in [&url, &local_url] {
+        if !value.is_empty() && !(value.starts_with("http://") || value.starts_with("https://")) {
+            return Err("the address must start with http:// or https://".into());
+        }
     }
     if !url.is_empty() && model.is_empty() {
         return Err("enter a model name".into());
@@ -81,7 +151,33 @@ pub fn clean_ai_settings(update: &AiSettingsUpdate) -> Result<(String, String), 
     {
         return Err("the key is not valid".into());
     }
-    Ok((url, model))
+    if !local_model.is_empty() {
+        crate::local_ai::clean_model_name(&local_model)?;
+    }
+    if update.local.enabled && local_url.is_empty() {
+        return Err("enter the address of the local AI runtime".into());
+    }
+    for route in [update.tagging, update.translation] {
+        if route == AiRoute::Hosted && url.is_empty() {
+            return Err("set up the hosted provider first, or pick local".into());
+        }
+        if route == AiRoute::Local && !update.local.enabled {
+            return Err("turn local AI on first, or pick hosted".into());
+        }
+    }
+    Ok(AiSettingsUpdate {
+        url,
+        model,
+        key: update.key.clone(),
+        autotag: update.autotag,
+        local: LocalAiSettings {
+            enabled: update.local.enabled,
+            url: local_url,
+            model: local_model,
+        },
+        tagging: update.tagging,
+        translation: update.translation,
+    })
 }
 
 /// One suggested tag.
@@ -353,12 +449,13 @@ mod tests {
         let mut u = AiSettingsUpdate {
             url: " http://ollama:11434/v1/ ".into(),
             model: "llava".into(),
-            key: None,
-            autotag: false,
+            tagging: AiRoute::Hosted,
+            ..AiSettingsUpdate::default()
         };
+        let c = clean_ai_settings(&u).unwrap();
         assert_eq!(
-            clean_ai_settings(&u),
-            Ok(("http://ollama:11434/v1".into(), "llava".into()))
+            (c.url.as_str(), c.model.as_str()),
+            ("http://ollama:11434/v1", "llava")
         );
         u.url = "ftp://x".into();
         assert!(clean_ai_settings(&u).is_err());
@@ -366,6 +463,47 @@ mod tests {
         u.model = " ".into();
         assert!(clean_ai_settings(&u).is_err());
         u.url = String::new();
+        // Tagging can't go to a hosted provider that isn't set up.
+        assert!(clean_ai_settings(&u).is_err());
+        u.tagging = AiRoute::Off;
         assert!(clean_ai_settings(&u).is_ok());
+    }
+
+    #[test]
+    fn checks_local_settings() {
+        let mut u = AiSettingsUpdate {
+            local: LocalAiSettings {
+                enabled: true,
+                url: " http://ollama:11434/v1/ ".into(),
+                model: " qwen3-vl:4b-instruct ".into(),
+            },
+            tagging: AiRoute::Local,
+            translation: AiRoute::Local,
+            ..AiSettingsUpdate::default()
+        };
+        let c = clean_ai_settings(&u).unwrap();
+        assert_eq!(c.local.url, "http://ollama:11434");
+        assert_eq!(c.local.model, "qwen3-vl:4b-instruct");
+        u.local.model = "bad name".into();
+        assert!(clean_ai_settings(&u).is_err());
+        u.local.model = String::new();
+        assert!(clean_ai_settings(&u).is_ok());
+        u.local.url = " ".into();
+        assert!(clean_ai_settings(&u).is_err());
+        u.local.url = "http://x".into();
+        u.local.enabled = false;
+        assert!(clean_ai_settings(&u).is_err());
+        u.tagging = AiRoute::Off;
+        u.translation = AiRoute::Off;
+        assert!(clean_ai_settings(&u).is_ok());
+    }
+
+    #[test]
+    fn routes() {
+        for r in [AiRoute::Off, AiRoute::Hosted, AiRoute::Local] {
+            assert_eq!(AiRoute::parse(r.as_str()), Some(r));
+        }
+        assert_eq!(AiRoute::parse(" LOCAL "), Some(AiRoute::Local));
+        assert_eq!(AiRoute::parse("cloud"), None);
     }
 }

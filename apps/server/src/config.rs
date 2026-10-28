@@ -3,6 +3,7 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
+use starbooru_core::AiRoute;
 use starbooru_core::admin::{MAX_BACKUP_DAYS, MAX_BACKUP_KEEP};
 use thiserror::Error;
 use url::Url;
@@ -60,13 +61,23 @@ pub struct Config {
     pub ai: AiConfig,
 }
 
-/// The AI provider from the environment. An empty URL turns AI features off.
+/// The AI providers from the environment. An empty URL turns the hosted
+/// provider off; the local runtime is off unless `STARBOORU_LOCAL_AI` is set.
 #[derive(Clone, Default)]
 pub struct AiConfig {
     pub url: String,
     pub key: String,
     pub model: String,
     pub autotag: bool,
+    pub local_enabled: bool,
+    /// Ollama's address, without a trailing `/`.
+    pub local_url: String,
+    /// Empty: the preset recommended for this machine.
+    pub local_model: String,
+    /// Where each tool runs; `None` picks hosted when it is set up, else
+    /// local when it is on, else off.
+    pub tagging: Option<AiRoute>,
+    pub translation: Option<AiRoute>,
 }
 
 impl std::fmt::Debug for AiConfig {
@@ -76,6 +87,11 @@ impl std::fmt::Debug for AiConfig {
             .field("url", &self.url)
             .field("model", &self.model)
             .field("autotag", &self.autotag)
+            .field("local_enabled", &self.local_enabled)
+            .field("local_url", &self.local_url)
+            .field("local_model", &self.local_model)
+            .field("tagging", &self.tagging)
+            .field("translation", &self.translation)
             .finish_non_exhaustive()
     }
 }
@@ -266,6 +282,17 @@ impl Config {
                     .trim()
                     .to_owned(),
                 autotag: flag(get("STARBOORU_AI_AUTOTAG")),
+                local_enabled: flag(get("STARBOORU_LOCAL_AI")),
+                local_url: get("STARBOORU_LOCAL_AI_URL")
+                    .map(|u| u.trim().trim_end_matches('/').to_owned())
+                    .filter(|u| !u.is_empty())
+                    .unwrap_or_else(|| "http://127.0.0.1:11434".into()),
+                local_model: get("STARBOORU_LOCAL_AI_MODEL")
+                    .unwrap_or_default()
+                    .trim()
+                    .to_owned(),
+                tagging: route(&get, "STARBOORU_AI_TAGGING")?,
+                translation: route(&get, "STARBOORU_AI_TRANSLATION")?,
             },
         })
     }
@@ -390,6 +417,22 @@ fn whole(
             name,
             reason: format!("`{v}` is not a whole number"),
         }),
+    }
+}
+
+/// `off`, `hosted` or `local`; unset or empty is `None`.
+fn route(
+    get: &impl Fn(&str) -> Option<String>,
+    name: &'static str,
+) -> Result<Option<AiRoute>, ConfigError> {
+    match get(name).filter(|v| !v.trim().is_empty()) {
+        None => Ok(None),
+        Some(v) => AiRoute::parse(&v)
+            .map(Some)
+            .ok_or_else(|| ConfigError::Invalid {
+                name,
+                reason: format!("`{v}` is not off, hosted or local"),
+            }),
     }
 }
 

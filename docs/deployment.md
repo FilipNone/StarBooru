@@ -90,15 +90,44 @@ Admins can change the name, open registration, the recycle-bin days and the back
 | `STARBOORU_OCR` | `true` | Read text in still images with tesseract (installed in the image), for `text:` search and the viewer's *Text in image*. Runs on the server only; no image leaves it. `off` turns it off; a path picks another tesseract. Without tesseract it is quietly off (logged once at start). Older posts are read in the background at each start. |
 | `STARBOORU_OCR_LANGS` | `eng` | tesseract languages, joined with `+`, e.g. `eng+ita`. The image has English only: add a language's package (`tesseract-ocr-ita`) in the `Dockerfile` first. |
 | `STARBOORU_URL_IMPORT` | `on` | Import from URL: `on` (public addresses only), `private` (also private-network addresses, e.g. a NAS; anyone with an account can then make the server fetch from your LAN), `off` |
-| `STARBOORU_AI_URL` | unset | Base URL of an OpenAI-compatible API for tag suggestions, such as `https://api.openai.com/v1`, `https://openrouter.ai/api/v1`, `https://generativelanguage.googleapis.com/v1beta/openai` or a local `http://ollama:11434/v1`. Unset turns AI off. Thumbnails of posts are sent to it; a local server keeps them on your network. Admins can change it in Administration › Server. |
-| `STARBOORU_AI_MODEL` | unset | A vision model, such as `gpt-4o-mini` or `llava` |
-| `STARBOORU_AI_KEY` | unset | API key, sent as a bearer token. Local servers usually need none. Never shown to clients or logged. |
+| `STARBOORU_AI_URL` | unset | Base URL of a hosted OpenAI-compatible API, such as `https://openrouter.ai/api/v1`, `https://api.openai.com/v1` or `https://generativelanguage.googleapis.com/v1beta/openai`. Unset turns the hosted provider off. Thumbnails of posts, and the text of images being translated, are sent to it. Admins can change every AI setting in Administration › Server. |
+| `STARBOORU_AI_MODEL` | unset | A vision model, such as `google/gemini-2.5-flash-lite` or `gpt-4o-mini` |
+| `STARBOORU_AI_KEY` | unset | API key, sent as a bearer token. Never shown to clients or logged. |
 | `STARBOORU_AI_AUTOTAG` | `false` | Add suggested tags to every new upload in the background (two at a time) |
+| `STARBOORU_LOCAL_AI` | `false` | Run AI on this server's hardware through Ollama (see *Local AI* below) |
+| `STARBOORU_LOCAL_AI_URL` | `http://127.0.0.1:11434` (`http://ollama:11434` in `docker-compose.yml`) | Ollama's address |
+| `STARBOORU_LOCAL_AI_MODEL` | unset | Ollama model; unset picks the preset that suits the hardware |
+| `STARBOORU_AI_TAGGING` | see meaning | Where tag suggestions run: `off`, `hosted` or `local`. Unset: hosted when `STARBOORU_AI_URL` is set, else local when it is on, else off. |
+| `STARBOORU_AI_TRANSLATION` | see meaning | Where translations run, the same way |
 | `STARBOORU_TRUST_PROXY` | `false` (`true` in `docker-compose.yml`) | Take the client address from the last `X-Forwarded-For` entry, for the sign-in limits. Turn it on only behind a reverse proxy that sets the header (Traefik does); otherwise clients could pick their own address. |
 | `STARBOORU_BIND` | `0.0.0.0:8080` | Listen address |
 | `STARBOORU_DATA_DIR` | `/data` in the image | Media storage |
 | `STARBOORU_WEB_DIR` | `/app/web` in the image | Compiled web app; unset means the server runs API-only |
 | `RUST_LOG` | `info,tower_http=info,sqlx=warn` | Log filter |
+
+## Local AI
+
+Tag suggestions and translation can run on the server's own hardware instead of a hosted provider, through [Ollama](https://ollama.com). Nothing leaves the server and there is no per-image cost. Each tool runs where the admin picks (Administration › Server › AI): off, hosted or local, so tagging can stay local while translation uses a hosted model, for example.
+
+1. Start Ollama next to StarBooru with the `local-ai` profile, and set `STARBOORU_LOCAL_AI=true`:
+
+   ```sh
+   docker compose --profile local-ai up -d                                   # processor only
+   docker compose -f docker-compose.yml -f docker-compose.gpu.yml --profile local-ai up -d   # with a GPU
+   ```
+
+   `docker-compose.gpu.yml` passes `/dev/dri` through, so Ollama uses the GPU through Vulkan: integrated Intel and AMD graphics and AMD Radeon cards. For an NVIDIA card, install the NVIDIA Container Toolkit and give the `ollama` service a `deploy.resources.reservations.devices` entry with `driver: nvidia` and `capabilities: [gpu]` instead. On Dokploy, add the same service to the compose file.
+
+2. In Administration › Server › AI, turn *Use local AI* on. The card shows the server's processor, memory and graphics, and for each preset whether it **runs well**, **runs slowly**, is **too slow** or **won't fit**, and on what (graphics card, integrated graphics or processor). The preset that suits the machine is marked *Recommended*.
+3. Download the model from the card, save, and use *Test the speed*: it tags a small generated image and reports the time and how much of the model sits in GPU memory. The first run also loads the model.
+
+| Preset | Model | Download | For |
+|---|---|---|---|
+| Small | `qwen3-vl:2b-instruct` | 1.9 GB | Raspberry Pi 5 (8 GB) and other small boards; about a minute per image on the processor |
+| Medium | `qwen3-vl:4b-instruct` | 3.3 GB | Laptops and mini PCs with integrated graphics and 8 GB or more |
+| Large | `qwen3-vl:8b-instruct` | 6.2 GB | Desktops with a graphics card of 8 GB or more |
+
+Any other Ollama model that reads images works too (*Another model*). The check reads the hardware where StarBooru runs; when Ollama runs on another machine, point `STARBOORU_LOCAL_AI_URL` at it and trust the speed test instead. Local answers may take up to five minutes before they time out.
 
 ## Plain Docker Compose
 

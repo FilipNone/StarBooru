@@ -4,7 +4,7 @@ use dioxus::html::geometry::{ClientPoint, PixelsRect};
 use dioxus::prelude::*;
 use starbooru_client::{Client, ClientError};
 use starbooru_core::{
-    EditKind, MediaKind, Neighbors, Post, PostUpdate, Rating, SAMPLE_SIZE, TagSuggestion,
+    AiStatus, EditKind, MediaKind, Neighbors, Post, PostUpdate, Rating, SAMPLE_SIZE, TagSuggestion,
     TagSuggestions, edit_kind,
 };
 
@@ -476,13 +476,13 @@ pub fn PostView(id: i64, q: String) -> Element {
 const OCR_FOLD_CHARS: usize = 280;
 const OCR_FOLD_LINES: usize = 6;
 
-/// Whether the server has an AI provider, for showing AI buttons.
-fn use_ai_enabled() -> bool {
+/// Which AI tools the server offers, for showing AI buttons.
+fn use_ai_status() -> AiStatus {
     let status = use_resource(|| async move {
         let client = store::client()?;
         client.ai_status().await.ok()
     });
-    matches!(&*status.read(), Some(Some(s)) if s.enabled)
+    status.read().clone().flatten().unwrap_or_default()
 }
 
 /// "Text in image": what OCR read in the picture, with a copy button and,
@@ -491,7 +491,7 @@ fn use_ai_enabled() -> bool {
 #[component]
 fn OcrText(id: i64, text: String) -> Element {
     let copied = use_signal(|| false);
-    let ai = use_ai_enabled();
+    let ai = use_ai_status().translation;
     let mut translation = use_signal(|| None::<String>);
     let mut translated = use_signal(|| false);
     let mut busy = use_signal(|| false);
@@ -608,7 +608,7 @@ fn with_tag(text: &str, name: &str) -> String {
 /// provider. Suggestions are chips: tap one to add it, or add them all.
 #[component]
 fn TagSuggester(id: i64, tag_text: Signal<String>, rating: Signal<Rating>) -> Element {
-    let enabled = use_ai_enabled();
+    let enabled = use_ai_status().tagging;
     let mut suggestions = use_signal(|| None::<TagSuggestions>);
     let mut busy = use_signal(|| false);
     let mut error = use_signal(|| None::<String>);

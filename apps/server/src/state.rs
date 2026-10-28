@@ -32,6 +32,8 @@ pub struct Inner {
     pub oidc: Option<Oidc>,
     /// Text in images; `None` when it is off or tesseract is missing.
     pub ocr: Option<Ocr>,
+    /// The latest local AI model download.
+    pub local_pull: tokio::sync::Mutex<Option<starbooru_core::PullProgress>>,
     pub started_at: DateTime<Utc>,
 }
 
@@ -66,6 +68,7 @@ impl AppState {
             backups,
             oidc,
             ocr,
+            local_pull: tokio::sync::Mutex::new(None),
             started_at: Utc::now(),
         }))
     }
