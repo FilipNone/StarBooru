@@ -288,6 +288,10 @@ pub struct Post {
     /// big still images. The original stays the download.
     #[serde(default)]
     pub sample_url: Option<String>,
+    /// Text found in the image by OCR. Only in the single-post response
+    /// (`GET /posts/{id}`); `None` in lists and when there is none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ocr_text: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

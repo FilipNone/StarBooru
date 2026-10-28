@@ -131,6 +131,7 @@ A `Backup`'s `url` is a signed path relative to the server, valid for an hour. F
 | PATCH | `/posts/{id}` | `PostUpdate {tags?, rating?, source?}` | `Post`. `tags` replaces the whole list. |
 | DELETE | `/posts/{id}` | | 204; moves the post to the recycle bin (admin or uploader) |
 | POST | `/posts/{id}/restore` | | `Post` |
+| POST | `/posts/{id}/ocr` | | `Post` with `ocr_text`: reads the text in the image again (tesseract on the server; it can take several seconds). 400 when OCR is off on the server. |
 | POST | `/posts/{id}/purge` | | 204; permanently deletes a post that is in the recycle bin, with its files (admin or uploader). 409 `not_deleted` if the post is live. |
 | POST | `/posts/bulk` | `BulkEdit {ids, add_tags?, remove_tags?, rating?, delete?}` | `BulkResult {updated, skipped}`. Up to 500 distinct ids. Edits run in one transaction: tags in `remove_tags` (aliases resolve) come off, then `add_tags` go on with their implications. With `delete: true` (and no edits) each post moves to the recycle bin; posts you may not delete are skipped. Missing posts, and posts in the recycle bin when editing, are skipped. 400 for no ids, too many, an invalid tag, a post over the tag limit, no change, or delete combined with edits. |
 | POST | `/posts/{id}/edit` | `MediaEdit {rotate?, flip_h?, flip_v?, crop?, trim?, bin_original?}` | `Post`: a new post with the edited file and the original's tags, rating and source. See [Editing media](#editing-media). |
@@ -138,7 +139,7 @@ A `Backup`'s `url` is a signed path relative to the server, valid for an hour. F
 | POST | `/posts/{id}/suggest-tags` | | `TagSuggestions {tags: [{name, category, exists}], rating}`: up to 40 booru-style tags and a rating an AI vision model suggests from the post's thumbnail. Names are normalised and resolved through aliases; `exists` says whether the tag is already on the server, and `category` is the existing tag's, or the one the model gave. Nothing on the post changes. 400 when AI is off or the post has no thumbnail; 502 `fetch_failed` when the provider errors (`AI provider answered 401`), times out or answers something unreadable. |
 | PUT | `/posts/{id}/vote` | `{value: -1 \| 0 \| 1}` | `Post` with the new `score` and `my_vote` |
 
-A `Post` carries `file_url`, `thumb_url` and `sample_url`. These are signed paths relative to the server, valid for at least 6 hours. Fetch them without the bearer token. `thumb_url` is null when no thumbnail exists. `sample_url` is a smaller JPEG copy of a big image, meant for viewing; it is null for most posts, and `file_url` stays the original to download. `duration_ms` is the length of a video, or null.
+A `Post` carries `file_url`, `thumb_url` and `sample_url`. These are signed paths relative to the server, valid for at least 6 hours. Fetch them without the bearer token. `thumb_url` is null when no thumbnail exists. `sample_url` is a smaller JPEG copy of a big image, meant for viewing; it is null for most posts, and `file_url` stays the original to download. `duration_ms` is the length of a video, or null. `GET /posts/{id}` (and `POST /posts/{id}/ocr`) also carry `ocr_text`, the text found in a still image by OCR, lines separated by `\n`; it is left out when there is none, when the image is not read yet, and in lists.
 
 ### Editing media
 
@@ -161,6 +162,7 @@ Terms are separated by spaces, with at most 40 terms.
 | `type:image` / `type:animation` / `type:video` | media kind |
 | `order:newest` (default), `order:oldest`, `order:score`, `order:size`, `order:pixels`, `order:tags`, `order:updated`, `order:random` | sort (`sort:` works too). Add `_asc` or `_desc` to set the direction, e.g. `order:size_asc` for the smallest files first. `pixels` is width × height; `tags` is the tag count; `updated` is the last edit. |
 | `status:deleted` | browse the recycle bin |
+| `text:hello` / `text:"no parking"` / `-text:sale` | the text OCR read in the image has (or doesn't have) all these words, in any case. Quotes keep several words in one term; several `text:` terms all apply. Matches whole words (`simple` full-text search), at most 200 characters per term. |
 
 Tags are normalised: trimmed, lower-cased, spaces and underscores folded to one `_`, and at most 128 characters.
 

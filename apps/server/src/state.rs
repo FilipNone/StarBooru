@@ -9,6 +9,7 @@ use crate::backup::Backups;
 use crate::config::Config;
 use crate::fetch::Fetcher;
 use crate::media::Signer;
+use crate::ocr::Ocr;
 use crate::oidc::Oidc;
 use crate::storage::Storage;
 use crate::throttle::Guards;
@@ -29,6 +30,8 @@ pub struct Inner {
     pub backups: Backups,
     /// Sign-in through an OpenID Connect provider, when set up.
     pub oidc: Option<Oidc>,
+    /// Text in images; `None` when it is off or tesseract is missing.
+    pub ocr: Option<Ocr>,
     pub started_at: DateTime<Utc>,
 }
 
@@ -52,6 +55,7 @@ impl AppState {
                     None
                 }
             });
+        let ocr = config.ocr.clone().filter(Ocr::available);
         Self(Arc::new(Inner {
             config,
             db,
@@ -61,6 +65,7 @@ impl AppState {
             guards: Guards::default(),
             backups,
             oidc,
+            ocr,
             started_at: Utc::now(),
         }))
     }

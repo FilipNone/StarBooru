@@ -9,7 +9,7 @@ use starbooru_core::{
 };
 
 use super::editor::EditorSheet;
-use super::share::ShareSheet;
+use super::share::{ShareSheet, copy_text};
 use super::{ErrorBanner, Spinner};
 use crate::Route;
 use crate::cache;
@@ -453,6 +453,9 @@ pub fn PostView(id: i64, q: String) -> Element {
                         }
                     }
                 }
+                if let Some(text) = p.ocr_text.clone().filter(|t| !t.trim().is_empty()) {
+                    OcrText { key: "{p.id}", text }
+                }
                 Related {
                     id: p.id,
                     onopen: move |near: Post| {
@@ -462,6 +465,45 @@ pub fn PostView(id: i64, q: String) -> Element {
                         // Pushed, so Back returns to this post.
                         navigator().push(Route::PostView { id: near.id, q: String::new() });
                     },
+                }
+            }
+        }
+    }
+}
+
+/// OCR text longer than this many characters or lines starts folded.
+const OCR_FOLD_CHARS: usize = 280;
+const OCR_FOLD_LINES: usize = 6;
+
+/// "Text in image": what OCR read in the picture, with a copy button.
+/// Long text starts folded.
+#[component]
+fn OcrText(text: String) -> Element {
+    let copied = use_signal(|| false);
+    let long = text.chars().count() > OCR_FOLD_CHARS || text.lines().count() > OCR_FOLD_LINES;
+    let mut open = use_signal(|| false);
+    let folded = long && !open();
+    let copy = text.clone();
+    rsx! {
+        div { class: "card ocr",
+            div { class: "ocr-head",
+                h2 { class: "card-title", {t!("post-ocr-title")} }
+                button {
+                    class: "btn tonal small",
+                    r#type: "button",
+                    onclick: move |_| copy_text(copy.clone(), copied),
+                    Ico { icon: if copied() { Icon::Check } else { Icon::Copy }, size: 18 }
+                    if copied() { {t!("post-ocr-copied")} } else { {t!("post-ocr-copy")} }
+                }
+            }
+            p { class: if folded { "ocr-text folded" } else { "ocr-text" }, "{text}" }
+            if long {
+                button {
+                    class: "btn text",
+                    r#type: "button",
+                    aria_expanded: "{open()}",
+                    onclick: move |_| open.toggle(),
+                    if open() { {t!("post-ocr-less")} } else { {t!("post-ocr-more")} }
                 }
             }
         }

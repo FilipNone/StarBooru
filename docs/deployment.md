@@ -87,6 +87,8 @@ Admins can change the name, open registration, the recycle-bin days and the back
 | `STARBOORU_PG_DUMP` | `pg_dump` | pg_dump (installed in the image); `off` turns backups off |
 | `STARBOORU_FFMPEG` | `ffmpeg` | ffmpeg for video, AVIF and JPEG XL thumbnails (installed in the image); `off` disables it |
 | `STARBOORU_FFPROBE` | `ffprobe` | ffprobe, for video size and length |
+| `STARBOORU_OCR` | `true` | Read text in still images with tesseract (installed in the image), for `text:` search and the viewer's *Text in image*. Runs on the server only; no image leaves it. `off` turns it off; a path picks another tesseract. Without tesseract it is quietly off (logged once at start). Older posts are read in the background at each start. |
+| `STARBOORU_OCR_LANGS` | `eng` | tesseract languages, joined with `+`, e.g. `eng+ita`. The image has English only: add a language's package (`tesseract-ocr-ita`) in the `Dockerfile` first. |
 | `STARBOORU_URL_IMPORT` | `on` | Import from URL: `on` (public addresses only), `private` (also private-network addresses, e.g. a NAS; anyone with an account can then make the server fetch from your LAN), `off` |
 | `STARBOORU_AI_URL` | unset | Base URL of an OpenAI-compatible API for tag suggestions, such as `https://api.openai.com/v1`, `https://openrouter.ai/api/v1`, `https://generativelanguage.googleapis.com/v1beta/openai` or a local `http://ollama:11434/v1`. Unset turns AI off. Thumbnails of posts are sent to it; a local server keeps them on your network. Admins can change it in Administration › Server. |
 | `STARBOORU_AI_MODEL` | unset | A vision model, such as `gpt-4o-mini` or `llava` |

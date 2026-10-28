@@ -40,6 +40,7 @@ The desktop and Android apps are the same Dioxus code as the web app. Each one a
 | `ai.rs` | AI provider client: `chat(provider, prompt, image)` posts to an OpenAI-compatible `/chat/completions` (no proxies, 60 s timeout, 1 MiB answer cap, any address since the admin sets it), tag suggestions from a post's thumbnail, and background auto-tagging of uploads (two at a time). The key is never logged or returned; the answer parser is `starbooru_core::ai`. |
 | `fetch.rs` | URL import download: http(s) only, public addresses only (checked for literal IPs, on every redirect and in a filtering DNS resolver), no proxies, streaming size cap, timeouts |
 | `remote.rs` | Other boorus: the search URL for each API (Danbooru, Gelbooru 0.2, Moebooru, e621, Blombooru), with the user's account in the query as that site names it, and the answer turned into `RemotePost`s (absolute http(s) links, valid tags only, each site's rating scale). `routes/remote.rs` fetches it through `fetch.rs`, so the same address rules apply, and never puts the URL (which may carry a key) in an error or log. |
+| `ocr.rs` | Text in images: runs `tesseract <file> stdout -l <langs>` as a child process (time-limited, local files only, capped output) on a still image's sample or original, cleans the text (whitespace, noise lines, 10,000 characters at most) into `posts.ocr_text`; after each upload in the background and for unscanned posts at start. The text is never logged |
 | `probe.rs` | Size, length and a still frame through `ffprobe`/`ffmpeg` child processes (time-limited, local files only, capped output); video trims (stream copy, re-encoded when the copy would start too early) |
 | `edit.rs` | Image edits for `POST /posts/{id}/edit`: turn, flip and crop, written back in the original format. `routes/edit.rs` makes the result a new post through the normal upload path. |
 | `media.rs` | HMAC-signed media URLs and the file handler (supports Range for video seeking) |
@@ -132,6 +133,8 @@ Originals are kept byte for byte. Big still images also get a **sample**, a smal
 - It is kept only when it is at most 75% of the original's size. Already compact JPEGs have none.
 
 `posts.has_sample` is null until a post has been looked at. A background task at each start makes samples for older posts. `STARBOORU_SAMPLES=false` stops making them. The viewer swaps in the original when you zoom in or tap *Show original*, or always with Settings › *Always open originals*. Downloads and the editor use the original.
+
+**Text in images (OCR).** `posts.ocr_at` is null until a still image has been read by tesseract (`ocr.rs`); `posts.ocr_text` holds what it found, or null. A GIN index on `to_tsvector('simple', ocr_text)` for live posts serves `text:` search. Uploads are read in the background, so OCR never delays or fails one; a task at each start reads older posts one at a time, and `POST /posts/{id}/ocr` reads one again.
 
 Media URLs look like `/media/thumb/<sha>.jpg?exp=…&sig=…`:
 - The signature is an HMAC-SHA256 keyed by `STARBOORU_SECRET`.

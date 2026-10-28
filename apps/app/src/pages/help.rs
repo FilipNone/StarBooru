@@ -10,7 +10,7 @@ use crate::icons::{Ico, Icon};
 use crate::util::rating_label;
 
 /// Example terms and what they do, grouped under a heading.
-fn sections() -> [(String, Vec<(&'static str, String)>); 4] {
+fn sections() -> [(String, Vec<(&'static str, String)>); 5] {
     [
         (
             t!("help-tags"),
@@ -30,6 +30,14 @@ fn sections() -> [(String, Vec<(&'static str, String)>); 4] {
                 ("-rating:e", t!("help-rating-not")),
                 ("type:image", t!("help-type")),
                 ("status:deleted", t!("help-deleted")),
+            ],
+        ),
+        (
+            t!("help-text"),
+            vec![
+                ("text:hello", t!("help-text-word")),
+                ("text:\"no parking\"", t!("help-text-phrase")),
+                ("-text:sale", t!("help-text-not")),
             ],
         ),
         (
@@ -182,6 +190,12 @@ pub fn explain(text: &str) -> Result<Vec<String>, String> {
             ratings = ratings(&q.exclude_ratings)
         ));
     }
+    for text in &q.text {
+        lines.push(t!("explain-text", text = text.as_str()));
+    }
+    for text in &q.exclude_text {
+        lines.push(t!("explain-not-text", text = text.as_str()));
+    }
     if let Some(kind) = q.kind {
         lines.push(match kind {
             MediaKind::Image => t!("explain-images"),
@@ -252,6 +266,14 @@ mod tests {
         assert_eq!(
             explain("a b c order:old").unwrap(),
             ["Tagged with all of a, b, c", "Oldest first"]
+        );
+        assert_eq!(
+            explain(r#"text:"no parking" -text:sale"#).unwrap(),
+            [
+                "Text in the image has “no parking”",
+                "Text in the image doesn’t have “sale”",
+                "Newest first"
+            ]
         );
         let ratings3 = explain("rating:g rating:s rating:q").unwrap();
         assert_eq!(ratings3[0], "Rated general, sensitive or questionable");

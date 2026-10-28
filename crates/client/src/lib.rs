@@ -491,6 +491,12 @@ impl Client {
         Self::send_empty(self.request(Method::DELETE, &format!("/posts/{id}"))?).await
     }
 
+    /// Reads the text in a post's image again (OCR) and returns the post
+    /// with it.
+    pub async fn rescan_ocr(&self, id: i64) -> Result<Post> {
+        Self::send(self.request(Method::POST, &format!("/posts/{id}/ocr"))?).await
+    }
+
     pub async fn restore_post(&self, id: i64) -> Result<Post> {
         Self::send(self.request(Method::POST, &format!("/posts/{id}/restore"))?).await
     }

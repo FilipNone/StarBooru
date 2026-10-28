@@ -10,6 +10,7 @@ mod edit;
 mod error;
 mod fetch;
 mod media;
+mod ocr;
 mod oidc;
 mod probe;
 mod remote;
@@ -76,7 +77,8 @@ async fn run() -> Result<(), StartupError> {
         routes::backfill_media(backfill.clone()).await;
         routes::backfill_hashes(backfill.clone()).await;
         routes::backfill_samples(backfill.clone()).await;
-        routes::backfill_meta_tags(backfill).await;
+        routes::backfill_meta_tags(backfill.clone()).await;
+        ocr::backfill(backfill).await;
     });
 
     let listener = tokio::net::TcpListener::bind(state.config.bind).await?;

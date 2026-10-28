@@ -8,6 +8,7 @@ use thiserror::Error;
 use url::Url;
 
 use crate::fetch::Reach;
+use crate::ocr::Ocr;
 use crate::probe::Tools;
 
 #[derive(Debug, Error)]
@@ -38,6 +39,8 @@ pub struct Config {
     pub auto_meta_tags: bool,
     /// ffmpeg and ffprobe, for video, AVIF and JPEG XL thumbnails. `None` turns them off.
     pub tools: Option<Tools>,
+    /// tesseract, for text in images (`STARBOORU_OCR`, on by default). `None` turns OCR off.
+    pub ocr: Option<Ocr>,
     /// Which addresses URL import may fetch. `None` turns it off.
     pub url_import: Option<Reach>,
     /// Take the client address from the last `X-Forwarded-For` entry (set
@@ -156,6 +159,27 @@ impl Config {
                 .into(),
         });
 
+        // `STARBOORU_OCR=off` turns text in images off; a path picks the program.
+        let ocr_raw = get("STARBOORU_OCR").unwrap_or_default();
+        let ocr = match ocr_raw.trim().to_ascii_lowercase().as_str() {
+            "off" | "false" | "0" => None,
+            v => Some(Ocr {
+                program: if matches!(v, "" | "on" | "true" | "1") {
+                    "tesseract".into()
+                } else {
+                    ocr_raw.trim().into()
+                },
+                langs: get("STARBOORU_OCR_LANGS")
+                    .map(|l| l.trim().to_owned())
+                    .filter(|l| {
+                        !l.is_empty()
+                            && l.bytes()
+                                .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'+')
+                    })
+                    .unwrap_or_else(|| "eng".into()),
+            }),
+        };
+
         let url_import = match get("STARBOORU_URL_IMPORT")
             .map(|v| v.trim().to_ascii_lowercase())
             .as_deref()
@@ -220,6 +244,7 @@ impl Config {
             samples: get("STARBOORU_SAMPLES").is_none_or(|v| flag(Some(v))),
             auto_meta_tags: get("STARBOORU_AUTO_TAGS").is_none_or(|v| flag(Some(v))),
             tools,
+            ocr,
             url_import,
             backup_dir,
             pg_dump,
@@ -261,6 +286,7 @@ impl Config {
             // Off, so other tests see only the tags they set.
             auto_meta_tags: false,
             tools: None,
+            ocr: None,
             url_import: Some(Reach::Public),
             trust_proxy: false,
             backup_dir: data_dir.join("backups"),
@@ -390,6 +416,31 @@ mod tests {
     }
 
     const SECRET: &str = "0123456789abcdef0123456789abcdef";
+
+    #[test]
+    fn ocr_settings() {
+        let base = [("DATABASE_URL", "x"), ("STARBOORU_SECRET", SECRET)];
+        let c = cfg(&base).unwrap();
+        let ocr = c.ocr.unwrap();
+        assert_eq!(ocr.program, std::path::Path::new("tesseract"));
+        assert_eq!(ocr.langs, "eng");
+        let off = cfg(&[base[0], base[1], ("STARBOORU_OCR", "off")]).unwrap();
+        assert!(off.ocr.is_none());
+        let custom = cfg(&[
+            base[0],
+            base[1],
+            ("STARBOORU_OCR", "/opt/tesseract"),
+            ("STARBOORU_OCR_LANGS", " eng+ita "),
+        ])
+        .unwrap()
+        .ocr
+        .unwrap();
+        assert_eq!(custom.program, std::path::Path::new("/opt/tesseract"));
+        assert_eq!(custom.langs, "eng+ita");
+        // Anything that could be read as an option falls back to English.
+        let odd = cfg(&[base[0], base[1], ("STARBOORU_OCR_LANGS", "-psm 0")]).unwrap();
+        assert_eq!(odd.ocr.unwrap().langs, "eng");
+    }
 
     #[test]
     fn defaults() {

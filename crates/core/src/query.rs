@@ -7,6 +7,8 @@
 //! * `order:<new|old|score|size|pixels|tags|updated|random>`, with an
 //!   optional `_asc` or `_desc` suffix.
 //! * `status:deleted`: search the recycle bin instead of live posts.
+//! * `text:word` or `text:"several words"`: the text OCR found in the image
+//!   has those words; `-text:` excludes. Several `text:` terms all apply.
 //!
 //! Any other `name:value` term is treated as a plain tag, so tags with
 //! colons (`re:zero`) keep working.
@@ -17,6 +19,8 @@ use crate::model::{MediaKind, Rating};
 use crate::tag::{TagError, normalize_tag};
 
 pub const MAX_QUERY_TERMS: usize = 40;
+/// Longest `text:` value, in characters.
+pub const MAX_TEXT_CHARS: usize = 200;
 
 /// What results are sorted by.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -125,6 +129,10 @@ pub struct SearchQuery {
     pub order: Order,
     /// Search soft-deleted posts (the recycle bin).
     pub deleted: bool,
+    /// `text:` values: words the image's OCR text must contain.
+    pub text: Vec<String>,
+    /// `-text:` values: words it must not contain.
+    pub exclude_text: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -141,13 +149,58 @@ pub enum QueryError {
         "unknown order `{0}` (use new, old, score, size, pixels, tags, updated or random; add _asc to reverse)"
     )]
     BadOrder(String),
+    #[error("`text:` needs some words, e.g. text:hello or text:\"two words\"")]
+    EmptyText,
+    #[error("`text:` is too long (max {MAX_TEXT_CHARS} characters)")]
+    TextTooLong,
     #[error(transparent)]
     Tag(#[from] TagError),
 }
 
+/// Splits a query into terms at whitespace, except inside the quotes of a
+/// `text:"…"` value. An unclosed quote runs to the end.
+fn terms(input: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut words = input.split_whitespace();
+    while let Some(word) = words.next() {
+        let lower = word.to_ascii_lowercase();
+        let quoted = lower
+            .strip_prefix('-')
+            .unwrap_or(&lower)
+            .strip_prefix("text:\"");
+        let mut term = word.to_owned();
+        if let Some(rest) = quoted {
+            let mut closed = !rest.is_empty() && rest.ends_with('"');
+            while !closed {
+                let Some(next) = words.next() else { break };
+                term.push(' ');
+                term.push_str(next);
+                closed = next.ends_with('"');
+            }
+        }
+        out.push(term);
+    }
+    out
+}
+
+/// A `text:` value without its quotes and with whitespace collapsed.
+fn text_value(value: &str) -> Result<String, QueryError> {
+    let value = value.strip_prefix('"').unwrap_or(value);
+    let value = value.strip_suffix('"').unwrap_or(value);
+    let value = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    if value.is_empty() {
+        return Err(QueryError::EmptyText);
+    }
+    if value.chars().count() > MAX_TEXT_CHARS {
+        return Err(QueryError::TextTooLong);
+    }
+    Ok(value)
+}
+
 pub fn parse_query(input: &str) -> Result<SearchQuery, QueryError> {
     let mut q = SearchQuery::default();
-    for (i, term) in input.split_whitespace().enumerate() {
+    for (i, term) in terms(input).iter().enumerate() {
+        let term = term.as_str();
         if i >= MAX_QUERY_TERMS {
             return Err(QueryError::TooManyTerms);
         }
@@ -188,6 +241,18 @@ pub fn parse_query(input: &str) -> Result<SearchQuery, QueryError> {
                 "order" | "sort" if !negated => {
                     q.order = Order::parse(value)
                         .ok_or_else(|| QueryError::BadOrder(value.to_owned()))?;
+                    continue;
+                }
+                "text" => {
+                    let value = text_value(value)?;
+                    push_unique(
+                        if negated {
+                            &mut q.exclude_text
+                        } else {
+                            &mut q.text
+                        },
+                        value,
+                    );
                     continue;
                 }
                 _ => {}
@@ -274,6 +339,36 @@ mod tests {
         assert_eq!(with_order("cat sort:old", None), "cat");
         assert_eq!(with_order("cat", Some(Order::default())), "cat");
         assert_eq!(with_order("", Some(size)), "order:size");
+    }
+
+    #[test]
+    fn parses_text_terms() {
+        let q = parse_query(r#"cat text:hello TEXT:"Two   words" -text:spam order:old"#).unwrap();
+        assert_eq!(q.include, vec!["cat"]);
+        assert_eq!(q.text, vec!["hello", "Two words"]);
+        assert_eq!(q.exclude_text, vec!["spam"]);
+        assert_eq!(q.order.key, SortKey::Id);
+        assert!(!q.order.descending);
+
+        let q = parse_query(r#"-text:"no thanks" dog"#).unwrap();
+        assert_eq!(q.exclude_text, vec!["no thanks"]);
+        assert_eq!(q.include, vec!["dog"]);
+
+        // An unclosed quote runs to the end; a one-word quote works too.
+        let q = parse_query(r#"text:"open ended"#).unwrap();
+        assert_eq!(q.text, vec!["open ended"]);
+        assert_eq!(parse_query(r#"text:"one""#).unwrap().text, vec!["one"]);
+        // Duplicates collapse.
+        assert_eq!(parse_query("text:a text:a").unwrap().text, vec!["a"]);
+    }
+
+    #[test]
+    fn bad_text_terms() {
+        assert_eq!(parse_query("text:"), Err(QueryError::EmptyText));
+        assert_eq!(parse_query("text:\"\""), Err(QueryError::EmptyText));
+        assert_eq!(parse_query(r#"text:" "#), Err(QueryError::EmptyText));
+        let long = format!("text:{}", "a".repeat(MAX_TEXT_CHARS + 1));
+        assert_eq!(parse_query(&long), Err(QueryError::TextTooLong));
     }
 
     #[test]

@@ -35,9 +35,12 @@ RUN cargo build --release --locked -p starbooru-server \
 
 FROM debian:trixie-slim
 
-# ffmpeg makes thumbnails for video, AVIF and JPEG XL; pg_dump makes database backups.
+# ffmpeg makes thumbnails for video, AVIF and JPEG XL; pg_dump makes database backups;
+# tesseract reads text in images (OCR). For more OCR languages add their packages here,
+# e.g. tesseract-ocr-ita or tesseract-ocr-deu, and list them in STARBOORU_OCR_LANGS (eng+ita).
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates ffmpeg postgresql-client \
+       tesseract-ocr tesseract-ocr-eng \
     && rm -rf /var/lib/apt/lists/*
 # A fresh named volume copies this directory's ownership, so the server can write to it.
 RUN useradd --system --uid 10001 --user-group --no-create-home --home-dir /data starbooru \

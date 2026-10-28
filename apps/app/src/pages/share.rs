@@ -42,7 +42,7 @@ fn share_status(share: &Share, now: DateTime<Utc>) -> String {
 
 /// Copies `text`, flipping `copied` on success. Without clipboard access
 /// (plain http) the field stays there to select and copy by hand.
-fn copy_text(text: String, mut copied: Signal<bool>) {
+pub(super) fn copy_text(text: String, mut copied: Signal<bool>) {
     spawn(async move {
         let eval = document::eval(
             "const text = await dioxus.recv(); \

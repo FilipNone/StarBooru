@@ -241,6 +241,10 @@ help-rating-any = una qualsiasi delle classificazioni elencate
 help-rating-not = qualsiasi classificazione tranne esplicito
 help-type = immagini statiche; anche type:animation e type:video
 help-deleted = post nel cestino
+help-text = Testo nelle immagini
+help-text-word = il testo letto nell’immagine contiene la parola (maiuscole o minuscole)
+help-text-phrase = contiene tutte queste parole; le virgolette le tengono insieme
+help-text-not = il testo letto nell’immagine non contiene la parola
 help-sorting = Ordinamento
 help-order-new = prima i più recenti (predefinito); order:old per i più vecchi
 help-order-score = prima il punteggio più alto
@@ -280,6 +284,8 @@ list-or = { $rest } o { $last }
 explain-images = Solo immagini statiche
 explain-animations = Solo animazioni
 explain-videos = Solo video
+explain-text = Il testo nell’immagine contiene “{ $text }”
+explain-not-text = Il testo nell’immagine non contiene “{ $text }”
 explain-every = Tutti i post
 explain-order-new = Prima i più recenti
 explain-order-old = Prima i più vecchi
@@ -762,6 +768,14 @@ editor-saving = Salvataggio…
 
 post-sample-note = Stai vedendo una copia più leggera. Ingrandendo si carica l’originale.
 post-show-original = Mostra originale
+
+## Testo nelle immagini (OCR)
+
+post-ocr-title = Testo nell’immagine
+post-ocr-copy = Copia
+post-ocr-copied = Copiato
+post-ocr-more = Mostra tutto
+post-ocr-less = Mostra meno
 settings-originals = Apri sempre gli originali nel visualizzatore
 settings-originals-hint = Altrimenti le immagini grandi si aprono come copia più leggera, più veloce e con meno dati. L’originale si apre comunque quando ingrandisci, o quando lo schermo ha più pixel della copia.
 

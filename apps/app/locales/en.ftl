@@ -241,6 +241,10 @@ help-rating-any = any of the listed ratings
 help-rating-not = any rating but explicit
 help-type = still images; also type:animation and type:video
 help-deleted = posts in the recycle bin
+help-text = Text in images
+help-text-word = the text read in the image has the word (any case)
+help-text-phrase = has all these words; quotes keep them together
+help-text-not = the text read in the image doesn't have the word
 help-sorting = Sorting
 help-order-new = newest first (the default); order:old for oldest
 help-order-score = highest score first
@@ -280,6 +284,8 @@ list-or = { $rest } or { $last }
 explain-images = Still images only
 explain-animations = Animations only
 explain-videos = Videos only
+explain-text = Text in the image has “{ $text }”
+explain-not-text = Text in the image doesn’t have “{ $text }”
 explain-every = Every post
 explain-order-new = Newest first
 explain-order-old = Oldest first
@@ -762,6 +768,14 @@ editor-saving = Saving…
 
 post-sample-note = Showing a smaller copy. Zooming in loads the original.
 post-show-original = Show original
+
+## Text in images (OCR)
+
+post-ocr-title = Text in image
+post-ocr-copy = Copy
+post-ocr-copied = Copied
+post-ocr-more = Show all
+post-ocr-less = Show less
 settings-originals = Always open originals in the viewer
 settings-originals-hint = Big images otherwise open as a smaller copy, which loads faster and uses less data. The original still opens when you zoom in, or when the screen has more pixels than the copy.
 

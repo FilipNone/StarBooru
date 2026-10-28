@@ -143,6 +143,7 @@ pub(super) fn to_post(state: &AppState, row: PostRow) -> Post {
         file_url,
         thumb_url,
         sample_url,
+        ocr_text: None,
     }
 }
 
@@ -216,6 +217,21 @@ pub(super) fn push_filters(
     }
     if let Some(kind) = query.kind {
         qb.push(" AND p.kind = ").push_bind(kind.to_db());
+    }
+    // Matches the GIN index of migration 0017.
+    for text in &query.text {
+        qb.push(
+            " AND to_tsvector('simple', coalesce(p.ocr_text, '')) @@ plainto_tsquery('simple', ",
+        )
+        .push_bind(text.clone())
+        .push(")");
+    }
+    for text in &query.exclude_text {
+        qb.push(
+            " AND NOT (to_tsvector('simple', coalesce(p.ocr_text, '')) @@ plainto_tsquery('simple', ",
+        )
+        .push_bind(text.clone())
+        .push("))");
     }
 }
 
@@ -551,7 +567,36 @@ pub async fn get_one(
     user: AuthUser,
     Path(id): Path<i64>,
 ) -> AppResult<Json<Post>> {
-    Ok(Json(load(&state, user.id, id).await?))
+    let mut post = load(&state, user.id, id).await?;
+    post.ocr_text = ocr_text(&state, id).await?;
+    Ok(Json(post))
+}
+
+/// The text OCR found in a post's image, if any.
+async fn ocr_text(state: &AppState, id: i64) -> AppResult<Option<String>> {
+    let text: Option<Option<String>> =
+        sqlx::query_scalar("SELECT ocr_text FROM posts WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await?;
+    Ok(text.flatten())
+}
+
+/// `POST /posts/{id}/ocr`: scans the post again and returns it.
+pub async fn rescan_ocr(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<i64>,
+) -> AppResult<Json<Post>> {
+    let mut post = load(&state, user.id, id).await?;
+    if state.ocr.is_none() {
+        return Err(AppError::BadRequest(
+            "text in images (OCR) is off on this server".into(),
+        ));
+    }
+    crate::ocr::scan_post(&state, id).await;
+    post.ocr_text = ocr_text(&state, id).await?;
+    Ok(Json(post))
 }
 
 fn multipart_error(e: MultipartError) -> AppError {
@@ -650,6 +695,7 @@ pub(super) async fn create_post(
     match insert_post(state, user, &info, file_size, rating, source, tags).await {
         Ok(id) => {
             crate::ai::autotag_later(state, id);
+            crate::ocr::spawn_scan(state, id);
             load(state, user.id, id).await
         }
         Err(e) => {
