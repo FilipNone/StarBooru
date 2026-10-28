@@ -86,7 +86,7 @@ fn launch_desktop() {
             Config::new()
                 .with_window(window)
                 .with_menu(None)
-                .with_disable_dma_buf_on_wayland(system::prepare_webview()),
+                .with_disable_dma_buf_on_wayland(system::dmabuf_off_here()),
         )
         .launch(App);
 }

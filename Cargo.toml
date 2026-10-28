@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = ["crates/*", "apps/*"]
+exclude = ["vendor/tao"]
 default-members = ["crates/core", "crates/client", "apps/server"]
 
 [workspace.package]
@@ -19,6 +20,11 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 tracing = "0.1"
+
+# tao 0.34 with the Wayland title bar fix from tao 0.36 (tao#1218), until
+# dioxus-desktop moves past tao 0.34. See vendor/tao/STARBOORU.md.
+[patch.crates-io]
+tao = { path = "vendor/tao" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

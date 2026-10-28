@@ -150,27 +150,20 @@ pub mod android {
     }
 }
 
-/// Sets up the Linux desktop webview before the window opens, and says
-/// whether Dioxus should turn off WebKit's DMA-BUF renderer, as it does by
-/// default on Wayland. Without it every frame is copied through memory,
-/// which made the app crawl on a large scaled screen, so it stays on except
-/// for NVIDIA's driver, whose explicit sync breaks it.
-/// `STARBOORU_DMABUF=0` or `=1` overrides the guess.
+/// Whether Dioxus should turn off WebKit's DMA-BUF renderer and run the
+/// Linux desktop app through XWayland, as it does by default on Wayland.
+/// That copies every frame through memory, which made the app crawl on a
+/// large scaled screen, so it's kept for NVIDIA's driver only, whose
+/// explicit sync breaks the renderer. Otherwise GTK picks Wayland when
+/// there is one (the window's title bar comes from the patched tao in
+/// `vendor/tao`). `STARBOORU_DMABUF=0` or `=1` overrides the guess.
 #[cfg(feature = "desktop")]
-pub fn prepare_webview() -> bool {
+pub fn dmabuf_off_here() -> bool {
     let forced = std::env::var("STARBOORU_DMABUF").ok();
-    let off = dmabuf_off(
+    dmabuf_off(
         forced.as_deref(),
         std::path::Path::new("/sys/module/nvidia").exists(),
-    );
-    // XWayland first, as Dioxus's default does: on Wayland GTK draws its
-    // own title bar, whose buttons don't respond on KDE (dioxus#3667).
-    // Plain Wayland when there's no X server; GDK_BACKEND still wins.
-    #[cfg(target_os = "linux")]
-    if !off && std::env::var_os("GDK_BACKEND").is_none() {
-        gdk::set_allowed_backends("x11,wayland");
-    }
-    off
+    )
 }
 
 #[cfg(feature = "desktop")]
