@@ -43,6 +43,9 @@ fn sections() -> [(String, Vec<(&'static str, String)>); 5] {
                 ("mpixels:>8", t!("help-mpixels")),
                 ("ratio:16:9", t!("help-ratio")),
                 ("-height:<1000", t!("help-size-not")),
+                ("color:red", t!("help-color")),
+                ("color:2060e0", t!("help-color-hex")),
+                ("-color:white", t!("help-color-not")),
             ],
         ),
         (
@@ -230,6 +233,12 @@ pub fn explain(text: &str) -> Result<Vec<String>, String> {
             value = size.raw.as_str()
         ));
     }
+    for color in &q.colors {
+        lines.push(t!("explain-color", value = color.raw.as_str()));
+    }
+    for color in &q.exclude_colors {
+        lines.push(t!("explain-not-color", value = color.raw.as_str()));
+    }
     for text in &q.text {
         lines.push(t!("explain-text", text = text.as_str()));
     }
@@ -308,6 +317,19 @@ fn order_phrase(order: Order) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explains_colors() {
+        assert_eq!(
+            explain("color:RED -color:#2060e0").unwrap(),
+            [
+                "Has the colour red, or the nearest one stored",
+                "Doesn't have the colour 2060e0",
+                "Newest first"
+            ]
+        );
+        assert!(explain("color:bluish").is_err());
+    }
 
     #[test]
     fn explains_queries() {

@@ -85,6 +85,7 @@ async fn run() -> Result<(), StartupError> {
         routes::backfill_media(backfill.clone()).await;
         routes::backfill_file_dates(backfill.clone()).await;
         routes::backfill_hashes(backfill.clone()).await;
+        routes::backfill_colors(backfill.clone()).await;
         routes::backfill_samples(backfill.clone()).await;
         routes::backfill_meta_tags(backfill.clone()).await;
         ocr::backfill(backfill).await;

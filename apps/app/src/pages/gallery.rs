@@ -1,9 +1,11 @@
 use std::collections::BTreeSet;
 
 use dioxus::prelude::*;
+use starbooru_core::color::{NAMED_COLORS, to_hex, wheel_color};
 use starbooru_core::saved::MAX_SEARCH_NAME_CHARS;
 use starbooru_core::{
-    BulkEdit, MAX_BULK_POSTS, MediaKind, Order, Post, Rating, SavedSearch, parse_query, with_order,
+    BulkEdit, MAX_BULK_POSTS, MediaKind, Order, Post, Rating, SavedSearch, parse_query, with_color,
+    with_order,
 };
 
 use super::post::OPENING;
@@ -17,6 +19,8 @@ use crate::store;
 use crate::util::{escape_attr, format_duration, rating_label, split_tag_edit};
 
 const PAGE_SIZE: u32 = 60;
+/// The colour wheel's width in pixels, as in `main.css`.
+const WHEEL_SIZE: f64 = 176.0;
 
 /// Sort menu entries: `order:` values.
 const SORTS: [&str; 11] = [
@@ -182,6 +186,7 @@ pub fn Gallery(q: String) -> Element {
                     SaveToggle { q: q.clone(), saved }
                 }
                 SortMenu { q: q.clone() }
+                ColorMenu { q: q.clone() }
                 button {
                     class: if selecting() { "icon-btn select-toggle on" } else { "icon-btn select-toggle" },
                     title: if selecting() { t!("gallery-stop-selecting") } else { t!("gallery-select") },
@@ -529,6 +534,106 @@ fn SortMenu(q: String) -> Element {
                 onchange: move |v: String| {
                     navigator().push(Route::Gallery { q: with_order(&q, Order::parse(&v)) });
                 },
+            }
+        }
+    }
+}
+
+fn color_label(name: &str) -> String {
+    match name {
+        "red" => t!("color-red"),
+        "orange" => t!("color-orange"),
+        "yellow" => t!("color-yellow"),
+        "green" => t!("color-green"),
+        "teal" => t!("color-teal"),
+        "blue" => t!("color-blue"),
+        "purple" => t!("color-purple"),
+        "pink" => t!("color-pink"),
+        "brown" => t!("color-brown"),
+        "black" => t!("color-black"),
+        "gray" => t!("color-gray"),
+        "white" => t!("color-white"),
+        other => other.to_owned(),
+    }
+}
+
+/// Rewrites the query's `color:` term from a wheel or named swatches. The
+/// wheel takes a pointer, so every part of it has a swatch close by for the
+/// keyboard.
+#[component]
+fn ColorMenu(q: String) -> Element {
+    let mut open = use_signal(|| false);
+    let current = parse_query(&q).ok().and_then(|p| p.colors.first().cloned());
+    let pick = use_callback({
+        let q = q.clone();
+        move |value: Option<String>| {
+            open.set(false);
+            navigator().push(Route::Gallery {
+                q: with_color(&q, value.as_deref()),
+            });
+        }
+    });
+    let current_name = current.as_ref().map(|c| c.raw.clone());
+    let dot = current.as_ref().map(|c| to_hex(c.rgb));
+    rsx! {
+        div {
+            class: "color-pick",
+            onkeydown: move |e: KeyboardEvent| {
+                if open() && e.key() == Key::Escape {
+                    e.stop_propagation();
+                    open.set(false);
+                }
+            },
+            button {
+                r#type: "button",
+                class: if dot.is_some() { "icon-btn color-toggle on" } else { "icon-btn color-toggle" },
+                title: t!("color-search"),
+                aria_label: t!("color-search"),
+                aria_haspopup: "dialog",
+                aria_expanded: if open() { "true" } else { "false" },
+                onclick: move |_| open.toggle(),
+                Ico { icon: Icon::Palette }
+                if let Some(hex) = &dot {
+                    span { class: "color-dot", style: "background-color: #{hex}" }
+                }
+            }
+            if open() {
+                div { class: "select-backdrop", onclick: move |_| open.set(false) }
+                div { class: "color-menu", role: "dialog", aria_label: t!("color-search"),
+                    div {
+                        class: "color-wheel",
+                        title: t!("color-wheel"),
+                        aria_hidden: "true",
+                        onclick: move |e: MouseEvent| {
+                            let at = e.element_coordinates();
+                            let radius = WHEEL_SIZE / 2.0;
+                            let rgb = wheel_color((at.x - radius) / radius, (at.y - radius) / radius);
+                            pick.call(Some(to_hex(rgb)));
+                        },
+                    }
+                    div { class: "swatches",
+                        for (name, rgb) in NAMED_COLORS {
+                            button {
+                                key: "{name}",
+                                r#type: "button",
+                                class: "swatch",
+                                style: "background-color: #{to_hex(rgb)}",
+                                title: color_label(name),
+                                aria_label: color_label(name),
+                                aria_pressed: if current_name.as_deref() == Some(name) { "true" } else { "false" },
+                                onclick: move |_| pick.call(Some(name.to_owned())),
+                            }
+                        }
+                    }
+                    if current_name.is_some() {
+                        button {
+                            r#type: "button",
+                            class: "btn text",
+                            onclick: move |_| pick.call(None),
+                            {t!("color-clear")}
+                        }
+                    }
+                }
             }
         }
     }

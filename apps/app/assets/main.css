@@ -476,6 +476,38 @@ input[type="range"] { width: 100%; accent-color: var(--primary); margin-top: 12p
 .saved-searches .chip svg { flex: none; color: var(--primary); }
 .sort { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; font-size: 14px; }
 
+/* colour search (pages/gallery.rs). The wheel and swatches show the colours
+   they search for, so these are the one place with literal colours. */
+.color-pick { position: relative; display: inline-flex; }
+.color-toggle { position: relative; }
+.color-dot {
+  position: absolute; right: 5px; bottom: 5px; width: 10px; height: 10px; border-radius: 50%;
+  border: 1px solid var(--outline);
+}
+.color-menu {
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 31;
+  display: grid; justify-items: center; gap: 12px; padding: 12px;
+  border-radius: var(--radius-m); background: var(--surface); color: var(--on-surface);
+  border: 1px solid oklch(from var(--outline) l c h / 0.4); box-shadow: var(--shadow-2);
+  animation: drop-in var(--med) var(--ease); transform-origin: top right;
+}
+.color-wheel {
+  width: 176px; height: 176px; border-radius: 50%; cursor: crosshair;
+  background: radial-gradient(closest-side, #fff, #fff0),
+    conic-gradient(#f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00);
+}
+.swatches { display: grid; grid-template-columns: repeat(6, 32px); gap: 6px; }
+.swatch {
+  display: block; width: 32px; height: 32px; padding: 0; border-radius: 50%; cursor: pointer;
+  border: 1px solid oklch(from var(--outline) l c h / 0.6);
+  transition: transform var(--fast) var(--ease);
+}
+.swatch:hover { transform: scale(1.12); }
+.swatch:focus-visible { outline: 3px solid var(--primary); outline-offset: 2px; }
+.swatch[aria-pressed="true"] { outline: 3px solid var(--primary); outline-offset: 2px; }
+.post-swatches { display: flex; flex-wrap: wrap; gap: 6px; }
+.post-swatches .swatch { width: 24px; height: 24px; }
+
 /* drop-down (pages/select.rs): a pill button and a themed list */
 .select { position: relative; display: inline-block; max-width: 100%; }
 .select-button {

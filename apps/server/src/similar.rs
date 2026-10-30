@@ -17,11 +17,14 @@ use std::collections::{HashMap, HashSet};
 
 use image::DynamicImage;
 use image::imageops::FilterType;
+use starbooru_core::color::{Palette, palette_of};
 
 const CHUNKS: u32 = 4;
 const CHUNK_BITS: u32 = 16;
 /// Largest difference per colour channel (0–255) between matching posts.
 const COLOR_TOLERANCE: u32 = 24;
+/// A picture's colours are counted on a grid of this many pixels a side.
+const PALETTE_GRID: u32 = 48;
 
 /// What the finder compares: brightness structure and average colour.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,6 +88,14 @@ fn mean_color(img: &DynamicImage) -> u32 {
     let n = (small.width() * small.height()).max(1);
     let [r, g, b] = sum.map(|s| (s / n).min(255));
     r << 16 | g << 8 | b
+}
+
+/// The colours of a picture, from a small copy of it.
+pub fn palette(img: &DynamicImage) -> Palette {
+    let small = img
+        .resize_exact(PALETTE_GRID, PALETTE_GRID, FilterType::Triangle)
+        .to_rgb8();
+    palette_of(small.pixels().map(|p| p.0))
 }
 
 fn colors_close(a: u32, b: u32) -> bool {
@@ -317,6 +328,27 @@ pub mod tests {
         assert!(colors_close(0x80_8080, 0x98_6868));
         assert!(!colors_close(0x80_8080, 0xa8_5858));
         assert!(!colors_close(0x80_8080, 0x80_80ff));
+    }
+
+    #[test]
+    fn finds_a_pictures_colours() {
+        // Two thirds red over one third blue.
+        let img = DynamicImage::ImageRgb8(RgbImage::from_fn(90, 90, |_, y| {
+            if y < 60 {
+                Rgb([220, 30, 40])
+            } else {
+                Rgb([30, 90, 220])
+            }
+        }));
+        let p = palette(&img);
+        let near = |name: &str| {
+            let term = starbooru_core::color::parse_color(name).unwrap();
+            starbooru_core::color::cells_near(term.rgb, 0.1)
+        };
+        assert!(p.cells.iter().any(|c| near("red").contains(c)));
+        assert!(p.cells.iter().any(|c| near("blue").contains(c)));
+        assert!(!p.cells.iter().any(|c| near("green").contains(c)));
+        assert_eq!(p.colors.first(), Some(&0xdc_1e28));
     }
 
     #[test]

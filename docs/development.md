@@ -91,7 +91,8 @@ cargo clippy -p starbooru-app --target wasm32-unknown-unknown --no-default-featu
 - 5 to 24 tags a post, taken from 5,000 tags, with popularity falling off steeply;
 - 2% of the posts in the bin;
 - votes on 5%;
-- a random difference hash on each post, except 1% that share a blank one (hash 0).
+- a random difference hash on each post, except 1% that share a blank one (hash 0);
+- 3 to 8 colour cells a post, drawn towards white, black and grey, with teal the rarest.
 
 It then times the API calls the clients make most, through the real router, and fails if any median is over 400 ms. Run it in release:
 
@@ -101,7 +102,7 @@ STARBOORU_BENCH_POSTS=1000000 cargo test --release -p starbooru-server search_at
 
 Set `STARBOORU_BENCH_KEEP=1` to keep the seeded database for `EXPLAIN ANALYZE` (the name is printed; drop it afterwards).
 
-Results at 1,000,000 posts (Ryzen 9 5900X, PostgreSQL 17 in Docker, default settings; median of 5 runs; seeding took 50 s). In the call column, `page=1000` is 60,000 posts deep, and `tag_1` is on half the posts.
+Results at 1,000,000 posts (Ryzen 9 5900X, PostgreSQL 17 in Docker, default settings; median of 5 runs; seeding took 113 s). In the call column, `page=1000` is 60,000 posts deep, and `tag_1` is on half the posts.
 
 | Call | Median |
 |---|---|
@@ -112,6 +113,9 @@ Results at 1,000,000 posts (Ryzen 9 5900X, PostgreSQL 17 in Docker, default sett
 | `ratio:16:9`, `tag_1 width:>1920`, `date:>30d`, `date:2026-10` | 3.8–19 ms |
 | `tag_300 date:>30d` | 30 ms |
 | `/posts?q=tag_4000` (a rare tag) | 18.8 ms |
+| `color:white`, `color:red`, `color:teal`, `color:000080`, `-color:white`, `tag_1 color:blue`, `color:red color:blue`, `color:red order:score` | 3.1–4.1 ms |
+| `color:ff00ff` (nothing stored nearby, so it widens the search) | 6.6 ms |
+| `tag_300 color:teal` (a rare tag and a rare colour) | 190 ms |
 | `/posts?q=order:random` | 141 ms |
 | `/posts/{id}`, `/posts/{id}/neighbors`, tag search | under 1.2 ms |
 | `/posts/{id}/related` (a random hash, and a blank one shared by 10,000 posts) | 24–37 ms |

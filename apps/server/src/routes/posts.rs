@@ -8,6 +8,7 @@ use axum::http::StatusCode;
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use sqlx::{FromRow, Postgres, QueryBuilder, Transaction};
+use starbooru_core::color::{COLOR_REACHES, EXCLUDE_REACH, cells_near, stored_hex};
 use starbooru_core::filter::SizeField;
 use starbooru_core::query::{FigureTerm, SearchQuery, SortKey};
 use starbooru_core::tag::normalize_tags;
@@ -47,6 +48,7 @@ pub(super) struct PostRow {
     score: i32,
     created_at: DateTime<Utc>,
     file_date: Option<DateTime<Utc>>,
+    palette: Vec<i32>,
     deleted_at: Option<DateTime<Utc>>,
     tags: Vec<String>,
     my_vote: i16,
@@ -56,7 +58,7 @@ pub(super) struct PostRow {
 fn post_columns(user_id: i64) -> QueryBuilder<Postgres> {
     let mut qb = QueryBuilder::new(
         "SELECT p.id, p.sha256, p.ext, p.mime, p.kind, p.file_size, p.width, p.height, \
-         p.duration_ms, p.has_thumb, p.has_sample, p.rating, p.source, p.score, p.created_at, p.file_date, p.deleted_at, \
+         p.duration_ms, p.has_thumb, p.has_sample, p.rating, p.source, p.score, p.created_at, p.file_date, p.palette, p.deleted_at, \
          COALESCE((SELECT array_agg(t.name ORDER BY t.name) FROM tags t \
                    WHERE t.id = ANY(p.tag_ids)), '{}'::text[]) AS tags, \
          COALESCE((SELECT v.value FROM post_votes v \
@@ -143,6 +145,7 @@ pub(super) fn to_post(state: &AppState, row: PostRow) -> Post {
         tags: row.tags,
         created_at: row.created_at,
         file_date: row.file_date,
+        palette: row.palette.iter().copied().map(stored_hex).collect(),
         deleted: row.deleted_at.is_some(),
         file_url,
         thumb_url,
@@ -195,6 +198,10 @@ pub(super) struct TagFilter {
     figures: Vec<FigureFilter>,
     /// `-{...}` terms: no figure matches any.
     no_figures: Vec<FigureFilter>,
+    /// `color:` terms: the post has a colour in each list of grid cells.
+    colors: Vec<Vec<i16>>,
+    /// `-color:` terms: it has none of these.
+    no_colors: Vec<i16>,
 }
 
 /// A figure term, resolved: the kind, and for each tag the tag and its tree.
@@ -263,7 +270,43 @@ pub(super) async fn tag_filter(
         // a term with an unknown tag matches no one, so excludes nothing
         filter.no_figures.extend(figure_filter(state, term).await?);
     }
+    resolve_colors(state, query, &mut filter).await?;
     Ok(Some(filter))
+}
+
+/// Sets how far a search's `color:` terms reach: the narrowest reach that
+/// finds a post with the rest of the search, so it gets the nearest colours
+/// stored.
+async fn resolve_colors(
+    state: &AppState,
+    query: &SearchQuery,
+    filter: &mut TagFilter,
+) -> AppResult<()> {
+    let mut none: Vec<i16> = query
+        .exclude_colors
+        .iter()
+        .flat_map(|c| cells_near(c.rgb, EXCLUDE_REACH))
+        .collect();
+    none.sort_unstable();
+    none.dedup();
+    filter.no_colors = none;
+    if query.colors.is_empty() {
+        return Ok(());
+    }
+    for reach in COLOR_REACHES {
+        filter.colors = query
+            .colors
+            .iter()
+            .map(|c| cells_near(c.rgb, reach))
+            .collect();
+        let mut qb = QueryBuilder::new("SELECT EXISTS (SELECT 1 FROM posts p");
+        push_filters(&mut qb, query, filter);
+        qb.push(")");
+        if qb.build_query_scalar::<bool>().fetch_one(&state.db).await? {
+            break;
+        }
+    }
+    Ok(())
 }
 
 /// Sort expression for a key; the id is always the tie-breaker. These match
@@ -386,6 +429,15 @@ pub(super) fn push_filters(qb: &mut QueryBuilder<Postgres>, query: &SearchQuery,
             // A post of unknown size isn't known to be in the range.
             qb.push(if negated { ") IS NOT TRUE" } else { ")" });
         }
+    }
+    // Matches the GIN index of migration 0025.
+    for cells in &tags.colors {
+        qb.push(" AND p.colors && ").push_bind(cells.clone());
+    }
+    if !tags.no_colors.is_empty() {
+        qb.push(" AND NOT (p.colors && ")
+            .push_bind(tags.no_colors.clone())
+            .push(")");
     }
 }
 
@@ -912,13 +964,15 @@ async fn insert_post(
     tags: &[String],
 ) -> AppResult<i64> {
     let auto_tags = crate::settings::current(state).await?.auto_meta_tags;
+    let palette = info.palette.clone().unwrap_or_default();
     let mut tx = state.db.begin().await?;
     check_quota(&mut *tx, user_id, file_size).await?;
     let id: i64 = sqlx::query_scalar(
         "INSERT INTO posts (sha256, ext, mime, kind, file_size, width, height, duration_ms, \
          has_thumb, rating, source, uploader_id, phash, pcolor, has_sample, file_date, \
-         file_date_scanned) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, true) \
+         file_date_scanned, colors, palette, colors_scanned) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, true, \
+                 $17, $18, $19) \
          RETURNING id",
     )
     .bind(info.sha256.as_slice())
@@ -937,6 +991,9 @@ async fn insert_post(
     .bind(info.print.map(|p| p.color_db()))
     .bind(info.has_sample)
     .bind(info.file_date)
+    .bind(palette.cells)
+    .bind(palette.colors)
+    .bind(info.palette.is_some())
     .fetch_one(&mut *tx)
     .await
     .map_err(|e| match AppError::from(e) {
@@ -1219,6 +1276,70 @@ pub async fn backfill_hashes(state: AppState) {
     }
     if done > 0 {
         tracing::info!("hash backfill: fingerprinted {done} posts");
+    }
+}
+
+/// At startup: the colours of posts not looked at yet (uploaded before colour
+/// search existed, or whose thumbnail came later). A thumbnail that can't be
+/// read is tried again next start. A post that gains colours hasn't been
+/// edited, so `updated_at` stays.
+pub async fn backfill_colors(state: AppState) {
+    let mut after = 0i64;
+    let mut done = 0u64;
+    loop {
+        let batch: Result<Vec<(i64, Vec<u8>, String)>, _> = sqlx::query_as(
+            "SELECT id, sha256, ext FROM posts \
+             WHERE NOT colors_scanned AND has_thumb AND id > $1 \
+             ORDER BY id LIMIT 200",
+        )
+        .bind(after)
+        .fetch_all(&state.db)
+        .await;
+        let batch = match batch {
+            Ok(b) if !b.is_empty() => b,
+            Ok(_) => break,
+            Err(e) => {
+                warn!("colour backfill stopped: {e}");
+                return;
+            }
+        };
+        let Some(&(last, ..)) = batch.last() else {
+            break;
+        };
+        after = last;
+        let st = state.clone();
+        let read = tokio::task::spawn_blocking(move || {
+            batch
+                .into_iter()
+                .filter_map(|(id, sha, ext)| {
+                    st.storage
+                        .thumb_palette(&hex::encode(sha), &ext)
+                        .map(|p| (id, p))
+                })
+                .collect::<Vec<_>>()
+        })
+        .await;
+        let Ok(read) = read else {
+            warn!("colour backfill stopped: worker failed");
+            return;
+        };
+        for (id, palette) in read {
+            let updated = sqlx::query(
+                "UPDATE posts SET colors = $2, palette = $3, colors_scanned = true WHERE id = $1",
+            )
+            .bind(id)
+            .bind(&palette.cells)
+            .bind(&palette.colors)
+            .execute(&state.db)
+            .await;
+            match updated {
+                Ok(_) => done += 1,
+                Err(e) => warn!("colour backfill: post {id}: {e}"),
+            }
+        }
+    }
+    if done > 0 {
+        tracing::info!("colour backfill: read {done} posts");
     }
 }
 
@@ -1628,6 +1749,172 @@ mod tests {
         let r = app.upload(token, bytes, &[("tags", "")]).await;
         assert_eq!(r.status, 200, "{:?}", r.json());
         r.json()
+    }
+
+    /// A flat picture of one colour, big enough to get a thumbnail.
+    fn flat_png(rgb: [u8; 3]) -> Vec<u8> {
+        let img = image::RgbImage::from_pixel(64, 64, image::Rgb(rgb));
+        let mut out = std::io::Cursor::new(Vec::new());
+        img.write_to(&mut out, image::ImageFormat::Png).unwrap();
+        out.into_inner()
+    }
+
+    async fn upload_color(app: &testing::TestApp, token: &str, rgb: [u8; 3], tags: &str) -> i64 {
+        let r = app.upload(token, &flat_png(rgb), &[("tags", tags)]).await;
+        assert_eq!(r.status, 200, "{:?}", r.json());
+        r.json()["id"].as_i64().unwrap()
+    }
+
+    async fn found(app: &testing::TestApp, token: &str, q: &str) -> Vec<i64> {
+        let r = app.get(&format!("/api/v1/posts?q={q}"), token).await;
+        assert_eq!(r.status, 200, "{q}: {:?}", r.json());
+        let mut ids: Vec<i64> = r.json()["posts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p["id"].as_i64().unwrap())
+            .collect();
+        ids.sort_unstable();
+        ids
+    }
+
+    #[tokio::test]
+    async fn filters_by_color() {
+        let Some(app) = testing::app().await else {
+            return;
+        };
+        let t = app.register("admin").await;
+        let red = upload_color(&app, &t, [224, 32, 42], "first").await;
+        let blue = upload_color(&app, &t, [32, 96, 224], "second").await;
+        let white = upload_color(&app, &t, [255, 255, 255], "second").await;
+
+        // The colours show on the post.
+        let post = app.get(&format!("/api/v1/posts/{red}"), &t).await.json();
+        let swatch = post["palette"][0].as_str().unwrap();
+        assert!(swatch.starts_with('#') && swatch.len() == 7, "{swatch}");
+
+        for (q, expected) in [
+            ("color:red", vec![red]),
+            ("colour:blue", vec![blue]),
+            ("color:2060e0", vec![blue]),
+            ("color:%232060e0", vec![blue]),
+            ("color:white", vec![white]),
+            ("-color:red", vec![blue, white]),
+            ("-color:red+-color:white", vec![blue]),
+            ("color:red+color:blue", vec![]),
+            ("color:blue+second", vec![blue]),
+            ("color:blue+first", vec![]),
+            // Too far from anything stored: no grey or blue for a green.
+            ("color:green", vec![]),
+        ] {
+            assert_eq!(found(&app, &t, q).await, expected, "{q}");
+        }
+
+        let r = app.get("/api/v1/posts?q=color:bluish", &t).await;
+        assert_eq!(r.status, 400);
+        assert!(r.json()["message"].as_str().unwrap().contains("colour"));
+    }
+
+    #[tokio::test]
+    async fn a_color_search_finds_the_nearest_stored() {
+        let Some(app) = testing::app().await else {
+            return;
+        };
+        let t = app.register("admin").await;
+        // A dull, dark red: only the widest reach of `color:red` gets it.
+        let dull = upload_color(&app, &t, [120, 60, 52], "dull").await;
+        assert_eq!(found(&app, &t, "color:red").await, vec![dull]);
+        // Once a closer red is stored, only that one is the nearest…
+        let bright = upload_color(&app, &t, [224, 32, 42], "bright").await;
+        assert_eq!(found(&app, &t, "color:red").await, vec![bright]);
+        // …but the nearest is taken with the rest of the search.
+        assert_eq!(found(&app, &t, "color:red+dull").await, vec![dull]);
+        // Excluding isn't widened by what is stored.
+        assert_eq!(found(&app, &t, "-color:red").await, vec![dull]);
+    }
+
+    #[tokio::test]
+    async fn the_recycle_bin_searches_by_color() {
+        let Some(app) = testing::app().await else {
+            return;
+        };
+        let t = app.register("admin").await;
+        let red = upload_color(&app, &t, [224, 32, 42], "").await;
+        let r = app
+            .call(
+                axum::http::Method::DELETE,
+                &format!("/api/v1/posts/{red}"),
+                Some(&t),
+                None,
+            )
+            .await;
+        assert!(r.status.is_success(), "{:?}", r.status);
+        assert_eq!(found(&app, &t, "color:red").await, Vec::<i64>::new());
+        assert_eq!(found(&app, &t, "color:red+status:deleted").await, vec![red]);
+    }
+
+    #[tokio::test]
+    async fn backfill_reads_colors() {
+        let Some(app) = testing::app().await else {
+            return;
+        };
+        let t = app.register("admin").await;
+        let red = upload_color(&app, &t, [224, 32, 42], "").await;
+        // One from before colours were stored, and one with no thumbnail file.
+        let old = upload_color(&app, &t, [32, 96, 224], "").await;
+        let gone = upload_color(&app, &t, [32, 176, 32], "").await;
+        let before: chrono::DateTime<chrono::Utc> =
+            sqlx::query_scalar("SELECT updated_at FROM posts WHERE id = $1")
+                .bind(old)
+                .fetch_one(app.db())
+                .await
+                .unwrap();
+        sqlx::query(
+            "UPDATE posts SET colors = '{}', palette = '{}', colors_scanned = false \
+             WHERE id = ANY($1)",
+        )
+        .bind(vec![old, gone])
+        .execute(app.db())
+        .await
+        .unwrap();
+        let sha: Vec<u8> = sqlx::query_scalar("SELECT sha256 FROM posts WHERE id = $1")
+            .bind(gone)
+            .fetch_one(app.db())
+            .await
+            .unwrap();
+        let thumb = app
+            .state
+            .storage
+            .path_for_file(
+                crate::storage::Variant::Thumb,
+                &crate::storage::Storage::file_name(
+                    crate::storage::Variant::Thumb,
+                    &hex::encode(sha),
+                    "png",
+                ),
+            )
+            .unwrap();
+        std::fs::remove_file(thumb).unwrap();
+        assert_eq!(found(&app, &t, "color:blue").await, Vec::<i64>::new());
+
+        super::backfill_colors(app.state.clone()).await;
+
+        assert_eq!(found(&app, &t, "color:blue").await, vec![old]);
+        assert_eq!(found(&app, &t, "color:red").await, vec![red]);
+        let row: (bool, chrono::DateTime<chrono::Utc>) =
+            sqlx::query_as("SELECT colors_scanned, updated_at FROM posts WHERE id = $1")
+                .bind(old)
+                .fetch_one(app.db())
+                .await
+                .unwrap();
+        assert_eq!(row, (true, before));
+        // Its thumbnail is gone, so it waits for the next start.
+        let scanned: bool = sqlx::query_scalar("SELECT colors_scanned FROM posts WHERE id = $1")
+            .bind(gone)
+            .fetch_one(app.db())
+            .await
+            .unwrap();
+        assert!(!scanned);
     }
 
     #[tokio::test]

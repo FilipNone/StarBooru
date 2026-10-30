@@ -7,6 +7,7 @@ pub mod admin;
 pub mod agent;
 pub mod ai;
 pub mod autotag;
+pub mod color;
 pub mod edit;
 pub mod figure;
 pub mod filter;
@@ -46,7 +47,7 @@ pub use local_ai::{
 pub use model::*;
 pub use oidc::{Identity, OidcBegin, OidcError, OidcFinish, OidcStart, SignInMethods};
 pub use panels::{PanelTranslation, TextBlock, panel_prompt, parse_panel_blocks};
-pub use query::{FigureTerm, Order, SearchQuery, SortKey, parse_query, with_order};
+pub use query::{FigureTerm, Order, SearchQuery, SortKey, parse_query, with_color, with_order};
 pub use remote::{
     BooruApi, BooruSite, RemoteError, RemotePage, RemotePost, RemoteSearch, SITES, remote_tags,
 };

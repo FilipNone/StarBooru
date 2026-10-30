@@ -17,11 +17,12 @@ use image::{
     DynamicImage, ExtendedColorType, ImageDecoder, ImageEncoder, ImageReader, Limits, Rgb, RgbImage,
 };
 use sha2::{Digest, Sha256};
+use starbooru_core::color::Palette;
 use starbooru_core::{MediaKind, SAMPLE_SIZE};
 
 use crate::error::{AppError, AppResult};
 use crate::probe::Tools;
-use crate::similar::Fingerprint;
+use crate::similar::{self, Fingerprint};
 
 pub const THUMB_SIZE: u32 = 512;
 /// How much of a stored image is read for its EXIF date, which sits near
@@ -85,6 +86,8 @@ pub struct Ingested {
     pub has_sample: Option<bool>,
     /// The date the file carries.
     pub file_date: Option<DateTime<Utc>>,
+    /// The thumbnail's colours; `None` without a thumbnail.
+    pub palette: Option<Palette>,
 }
 
 /// What ffmpeg found in a file `image` can't decode.
@@ -291,6 +294,11 @@ impl Storage {
             MediaKind::Video => derived.file_date,
             MediaKind::Animation => None,
         };
+        let palette = if derived.has_thumb {
+            self.thumb_palette(&sha_hex, ext)
+        } else {
+            None
+        };
 
         Ok(Ingested {
             sha256,
@@ -305,6 +313,7 @@ impl Storage {
             print: derived.print,
             has_sample,
             file_date,
+            palette,
         })
     }
 
@@ -428,6 +437,17 @@ impl Storage {
         )?;
         let bytes = std::fs::read(path).ok()?;
         fingerprint_jpeg(&bytes)
+    }
+
+    /// The colours of a stored thumbnail; `None` when it is gone or can't be
+    /// read. Call from a blocking thread.
+    pub fn thumb_palette(&self, sha_hex: &str, ext: &str) -> Option<Palette> {
+        let path = self.path_for_file(
+            Variant::Thumb,
+            &Self::file_name(Variant::Thumb, sha_hex, ext),
+        )?;
+        let bytes = std::fs::read(path).ok()?;
+        decode(&bytes).ok().map(|img| similar::palette(&img))
     }
 
     fn write_thumb(&self, sha_hex: &str, ext: &str, jpeg: &[u8]) -> AppResult<()> {

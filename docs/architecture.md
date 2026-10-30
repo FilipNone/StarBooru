@@ -36,7 +36,7 @@ The desktop and Android apps are the same Dioxus code as the web app. Each one a
 | `settings.rs` | The server settings in force: the `server_settings` row over the environment variables. Read per request, so admin changes apply at once. |
 | `throttle.rs` | Sign-in limits: failed attempts per account and per client address (IPv6 by /64) in fixed windows, in memory and capped at 10,000 keys each. The address is the socket peer, or the last `X-Forwarded-For` entry with `STARBOORU_TRUST_PROXY`. |
 | `storage.rs` | Format sniffing, content-addressed storage, thumbnails |
-| `similar.rs` | Duplicate finder fingerprints: a 64-bit difference hash (9×8 brightness grid) plus the average colour, and grouping by Hamming distance through a 4×16-bit multi-index, so it never compares every pair. Fine high-frequency patterns blur to flat at 9×8 and can match when their colours do. |
+| `similar.rs` | A picture's colours for `color:`, and the duplicate finder fingerprints: a 64-bit difference hash (9×8 brightness grid) plus the average colour, and grouping by Hamming distance through a 4×16-bit multi-index, so it never compares every pair. Fine high-frequency patterns blur to flat at 9×8 and can match when their colours do. |
 | `ai.rs` | AI provider client: `chat(provider, prompt, image)` posts to an OpenAI-compatible `/chat/completions` (no proxies, 60 s timeout or 5 min for local AI, 1 MiB answer cap, any address since the admin sets it). `AiSetup` routes each tool (tagging, translation) to the hosted provider, the local runtime or nowhere. Tag suggestions from a post's thumbnail, translation of a post's OCR text (text only; `routes/ai.rs`), and background auto-tagging of uploads (two at a time). The key is never logged or returned; the answer parser is `starbooru_core::ai`. |
 | `local_ai.rs` | Local AI through Ollama: reads the hardware (`/proc/meminfo`, `/proc/cpuinfo`, `/sys/class/drm`, `nvidia-smi`), lists the runtime's models, downloads one at a time with progress in `AppState`, and times a test request. The presets and the fit check (`assess`) are pure functions in `starbooru_core::local_ai`. |
 | `fetch.rs` | URL import download: http(s) only, public addresses only (checked for literal IPs, on every redirect and in a filtering DNS resolver), no proxies, streaming size cap, timeouts |
@@ -107,6 +107,14 @@ Every new post goes through `insert_post` (uploads, URL and booru imports, edito
 `posts.file_date` is the date in the file: EXIF `DateTimeOriginal`, then `DateTimeDigitized`, then `DateTime` for images, and the container's `creation_time` from ffprobe for videos. GIFs have none. EXIF has no time zone, so its wall clock is stored as if it were UTC: `date:2024-03-15` matches the day the photo shows. Clocks that were never set don't count (a year before 1826 in EXIF, before 1990 in a video). An editor copy keeps the original's date, as editing drops the metadata.
 
 Uploads read the date at ingest. A startup backfill (`backfill_file_dates`) reads it once for older posts, recycle bin included, and doesn't change `updated_at`. Videos wait for a server with ffprobe. `date:` compares `COALESCE(file_date, created_at)`, which has its own partial index.
+
+### Colours
+
+`crates/core/src/color.rs` cuts OKLab into a grid (13 lightness lines, 17 each of a and b; lightness counts for half as much as hue in distances). `similar::palette` counts a picture's thumbnail on a 48×48 grid of pixels. `posts.colors` keeps its most common cells: up to eight with at least 3% of the pixels, and the top three whatever their share. `posts.palette` keeps up to six colours for display, at least a visible step apart.
+
+Uploads work these out at ingest. A startup backfill (`backfill_colors`) reads them once for older posts and doesn't change `updated_at`. A post with no thumbnail, or one that can't be read, waits for a later start.
+
+`color:` turns into `colors && <cells near the colour>`, which the partial GIN index `posts_live_colors` serves. `tag_filter` tries the reaches in `COLOR_REACHES` (0.10, 0.14, 0.18) narrowest first and keeps the first where `EXISTS` finds a post with the whole search, so one search costs at most three extra queries, however many colours it names. The widest reach stops short of a neutral grey for a saturated colour. `-color:` has one fixed reach (0.14), so what it hides doesn't depend on what else is stored.
 
 ### Search
 

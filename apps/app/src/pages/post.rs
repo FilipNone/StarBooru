@@ -452,6 +452,20 @@ pub fn PostView(id: i64, q: String) -> Element {
                         if let Some(date) = file_date {
                             dt { {t!("post-file-date")} } dd { "{date}" }
                         }
+                        if !p.palette.is_empty() {
+                            dt { {t!("post-colors")} }
+                            dd { class: "post-swatches",
+                                for hex in p.palette.clone() {
+                                    Link {
+                                        key: "{hex}",
+                                        class: "swatch",
+                                        style: "background-color: {hex}",
+                                        title: t!("post-color-search", color = hex.as_str()),
+                                        to: Route::Gallery { q: format!("color:{}", hex.trim_start_matches('#')) },
+                                    }
+                                }
+                            }
+                        }
                         dt { {t!("post-added")} } dd { "{added}" }
                         if let Some(source) = &p.source {
                             dt { {t!("post-source")} } dd { class: "break", "{source}" }

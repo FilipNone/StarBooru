@@ -283,6 +283,9 @@ pub struct Post {
     /// EXIF has no time zone), the creation time for videos.
     #[serde(default)]
     pub file_date: Option<DateTime<Utc>>,
+    /// The picture's main colours as `#rrggbb`, most common first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub palette: Vec<String>,
     pub deleted: bool,
     /// Signed, server-relative URL of the original file.
     pub file_url: String,

@@ -12,6 +12,8 @@
 //! * `date:2024-03`, `date:2023..2024`, `date:>30d`: the file's date, or the
 //!   upload date when it has none. `width:>1920`, `height:`, `mpixels:>8`,
 //!   `ratio:16:9`: its size. The forms are in `crate::filter`; `-` excludes.
+//! * `color:red`, `color:2060e0`: the picture has that colour, or the nearest
+//!   one stored. `-color:` excludes. The forms are in `crate::color`.
 //! * `{girl blonde_hair boots}`: one person in the picture has all of
 //!   these tags (and is a girl; `boy` and `other` work too). `-{...}`: no
 //!   one does.
@@ -21,6 +23,7 @@
 
 use thiserror::Error;
 
+use crate::color::{ColorTerm, parse_color};
 use crate::figure::FigureKind;
 use crate::filter::{DateTerm, SizeField, SizeTerm, parse_date_term, parse_size_term};
 use crate::model::{MediaKind, Rating};
@@ -134,6 +137,23 @@ pub fn with_order(query: &str, order: Option<Order>) -> String {
     terms.join(" ")
 }
 
+/// Replaces the `color:` terms of a query string with `color:<value>` (or
+/// removes them for `None`), keeping every other term as typed.
+pub fn with_color(query: &str, value: Option<&str>) -> String {
+    let mut terms: Vec<String> = query
+        .split_whitespace()
+        .filter(|t| {
+            let lower = t.to_ascii_lowercase();
+            !(lower.starts_with("color:") || lower.starts_with("colour:"))
+        })
+        .map(str::to_owned)
+        .collect();
+    if let Some(value) = value {
+        terms.push(format!("color:{value}"));
+    }
+    terms.join(" ")
+}
+
 /// A `{...}` term: one figure of the post has every tag, and the kind when given.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct FigureTerm {
@@ -167,6 +187,10 @@ pub struct SearchQuery {
     pub sizes: Vec<SizeTerm>,
     /// The same with `-`. A post of unknown size passes these.
     pub exclude_sizes: Vec<SizeTerm>,
+    /// `color:` terms: the picture must have each colour.
+    pub colors: Vec<ColorTerm>,
+    /// `-color:` terms: it must have none.
+    pub exclude_colors: Vec<ColorTerm>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -195,6 +219,8 @@ pub enum QueryError {
     BadDate(String),
     #[error("`{0}:{1}` isn't a size (try width:>1920, mpixels:>8 or ratio:16:9)")]
     BadSize(String, String),
+    #[error("`color:{0}` isn't a colour (try color:red or color:2060e0)")]
+    BadColor(String),
     #[error(transparent)]
     Tag(#[from] TagError),
 }
@@ -349,6 +375,19 @@ pub fn parse_query(input: &str) -> Result<SearchQuery, QueryError> {
                     );
                     continue;
                 }
+                "color" | "colour" => {
+                    let color =
+                        parse_color(value).ok_or_else(|| QueryError::BadColor(value.to_owned()))?;
+                    push_unique(
+                        if negated {
+                            &mut q.exclude_colors
+                        } else {
+                            &mut q.colors
+                        },
+                        color,
+                    );
+                    continue;
+                }
                 name @ ("width" | "height" | "mpixels" | "ratio") => {
                     let field = match name {
                         "width" => SizeField::Width,
@@ -398,6 +437,36 @@ fn push_unique<T: PartialEq>(v: &mut Vec<T>, item: T) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_colors() {
+        let q = parse_query("color:RED colour:#2060e0 -color:grey color:red").unwrap();
+        assert_eq!(
+            q.colors,
+            vec![parse_color("red").unwrap(), parse_color("2060e0").unwrap()]
+        );
+        assert_eq!(q.exclude_colors, vec![parse_color("gray").unwrap()]);
+        assert!(q.include.is_empty() && q.exclude.is_empty());
+        assert_eq!(
+            parse_query("color:bluish"),
+            Err(QueryError::BadColor("bluish".into()))
+        );
+        assert_eq!(parse_query("color:"), Err(QueryError::BadColor("".into())));
+    }
+
+    #[test]
+    fn with_color_replaces_the_color_terms() {
+        assert_eq!(with_color("cat", Some("red")), "cat color:red");
+        assert_eq!(
+            with_color("color:red cat Colour:blue order:score", Some("2060e0")),
+            "cat order:score color:2060e0"
+        );
+        assert_eq!(
+            with_color("cat color:red -color:blue", None),
+            "cat -color:blue"
+        );
+        assert_eq!(with_color("", None), "");
+    }
 
     #[test]
     fn parses_mixed_query() {

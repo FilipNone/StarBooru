@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 
 use axum::http::{Method, StatusCode};
 use serde_json::json;
+use starbooru_core::color::{cells_near, parse_color};
 
 use crate::testing;
 
@@ -26,6 +27,18 @@ const RUNS: usize = 5;
 /// The slowest median any call may have. Generous, so it catches a bad plan
 /// (a full scan or sort of the table) rather than a slow machine.
 const LIMIT: Duration = Duration::from_millis(400);
+
+/// The grid cells around the usual colours, the commonest first.
+fn common_colors() -> Vec<i16> {
+    [
+        "white", "black", "gray", "brown", "pink", "blue", "red", "yellow", "green", "purple",
+        "orange", "teal",
+    ]
+    .iter()
+    .filter_map(|name| parse_color(name))
+    .flat_map(|color| cells_near(color.rgb, 0.1))
+    .collect()
+}
 
 fn median(mut times: Vec<Duration>) -> Duration {
     times.sort();
@@ -57,10 +70,12 @@ async fn search_at_scale() {
     // 5 to 24 tags a post, drawn towards the popular ones. The inner series
     // refers to `g`, so it runs again for every post. Hashes are random,
     // except for one post in 100 that is blank (hash 0, as flat pictures
-    // get), which is the worst case for finding look-alikes.
+    // get), which is the worst case for finding look-alikes. Colours are a few
+    // cells each, drawn towards the colours pictures have most of.
     sqlx::query(
         "INSERT INTO posts (sha256, ext, mime, kind, file_size, width, height, has_thumb, \
-                            rating, score, tag_ids, uploader_id, created_at, updated_at, deleted_at, phash) \
+                            rating, score, tag_ids, uploader_id, created_at, updated_at, deleted_at, phash, \
+                            colors, colors_scanned) \
          SELECT sha256(int8send(g)), 'png', 'image/png', \
                 CASE WHEN g % 25 = 0 THEN 2 WHEN g % 40 = 0 THEN 1 ELSE 0 END, \
                 (10000 + random() * 20000000)::bigint, \
@@ -73,11 +88,14 @@ async fn search_at_scale() {
                 now() - make_interval(secs => random() * 86400 * 365), \
                 CASE WHEN g % 50 = 0 THEN now() END, \
                 CASE WHEN g % 100 = 0 THEN 0 \
-                     ELSE ('x' || substr(md5(g::text), 1, 16))::bit(64)::bigint END \
+                     ELSE ('x' || substr(md5(g::text), 1, 16))::bit(64)::bigint END, \
+                (SELECT array_agg(DISTINCT ($3::smallint[])[1 + floor(cardinality($3::smallint[]) * power(random(), 2))::int]) \
+                 FROM generate_series(1, 3 + (g % 6))), true \
          FROM generate_series(1, $1) g",
     )
     .bind(posts)
     .bind(TAGS as f64)
+    .bind(common_colors())
     .execute(db)
     .await
     .unwrap();
@@ -132,6 +150,16 @@ async fn search_at_scale() {
         "/api/v1/posts?q=width:%3E3900".into(),
         "/api/v1/posts?q=mpixels:%3E12".into(),
         "/api/v1/posts?q=ratio:16:9".into(),
+        "/api/v1/posts?q=color:white".into(),
+        "/api/v1/posts?q=color:red".into(),
+        "/api/v1/posts?q=color:teal".into(),
+        "/api/v1/posts?q=color:ff00ff".into(),
+        "/api/v1/posts?q=color:000080".into(),
+        "/api/v1/posts?q=-color:white".into(),
+        "/api/v1/posts?q=tag_1+color:blue".into(),
+        "/api/v1/posts?q=tag_300+color:teal".into(),
+        "/api/v1/posts?q=color:red+color:blue".into(),
+        "/api/v1/posts?q=color:red+order:score".into(),
         "/api/v1/posts?q=tag_1+width:%3E1920".into(),
         "/api/v1/posts?q=tag_300+date:%3E30d".into(),
         "/api/v1/posts?q=-width:%3E1000".into(),
