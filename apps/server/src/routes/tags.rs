@@ -171,6 +171,40 @@ pub async fn resolve_for_post(
     .await?)
 }
 
+/// Each of `names` (already normalised, without prefixes) with the id and
+/// name of the tag it means, following aliases. Missing tags are created.
+pub(super) async fn by_name(
+    tx: &mut Transaction<'_, Postgres>,
+    names: &[String],
+) -> AppResult<HashMap<String, (i64, String)>> {
+    if names.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let canonical: Vec<(String, String)> = sqlx::query_as(
+        "SELECT n.name, COALESCE(t.name, n.name) FROM unnest($1::text[]) AS n(name) \
+         LEFT JOIN tag_aliases a ON a.alias = n.name LEFT JOIN tags t ON t.id = a.tag_id",
+    )
+    .bind(names)
+    .fetch_all(&mut **tx)
+    .await?;
+    let targets: Vec<&str> = canonical.iter().map(|(_, c)| c.as_str()).collect();
+    sqlx::query("INSERT INTO tags (name) SELECT unnest($1::text[]) ON CONFLICT (name) DO NOTHING")
+        .bind(&targets)
+        .execute(&mut **tx)
+        .await?;
+    let ids: HashMap<String, i64> =
+        sqlx::query_as::<_, (String, i64)>("SELECT name, id FROM tags WHERE name = ANY($1)")
+            .bind(&targets)
+            .fetch_all(&mut **tx)
+            .await?
+            .into_iter()
+            .collect();
+    Ok(canonical
+        .into_iter()
+        .filter_map(|(name, target)| Some((name, (*ids.get(&target)?, target))))
+        .collect())
+}
+
 /// The tag and everything it implies, transitively.
 async fn closure(tx: &mut Transaction<'_, Postgres>, tag_id: i64) -> AppResult<Vec<i64>> {
     Ok(sqlx::query_scalar(
@@ -574,6 +608,15 @@ pub async fn add_alias(
             "INSERT INTO tag_implications (tag_id, implied_id) \
              SELECT $2, implied_id FROM tag_implications WHERE tag_id = $1 AND implied_id <> $2 \
              UNION SELECT tag_id, $2 FROM tag_implications WHERE implied_id = $1 AND tag_id <> $2 \
+             ON CONFLICT DO NOTHING",
+        )
+        .bind(old_id)
+        .bind(target_id)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO figure_tags (figure_id, tag_id, slot, position) \
+             SELECT figure_id, $2, slot, position FROM figure_tags WHERE tag_id = $1 \
              ON CONFLICT DO NOTHING",
         )
         .bind(old_id)

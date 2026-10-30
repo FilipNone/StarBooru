@@ -10,6 +10,7 @@ mod gallery;
 mod help;
 mod legal;
 mod login;
+mod people;
 mod post;
 mod select;
 mod settings;

@@ -8,12 +8,13 @@ use axum::http::StatusCode;
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use sqlx::{FromRow, Postgres, QueryBuilder, Transaction};
-use starbooru_core::query::{SearchQuery, SortKey};
+use starbooru_core::query::{FigureTerm, SearchQuery, SortKey};
 use starbooru_core::tag::normalize_tags;
 use starbooru_core::{
     BulkEdit, BulkResult, DEFAULT_PAGE_LIMIT, DEFAULT_RELATED_LIMIT, ImportRequest, MAX_BULK_POSTS,
     MAX_PAGE_LIMIT, MAX_RELATED_LIMIT, MediaKind, Neighbors, Post, PostPage, PostUpdate, Rating,
-    RelatedPosts, VoteRequest, parse_query, parse_tag_list,
+    RelatedPosts, VoteRequest, is_count_tag, parse_query, parse_tag_list, required_tags,
+    split_category,
 };
 use tracing::warn;
 
@@ -145,6 +146,7 @@ pub(super) fn to_post(state: &AppState, row: PostRow) -> Post {
         sample_url,
         ocr_text: None,
         tag_details: Vec::new(),
+        figures: Vec::new(),
     }
 }
 
@@ -186,6 +188,33 @@ pub(super) struct TagFilter {
     /// A searched parent and its tree: a post needs one of each group.
     any: Vec<Vec<i64>>,
     none: Vec<i64>,
+    /// `{...}` terms: some figure matches each.
+    figures: Vec<FigureFilter>,
+    /// `-{...}` terms: no figure matches any.
+    no_figures: Vec<FigureFilter>,
+}
+
+/// A figure term, resolved: the kind, and for each tag the tag and its tree.
+#[derive(Clone, Debug, Default)]
+struct FigureFilter {
+    kind: Option<i16>,
+    groups: Vec<Vec<i64>>,
+}
+
+/// Resolves a `{...}` term; `None` when one of its tags doesn't exist.
+async fn figure_filter(state: &AppState, term: &FigureTerm) -> AppResult<Option<FigureFilter>> {
+    let (ids, wanted) = tag_ids(state, &term.tags).await?;
+    if ids.len() < wanted {
+        return Ok(None);
+    }
+    let mut trees = super::tags::descendants(&state.db, &ids).await?;
+    Ok(Some(FigureFilter {
+        kind: term.kind.map(|k| k.to_db()),
+        groups: ids
+            .iter()
+            .map(|id| trees.remove(id).unwrap_or_else(|| vec![*id]))
+            .collect(),
+    }))
 }
 
 /// Resolves a search's tags; `None` when a searched tag doesn't exist, so
@@ -217,6 +246,20 @@ pub(super) async fn tag_filter(
     none.sort_unstable();
     none.dedup();
     filter.none = none;
+    for term in &query.figures {
+        match figure_filter(state, term).await? {
+            Some(f) => {
+                // A figure's tags are on the post too, and those are indexed.
+                filter.any.extend(f.groups.iter().cloned());
+                filter.figures.push(f);
+            }
+            None => return Ok(None),
+        }
+    }
+    for term in &query.exclude_figures {
+        // a term with an unknown tag matches no one, so excludes nothing
+        filter.no_figures.extend(figure_filter(state, term).await?);
+    }
     Ok(Some(filter))
 }
 
@@ -250,6 +293,24 @@ pub(super) fn push_filters(qb: &mut QueryBuilder<Postgres>, query: &SearchQuery,
         qb.push(" AND NOT (p.tag_ids && ")
             .push_bind(tags.none.clone())
             .push(")");
+    }
+    for (figures, negated) in [(&tags.figures, false), (&tags.no_figures, true)] {
+        for figure in figures {
+            qb.push(if negated { " AND NOT" } else { " AND" });
+            qb.push(" EXISTS (SELECT 1 FROM figures f WHERE f.post_id = p.id");
+            if let Some(kind) = figure.kind {
+                qb.push(" AND f.kind = ").push_bind(kind);
+            }
+            for group in &figure.groups {
+                qb.push(
+                    " AND EXISTS (SELECT 1 FROM figure_tags ft \
+                     WHERE ft.figure_id = f.id AND ft.tag_id = ANY(",
+                )
+                .push_bind(group.clone())
+                .push("))");
+            }
+            qb.push(")");
+        }
     }
     if !query.ratings.is_empty() {
         let r: Vec<i16> = query.ratings.iter().map(|r| r.to_db()).collect();
@@ -615,6 +676,7 @@ pub(super) async fn load_full(state: &AppState, user_id: i64, id: i64) -> AppRes
     let mut post = load(state, user_id, id).await?;
     post.ocr_text = ocr_text(state, id).await?;
     post.tag_details = super::tags::post_tags(&state.db, id).await?;
+    post.figures = super::figures::load(&state.db, id).await?;
     Ok(post)
 }
 
@@ -1073,7 +1135,14 @@ pub(crate) async fn set_tags(
     post_id: i64,
     names: &[String],
 ) -> AppResult<()> {
-    let new_ids = super::tags::resolve_for_post(tx, names).await?;
+    let figures = super::figures::load(&mut **tx, post_id).await?;
+    // With figures, the count tags come from them.
+    let names: Vec<String> = names
+        .iter()
+        .filter(|n| figures.is_empty() || !is_count_tag(split_category(n).1))
+        .cloned()
+        .collect();
+    let mut new_ids = super::tags::resolve_for_post(tx, &names).await?;
     let old_ids: Vec<i64> = sqlx::query_scalar(
         "SELECT tag_ids FROM posts WHERE id = $1 AND deleted_at IS NULL FOR UPDATE",
     )
@@ -1081,6 +1150,15 @@ pub(crate) async fn set_tags(
     .fetch_optional(&mut **tx)
     .await?
     .ok_or(AppError::NotFound)?;
+    if !figures.is_empty() {
+        super::figures::prune(tx, post_id, &new_ids).await?;
+        let figures = super::figures::load(&mut **tx, post_id).await?;
+        for id in super::tags::resolve_for_post(tx, &required_tags(&figures)).await? {
+            if !new_ids.contains(&id) {
+                new_ids.push(id);
+            }
+        }
+    }
 
     let added: Vec<i64> = new_ids
         .iter()
@@ -1116,6 +1194,23 @@ pub(super) async fn adjust_counts(
     Ok(())
 }
 
+/// Locks a post for editing: 404 when missing, 409 when in the recycle bin.
+pub(super) async fn lock_live(tx: &mut Transaction<'_, Postgres>, id: i64) -> AppResult<()> {
+    let live: Option<bool> =
+        sqlx::query_scalar("SELECT deleted_at IS NULL FROM posts WHERE id = $1 FOR UPDATE")
+            .bind(id)
+            .fetch_optional(&mut **tx)
+            .await?;
+    match live {
+        None => Err(AppError::NotFound),
+        Some(false) => Err(AppError::Conflict {
+            code: "deleted",
+            message: "restore the post before editing it".into(),
+        }),
+        Some(true) => Ok(()),
+    }
+}
+
 pub async fn update(
     State(state): State<AppState>,
     user: AuthUser,
@@ -1123,21 +1218,7 @@ pub async fn update(
     Json(update): Json<PostUpdate>,
 ) -> AppResult<Json<Post>> {
     let mut tx = state.db.begin().await?;
-    let live: Option<bool> =
-        sqlx::query_scalar("SELECT deleted_at IS NULL FROM posts WHERE id = $1 FOR UPDATE")
-            .bind(id)
-            .fetch_optional(&mut *tx)
-            .await?;
-    match live {
-        None => return Err(AppError::NotFound),
-        Some(false) => {
-            return Err(AppError::Conflict {
-                code: "deleted",
-                message: "restore the post before editing it".into(),
-            });
-        }
-        Some(true) => {}
-    }
+    lock_live(&mut tx, id).await?;
     if let Some(tags) = &update.tags {
         let tags = normalize_tags(tags.iter().map(String::as_str))?;
         set_tags(&mut tx, id, &tags).await?;

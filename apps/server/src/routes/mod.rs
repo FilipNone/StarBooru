@@ -8,6 +8,7 @@ mod backups;
 mod duplicates;
 mod edit;
 mod explore;
+mod figures;
 mod imports;
 mod keys;
 mod oidc;
@@ -41,6 +42,7 @@ use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
 use tracing::{error, warn};
 
+pub(crate) use figures::replace as replace_figures;
 pub(crate) use posts::set_tags as set_post_tags;
 
 use crate::error::{AppError, AppResult};
@@ -131,6 +133,7 @@ pub fn router(state: AppState) -> Router {
         .route("/posts/{id}/purge", post(posts::purge))
         .route("/trash/empty", post(trash::empty))
         .route("/posts/{id}/vote", put(posts::vote))
+        .route("/posts/{id}/figures", put(figures::put))
         .route("/posts/{id}/edit", post(edit::edit))
         .route("/shares", get(shares::list).post(shares::create))
         .route("/shares/{id}", axum::routing::delete(shares::delete))

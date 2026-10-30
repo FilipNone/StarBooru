@@ -9,7 +9,7 @@
 use crate::model::TagCategory;
 
 /// Bump when [`VOCAB`] gains entries, so servers seed the new ones.
-pub const VOCAB_VERSION: i32 = 1;
+pub const VOCAB_VERSION: i32 = 2;
 
 /// The sections, in the order the viewer shows them.
 pub const SECTIONS: &[&str] = &[
@@ -45,6 +45,9 @@ pub const VOCAB: &[(&str, &str)] = &[
     ("1other", "people"),
     ("2others", "people"),
     ("3others", "people"),
+    ("4others", "people"),
+    ("5others", "people"),
+    ("6+others", "people"),
     ("multiple_others", "people"),
     ("solo", "people"),
     ("no_humans", "people"),

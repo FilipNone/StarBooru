@@ -248,6 +248,38 @@ input[type="range"] { width: 100%; accent-color: var(--primary); margin-top: 12p
 .tag-trail .sep { color: var(--on-surface-2); }
 .tag-trail .here { font-weight: 600; }
 .sub-title { margin: 16px 0 8px; font-size: 14px; font-weight: 600; }
+/* the viewer's people, each with tags by slot */
+.card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+.card-head .card-title { margin: 0; }
+.people > .hint { margin: 0; }
+.figures { display: grid; gap: 10px; }
+.figures:empty { display: none; }
+.figure { display: grid; gap: 10px; padding: 12px; border-radius: var(--radius-s); background: var(--surface-2); }
+.figure-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.figure-kind { font-weight: 600; }
+.figure-slots { display: grid; grid-template-columns: auto 1fr; gap: 8px 12px; margin: 0; align-items: center; }
+.figure-slots dt { font-size: 13px; color: var(--on-surface-2); }
+.figure-slots dd { margin: 0; }
+.figure-edit {
+  display: grid; gap: 4px; min-width: 0; margin: 0 0 12px; padding: 4px 14px 14px;
+  border: 1px solid var(--outline); border-radius: var(--radius-m);
+}
+.figure-edit legend { padding: 0 6px; font-weight: 600; }
+.figure-edit .field { margin-bottom: 0; min-width: 0; }
+.figure-row {
+  display: grid; grid-template-columns: 1fr 1fr auto; gap: 10px; align-items: start;
+  grid-template-areas: "who who remove" "character cosplay cosplay";
+}
+.figure-row > .field:nth-child(1) { grid-area: who; }
+.figure-row > .field:nth-child(2) { grid-area: character; }
+.figure-row > .field:nth-child(3) { grid-area: cosplay; }
+.figure-row > .icon-btn { grid-area: remove; margin-top: 29px; }
+.slot-group { margin: 12px 0 4px; font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--on-surface-2); }
+.slot-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 6px 16px; }
+.slot-grid .field { grid-template-columns: 7.5em minmax(0, 1fr); align-items: center; gap: 8px; }
+.slot-grid .field > span { font-size: 13px; font-weight: 500; }
+.slot-grid .field input:not([type="range"], [type="checkbox"]) { padding: 7px 10px; }
+.people-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; }
 .suggest { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
 .chip.suggest-new { border-style: dashed; gap: 6px; }
 .suggest-badge { font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--tertiary); }

@@ -3,8 +3,9 @@
 //! viewer's keyboard shortcuts.
 
 use dioxus::prelude::*;
-use starbooru_core::{MediaKind, Order, Rating, SearchQuery, SortKey, parse_query};
+use starbooru_core::{FigureTerm, MediaKind, Order, Rating, SearchQuery, SortKey, parse_query};
 
+use super::people::kind_label;
 use crate::Route;
 use crate::icons::{Ico, Icon};
 use crate::util::rating_label;
@@ -20,6 +21,7 @@ fn sections() -> [(String, Vec<(&'static str, String)>); 5] {
                 ("-cloud", t!("help-tag-not")),
                 ("footwear", t!("help-tag-tree")),
                 ("artist:some_name", t!("help-tag-category")),
+                ("{girl blonde_hair boots}", t!("help-figure")),
                 ("blue sky", t!("help-tag-spaces")),
                 ("highres -sound", t!("help-tag-meta")),
             ],
@@ -192,6 +194,12 @@ pub fn explain(text: &str) -> Result<Vec<String>, String> {
             ratings = ratings(&q.exclude_ratings)
         ));
     }
+    for term in &q.figures {
+        lines.push(figure_line(term, false));
+    }
+    for term in &q.exclude_figures {
+        lines.push(figure_line(term, true));
+    }
     for text in &q.text {
         lines.push(t!("explain-text", text = text.as_str()));
     }
@@ -210,6 +218,20 @@ pub fn explain(text: &str) -> Result<Vec<String>, String> {
     }
     lines.push(order_phrase(q.order));
     Ok(lines)
+}
+
+/// One `{...}` term in words.
+fn figure_line(term: &FigureTerm, negated: bool) -> String {
+    let tags = term.tags.join(", ");
+    let kind = term.kind.map(|k| kind_label(k).to_lowercase());
+    match (kind, negated) {
+        (None, false) => t!("explain-figure", tags = tags),
+        (None, true) => t!("explain-no-figure", tags = tags),
+        (Some(kind), false) if term.tags.is_empty() => t!("explain-figure-only", kind = kind),
+        (Some(kind), true) if term.tags.is_empty() => t!("explain-no-figure-only", kind = kind),
+        (Some(kind), false) => t!("explain-figure-kind", kind = kind, tags = tags),
+        (Some(kind), true) => t!("explain-no-figure-kind", kind = kind, tags = tags),
+    }
 }
 
 /// "general, sensitive or questionable".
@@ -268,6 +290,18 @@ mod tests {
         assert_eq!(
             explain("a b c order:old").unwrap(),
             ["Tagged with all of a, b, c", "Oldest first"]
+        );
+        assert_eq!(
+            explain("{girl boots hat} {scarf} -{boy cap} -{sock} {other} -{girl}").unwrap(),
+            [
+                "A person (girl) has all of boots, hat",
+                "One person has all of scarf",
+                "A person marked as other",
+                "No person (boy) has all of cap",
+                "No one has all of sock",
+                "No person marked as girl",
+                "Newest first"
+            ]
         );
         assert_eq!(
             explain(r#"text:"no parking" -text:sale"#).unwrap(),

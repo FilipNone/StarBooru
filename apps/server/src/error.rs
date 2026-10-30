@@ -125,6 +125,12 @@ impl From<starbooru_core::tag::TagError> for AppError {
     }
 }
 
+impl From<starbooru_core::FigureError> for AppError {
+    fn from(e: starbooru_core::FigureError) -> Self {
+        AppError::BadRequest(e.to_string())
+    }
+}
+
 impl From<starbooru_core::query::QueryError> for AppError {
     fn from(e: starbooru_core::query::QueryError) -> Self {
         AppError::BadRequest(e.to_string())

@@ -355,9 +355,10 @@ async fn autotag(state: &AppState, post_id: i64) -> AppResult<()> {
 }
 
 /// Adds suggested tags to a post through the normal tag path. New tags get
-/// the category the model gave, or general.
+/// the category the model gave, or general. The suggested figures are
+/// saved when the post has none yet.
 pub async fn add_tags(state: &AppState, post_id: i64, parsed: &ParsedSuggestions) -> AppResult<()> {
-    if parsed.tags.is_empty() {
+    if parsed.tags.is_empty() && parsed.figures.is_empty() {
         return Ok(());
     }
     let mut tx = state.db.begin().await?;
@@ -388,6 +389,18 @@ pub async fn add_tags(state: &AppState, post_id: i64, parsed: &ParsedSuggestions
     }
     let names = normalize_tags(names.iter().map(String::as_str))?;
     crate::routes::set_post_tags(&mut tx, post_id, &names).await?;
+    let has_figures: bool =
+        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM figures WHERE post_id = $1)")
+            .bind(post_id)
+            .fetch_one(&mut *tx)
+            .await?;
+    // An answer too long to fit on the post still gives its tags.
+    let figure_tags: usize = parsed.figures.iter().map(|f| f.tag_names().len()).sum();
+    let fits =
+        names.len() + figure_tags + parsed.figures.len() < starbooru_core::tag::MAX_TAGS_PER_POST;
+    if !has_figures && !parsed.figures.is_empty() && fits {
+        crate::routes::replace_figures(&mut tx, post_id, parsed.figures.clone()).await?;
+    }
     tx.commit().await?;
     Ok(())
 }

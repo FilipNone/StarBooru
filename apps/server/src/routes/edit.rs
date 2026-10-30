@@ -102,10 +102,17 @@ pub async fn edit(
         &post.tags,
     )
     .await?;
+    let figures = super::figures::load(&state.db, id).await?;
+    if !figures.is_empty() {
+        let mut tx = state.db.begin().await?;
+        posts::lock_live(&mut tx, copy.id).await?;
+        super::figures::replace(&mut tx, copy.id, figures).await?;
+        tx.commit().await?;
+    }
     if req.bin_original {
         posts::set_deleted(&state, &user, id, true).await?;
     }
-    Ok(Json(copy))
+    Ok(Json(posts::load_full(&state, user.id, copy.id).await?))
 }
 
 #[cfg(test)]

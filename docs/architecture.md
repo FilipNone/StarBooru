@@ -65,6 +65,8 @@ PostgreSQL schema: `apps/server/migrations/`.
 | `sessions` | The SHA-256 of each bearer token (`sb_<64 hex>`) and its expiry, 90 days. The plain token is never stored. Also an `id` for the settings page, `last_used_at` (refreshed at most every 5 minutes) and `client`, a short description like "Firefox on Linux" (`starbooru_core::agent`); the raw User-Agent is not kept. Native apps send `StarBooru-app/<version> (<os>)`. |
 | `tags` | Normalised name, category (general / artist / character / copyright / meta), `parent_id` (the tag tree; loops are refused) and a `post_count` kept in step inside the same transaction as post edits. `server_settings.vocab_version` records which starter vocabulary (`starbooru_core::vocab`) was seeded at startup. |
 | `posts` | One per file: `sha256` (unique, so duplicates are refused), format, size, dimensions, rating, source, score, `tag_ids BIGINT[]`, `deleted_at` (soft delete), `phash`/`pcolor`, the duplicate finder's fingerprint of the thumbnail, and `meta_tagged_at`, when the automatic meta tags were added (NULL: not yet) |
+| `figures` | The people in a post, in order (`position`), with a `kind`: girl, boy or other. Replaced as a whole by `PUT /posts/{id}/figures`. |
+| `figure_tags` | A figure's tags with their `slot` (0 character, 1 cosplay, 2–12 head to other). These tags are on `posts.tag_ids` too; this table answers "one figure has all of these" and the viewer. |
 | `duplicate_dismissals` | Pairs of posts (`post_a < post_b`) marked as not duplicates |
 | `post_votes` | One vote per user and post, −1 or +1, with `voted_at` (set when the vote is cast or changed). `posts.score` is their sum. |
 | `tag_aliases` | `alias → tag_id`. Aliases are resolved when tagging, searching and in autocomplete. |
@@ -97,6 +99,7 @@ Tags are stored on each post as a `BIGINT[]` with a GIN index. A query like `blu
 
 1. The tag names are resolved to ids, following aliases, and each is expanded to the tags below it in the tree (a recursive CTE on `parent_id`, at most 32 levels). If an included tag doesn't exist, the result is empty, with no scan.
 2. The SQL is `tag_ids @> {leaf tags} AND tag_ids && {each parent's tree} AND NOT tag_ids && {excluded trees} AND rating = ANY(...)`.
+   A `{girl blonde_hair boots}` term adds `EXISTS` over `figures` and `figure_tags`. A figure's tags are on the post too, so each of its tags also goes into the `tag_ids &&` filter and the GIN index narrows the search first.
 3. Rows are ordered by id, score or random, and paginated by limit and offset (at most 200 per page).
 4. The ordered, paginated query selects only post ids. The full rows, with tag names and the caller's vote, are built for the ids on the page (`select_page` in `routes/posts.rs`). So rows an `OFFSET` skips cost nothing extra.
 

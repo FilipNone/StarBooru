@@ -9,12 +9,16 @@
 //! * `status:deleted`: search the recycle bin instead of live posts.
 //! * `text:word` or `text:"several words"`: the text OCR found in the image
 //!   has those words; `-text:` excludes. Several `text:` terms all apply.
+//! * `{girl blonde_hair boots}`: one person in the picture has all of
+//!   these tags (and is a girl; `boy` and `other` work too). `-{...}`: no
+//!   one does.
 //!
 //! Any other `name:value` term is treated as a plain tag, so tags with
 //! colons (`re:zero`) keep working.
 
 use thiserror::Error;
 
+use crate::figure::FigureKind;
 use crate::model::{MediaKind, Rating};
 use crate::tag::{TagError, normalize_tag};
 
@@ -119,6 +123,13 @@ pub fn with_order(query: &str, order: Option<Order>) -> String {
     terms.join(" ")
 }
 
+/// A `{...}` term: one figure of the post has every tag, and the kind when given.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FigureTerm {
+    pub kind: Option<FigureKind>,
+    pub tags: Vec<String>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SearchQuery {
     pub include: Vec<String>,
@@ -133,6 +144,10 @@ pub struct SearchQuery {
     pub text: Vec<String>,
     /// `-text:` values: words it must not contain.
     pub exclude_text: Vec<String>,
+    /// `{...}` terms: a figure matching each must be in the post.
+    pub figures: Vec<FigureTerm>,
+    /// `-{...}` terms: no figure may match.
+    pub exclude_figures: Vec<FigureTerm>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -153,34 +168,66 @@ pub enum QueryError {
     EmptyText,
     #[error("`text:` is too long (max {MAX_TEXT_CHARS} characters)")]
     TextTooLong,
+    #[error("`{{}}` needs tags inside, e.g. {{girl blonde_hair boots}}")]
+    EmptyFigure,
+    #[error("`{{...}}` names two kinds (use one of girl, boy or other)")]
+    TwoKinds,
     #[error(transparent)]
     Tag(#[from] TagError),
 }
 
 /// Splits a query into terms at whitespace, except inside the quotes of a
-/// `text:"…"` value. An unclosed quote runs to the end.
+/// `text:"…"` value or the braces of a `{…}` term. An unclosed quote or
+/// brace runs to the end.
 fn terms(input: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut words = input.split_whitespace();
     while let Some(word) = words.next() {
         let lower = word.to_ascii_lowercase();
-        let quoted = lower
-            .strip_prefix('-')
-            .unwrap_or(&lower)
-            .strip_prefix("text:\"");
+        let body = lower.strip_prefix('-').unwrap_or(&lower);
+        let closing = if let Some(rest) = body.strip_prefix("text:\"") {
+            Some((rest, '"'))
+        } else {
+            body.strip_prefix('{').map(|rest| (rest, '}'))
+        };
         let mut term = word.to_owned();
-        if let Some(rest) = quoted {
-            let mut closed = !rest.is_empty() && rest.ends_with('"');
+        if let Some((rest, end)) = closing {
+            let mut closed = !rest.is_empty() && rest.ends_with(end);
             while !closed {
                 let Some(next) = words.next() else { break };
                 term.push(' ');
                 term.push_str(next);
-                closed = next.ends_with('"');
+                closed = next.ends_with(end);
             }
         }
         out.push(term);
     }
     out
+}
+
+/// The inside of a `{…}` term.
+fn figure_term(inside: &str) -> Result<FigureTerm, QueryError> {
+    let inside = inside.strip_suffix('}').unwrap_or(inside);
+    let mut term = FigureTerm::default();
+    for word in inside.split_whitespace() {
+        if let Some(kind) = FigureKind::parse(word) {
+            if term.kind.is_some_and(|k| k != kind) {
+                return Err(QueryError::TwoKinds);
+            }
+            term.kind = Some(kind);
+            continue;
+        }
+        let tag = normalize_tag(word)?;
+        let tag = crate::vocab::split_category(&tag).1.to_owned();
+        push_unique(&mut term.tags, tag);
+    }
+    if term.kind.is_none() && term.tags.is_empty() {
+        return Err(QueryError::EmptyFigure);
+    }
+    if term.tags.len() > MAX_QUERY_TERMS {
+        return Err(QueryError::TooManyTerms);
+    }
+    Ok(term)
 }
 
 /// A `text:` value without its quotes and with whitespace collapsed.
@@ -208,6 +255,17 @@ pub fn parse_query(input: &str) -> Result<SearchQuery, QueryError> {
             Some(rest) if !rest.is_empty() => (true, rest),
             _ => (false, term),
         };
+        if let Some(inside) = body.strip_prefix('{') {
+            push_unique(
+                if negated {
+                    &mut q.exclude_figures
+                } else {
+                    &mut q.figures
+                },
+                figure_term(inside)?,
+            );
+            continue;
+        }
         if let Some((key, value)) = body.split_once(':') {
             match key.to_ascii_lowercase().as_str() {
                 "rating" => {
@@ -381,6 +439,40 @@ mod tests {
         assert_eq!(parse_query(r#"text:" "#), Err(QueryError::EmptyText));
         let long = format!("text:{}", "a".repeat(MAX_TEXT_CHARS + 1));
         assert_eq!(parse_query(&long), Err(QueryError::TextTooLong));
+    }
+
+    #[test]
+    fn parses_figure_terms() {
+        let q = parse_query("{girl Blonde_Hair char:saber} -{boy boots} cat {other}").unwrap();
+        assert_eq!(
+            q.figures,
+            vec![
+                FigureTerm {
+                    kind: Some(FigureKind::Girl),
+                    tags: vec!["blonde_hair".into(), "saber".into()],
+                },
+                FigureTerm {
+                    kind: Some(FigureKind::Other),
+                    tags: vec![],
+                },
+            ]
+        );
+        assert_eq!(
+            q.exclude_figures,
+            vec![FigureTerm {
+                kind: Some(FigureKind::Boy),
+                tags: vec!["boots".into()],
+            }]
+        );
+        assert_eq!(q.include, vec!["cat"]);
+        // braces may touch the words or stand apart; an open one runs to the end
+        let q = parse_query("{ hat } { skirt").unwrap();
+        assert_eq!(q.figures[0].tags, vec!["hat"]);
+        assert_eq!(q.figures[1].tags, vec!["skirt"]);
+        assert_eq!(parse_query("{}"), Err(QueryError::EmptyFigure));
+        assert_eq!(parse_query("{ }"), Err(QueryError::EmptyFigure));
+        assert_eq!(parse_query("{girl boy}"), Err(QueryError::TwoKinds));
+        assert!(parse_query("{girl -x}").is_err());
     }
 
     #[test]

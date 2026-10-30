@@ -8,6 +8,7 @@ pub mod agent;
 pub mod ai;
 pub mod autotag;
 pub mod edit;
+pub mod figure;
 pub mod keys;
 pub mod local_ai;
 pub mod model;
@@ -32,6 +33,10 @@ pub use ai::{
 };
 pub use autotag::{META_TAGS, MediaFacts, meta_tags};
 pub use edit::{Crop, EditError, EditKind, MediaEdit, Trim, edit_kind};
+pub use figure::{
+    COSPLAY_TAG, Figure, FigureError, FigureKind, FiguresUpdate, MAX_FIGURE_TAGS, MAX_FIGURES,
+    Slot, clean_figures, cosplay_name, cosplay_tag, count_tags, is_count_tag, required_tags,
+};
 pub use keys::clean_api_key;
 pub use local_ai::{
     Fit, FitCheck, Gpu, GpuKind, Hardware, LocalAiStatus, LocalModel, LocalRuntime,
@@ -40,7 +45,7 @@ pub use local_ai::{
 pub use model::*;
 pub use oidc::{Identity, OidcBegin, OidcError, OidcFinish, OidcStart, SignInMethods};
 pub use panels::{PanelTranslation, TextBlock, panel_prompt, parse_panel_blocks};
-pub use query::{Order, SearchQuery, SortKey, parse_query, with_order};
+pub use query::{FigureTerm, Order, SearchQuery, SortKey, parse_query, with_order};
 pub use remote::{
     BooruApi, BooruSite, RemoteError, RemotePage, RemotePost, RemoteSearch, SITES, remote_tags,
 };

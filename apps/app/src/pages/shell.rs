@@ -158,6 +158,12 @@ fn route_query(route: &Route) -> String {
     }
 }
 
+/// The word being typed, split into what leads it (`-`, `{`) and the tag.
+fn split_word(word: &str) -> (&str, &str) {
+    let tag = word.trim_start_matches(['-', '{']);
+    (word.strip_suffix(tag).unwrap_or_default(), tag)
+}
+
 /// Tag search with autocomplete on the word being typed.
 #[component]
 fn SearchBox(route: Route) -> Element {
@@ -175,8 +181,12 @@ fn SearchBox(route: Route) -> Element {
             .last()
             .unwrap_or_default()
             .to_owned();
-        let prefix = word.trim_start_matches('-');
-        if prefix.is_empty() || value.ends_with(' ') || prefix.contains(':') {
+        let (_, prefix) = split_word(&word);
+        if prefix.is_empty()
+            || value.ends_with(' ')
+            || prefix.contains(':')
+            || prefix.ends_with('}')
+        {
             return Vec::<Tag>::new();
         }
         let Some(client) = store::client() else {
@@ -195,15 +205,12 @@ fn SearchBox(route: Route) -> Element {
     let mut complete = move |tag: String| {
         let value = text();
         let mut words: Vec<&str> = value.split_whitespace().collect();
-        let negated = words.last().is_some_and(|w| w.starts_with('-'));
-        words.pop();
+        let lead = words.pop().map_or("", |w| split_word(w).0);
         let mut next = words.join(" ");
         if !next.is_empty() {
             next.push(' ');
         }
-        if negated {
-            next.push('-');
-        }
+        next.push_str(lead);
         next.push_str(&tag);
         next.push(' ');
         text.set(next);
@@ -296,5 +303,20 @@ fn SearchBox(route: Route) -> Element {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::split_word;
+
+    #[test]
+    fn words_split_from_what_leads_them() {
+        assert_eq!(split_word("boots"), ("", "boots"));
+        assert_eq!(split_word("-boots"), ("-", "boots"));
+        assert_eq!(split_word("{boots"), ("{", "boots"));
+        assert_eq!(split_word("-{boots"), ("-{", "boots"));
+        assert_eq!(split_word("-{"), ("-{", ""));
+        assert_eq!(split_word(""), ("", ""));
     }
 }

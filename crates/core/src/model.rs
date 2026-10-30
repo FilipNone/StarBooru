@@ -296,6 +296,10 @@ pub struct Post {
     /// the single-post response; empty in lists.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tag_details: Vec<PostTag>,
+    /// The people in the picture, with their tags by slot. Only in the
+    /// single-post response.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub figures: Vec<crate::figure::Figure>,
 }
 
 /// One of a post's tags, as the viewer groups it.

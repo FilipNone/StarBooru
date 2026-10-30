@@ -75,6 +75,7 @@ pub async fn suggest_tags(
     Ok(Json(TagSuggestions {
         tags,
         rating: parsed.rating,
+        figures: parsed.figures,
     }))
 }
 
@@ -281,7 +282,8 @@ mod tests {
     const ANSWER: &str = "```json\n{\"tags\": [{\"name\": \"Blue Sky\", \"category\": \"general\"}, \
         {\"name\": \"miku\", \"category\": \"character\"}, {\"name\": \"some_artist\", \
         \"category\": \"artist\"}, {\"name\": \"brand_new\"}, \"-bad\"], \
-        \"rating\": \"sensitive\"}\n```";
+        \"rating\": \"sensitive\", \"figures\": [{\"kind\": \"girl\", \"character\": \"miku\", \
+        \"hair\": [\"twintails\"]}]}\n```";
 
     fn no_local() -> Value {
         json!({ "enabled": false, "url": "", "model": "" })
@@ -336,6 +338,10 @@ mod tests {
                 { "name": "brand_new", "category": "general", "exists": false },
             ])
         );
+        assert_eq!(
+            body["figures"],
+            json!([{ "kind": "girl", "character": "miku", "tags": { "hair": ["twintails"] } }])
+        );
 
         // Nothing changed on the post.
         let post = app.get(&format!("/api/v1/posts/{id}"), &admin).await.json();
@@ -350,6 +356,21 @@ mod tests {
             assert!(names.contains(want), "{names}");
         }
         assert!(!names.contains("\"miku\""), "{names}");
+        // The figures too, through aliases, with their count tags.
+        assert_eq!(
+            post["figures"],
+            json!([{ "kind": "girl", "character": "hatsune_miku",
+                     "tags": { "hair": ["twintails"] } }])
+        );
+        for want in ["twintails", "1girl", "solo"] {
+            assert!(names.contains(want), "{names}");
+        }
+        // A post that has figures keeps them.
+        let mut again = parsed.clone();
+        again.figures[0].kind = starbooru_core::FigureKind::Boy;
+        crate::ai::add_tags(&app.state, id, &again).await.unwrap();
+        let post = app.get(&format!("/api/v1/posts/{id}"), &admin).await.json();
+        assert_eq!(post["figures"][0]["kind"], "girl");
         let count: i32 = sqlx::query_scalar("SELECT post_count FROM tags WHERE name = 'blue_sky'")
             .fetch_one(app.db())
             .await

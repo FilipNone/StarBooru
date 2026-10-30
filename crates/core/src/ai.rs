@@ -6,6 +6,9 @@
 
 use serde::{Deserialize, Serialize};
 
+use std::collections::BTreeMap;
+
+use crate::figure::{Figure, FigureKind, MAX_FIGURES, Slot, clean_figures};
 use crate::model::{Rating, TagCategory};
 use crate::tag::normalize_tag;
 
@@ -22,7 +25,16 @@ Use danbooru conventions: lowercase English, words joined by underscores, singul
 for example 1girl, blue_sky, holding_umbrella, outdoors. Category is one of general, artist, \
 character, copyright, meta; only name characters, series or artists you are sure of. \
 Give at most 30 tags, most important first. Rating is one of general, sensitive, \
-questionable, explicit.";
+questionable, explicit. \
+Also describe each person in the image, left to right, under \"figures\": \
+[{\"kind\": \"girl\", \"character\": \"\", \"cosplay\": \"\", \"head\": [\"hat\"], \
+\"body\": [\"dress\"], \"bottom\": [], \"shoes\": [\"boots\"], \"wear\": [], \"shape\": [], \
+\"eyes\": [\"blue_eyes\"], \"skin\": [], \"hair\": [\"long_hair\"], \"pose\": [\"standing\"], \
+\"other\": [\"smile\"]}]. Kind is girl, boy or other. The lists are that person's tags: \
+head is headwear, body is tops and dresses, bottom is skirts, trousers and legwear, wear is \
+other clothing and accessories, shape is their build, other is expression and the rest. \
+Character is who they are and cosplay the character they are dressed as; leave both empty \
+unless you are sure. Use an empty list for no figures.";
 
 /// Where an AI tool runs.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -208,6 +220,9 @@ pub struct TagSuggestion {
 pub struct TagSuggestions {
     pub tags: Vec<TagSuggestion>,
     pub rating: Option<Rating>,
+    /// The people the model saw, with their tags by slot.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub figures: Vec<Figure>,
 }
 
 /// Most characters of text sent for one translation, and kept from the answer.
@@ -281,6 +296,8 @@ pub struct ParsedSuggestions {
     /// gave, if any. At most [`MAX_SUGGESTIONS`].
     pub tags: Vec<(String, Option<TagCategory>)>,
     pub rating: Option<Rating>,
+    /// The people, cleaned like a saved edit. At most [`MAX_FIGURES`].
+    pub figures: Vec<Figure>,
 }
 
 fn category(s: &str) -> Option<TagCategory> {
@@ -302,6 +319,65 @@ fn json_object(text: &str) -> Option<serde_json::Value> {
     serde_json::from_str(slice).ok()
 }
 
+/// A name the model gave, if it is a usable tag.
+fn model_tag(raw: &str) -> Option<String> {
+    let raw = raw
+        .trim()
+        .trim_matches(|c| c == '"' || c == '\'' || c == '`');
+    // A real tag never has more than a few words.
+    if raw.split_whitespace().count() > 6 {
+        return None;
+    }
+    normalize_tag(raw).ok().filter(|n| !n.contains(':'))
+}
+
+/// The `figures` of an answer. Unusable names are skipped; a list under a
+/// key that isn't a slot (or `tags`) goes to [`Slot::Other`].
+fn model_figures(value: &serde_json::Value) -> Vec<Figure> {
+    let Some(list) = value.get("figures").and_then(|f| f.as_array()) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for item in list.iter().take(MAX_FIGURES) {
+        let Some(object) = item.as_object() else {
+            continue;
+        };
+        let text = |key: &str| object.get(key).and_then(|v| v.as_str()).and_then(model_tag);
+        let mut figure = Figure {
+            kind: object
+                .get("kind")
+                .and_then(|k| k.as_str())
+                .and_then(|k| FigureKind::parse(k.trim()))
+                .unwrap_or(FigureKind::Other),
+            character: text("character"),
+            cosplay: text("cosplay"),
+            tags: BTreeMap::new(),
+        };
+        for (key, names) in object {
+            let Some(names) = names.as_array() else {
+                continue;
+            };
+            let slot = Slot::parse(key.trim()).unwrap_or(Slot::Other);
+            let names = names
+                .iter()
+                .filter_map(|n| n.as_str())
+                .filter_map(model_tag)
+                .take(crate::figure::MAX_FIGURE_TAGS);
+            figure.tags.entry(slot).or_default().extend(names);
+        }
+        // Over the tag limit: keep a fair share of each slot.
+        while figure.tags.values().map(Vec::len).sum::<usize>() > crate::figure::MAX_FIGURE_TAGS {
+            let Some(longest) = figure.tags.values_mut().max_by_key(|v| v.len()) else {
+                break;
+            };
+            longest.pop();
+        }
+        out.push(figure);
+    }
+    // Every name is already valid, so this only drops duplicates and empties.
+    clean_figures(out).unwrap_or_default()
+}
+
 /// Reads a model's answer leniently. Accepts the JSON shape the prompt asks
 /// for, tags given as plain strings, or (as a fallback) a bare list of
 /// names separated by commas or whitespace.
@@ -311,15 +387,7 @@ pub fn parse_suggestions(text: &str) -> ParsedSuggestions {
         if out.tags.len() >= MAX_SUGGESTIONS {
             return;
         }
-        let raw = raw
-            .trim()
-            .trim_matches(|c| c == '"' || c == '\'' || c == '`');
-        // A real tag never has more than a few words.
-        if raw.split_whitespace().count() > 6 {
-            return;
-        }
-        if let Ok(name) = normalize_tag(raw)
-            && !name.contains(':')
+        if let Some(name) = model_tag(raw)
             && !out.tags.iter().any(|(n, _)| *n == name)
         {
             out.tags.push((name, cat));
@@ -347,6 +415,7 @@ pub fn parse_suggestions(text: &str) -> ParsedSuggestions {
             .get("rating")
             .and_then(|r| r.as_str())
             .and_then(|r| Rating::parse(r.trim()));
+        out.figures = model_figures(&value);
         return out;
     }
     let body: String = text
@@ -398,6 +467,39 @@ mod tests {
         assert_eq!(names(&p), vec!["sky", "x"]);
         assert_eq!(p.rating, None);
         assert_eq!(p.tags[1].1, None);
+    }
+
+    #[test]
+    fn reads_figures() {
+        let p = parse_suggestions(
+            r#"{"tags":["1girl"],"figures":[
+                {"kind":"Girl","character":"Hatsune Miku","cosplay":"",
+                 "hair":["twintails","aqua hair"],"shoes":["boots","-bad"],"tail":["fluffy"],
+                 "body":"not a list","pose":[1, "standing"]},
+                {"kind":"dragon","tags":["wings","wings"]},
+                "nonsense"]}"#,
+        );
+        assert_eq!(p.figures.len(), 2);
+        let miku = &p.figures[0];
+        assert_eq!(miku.kind, FigureKind::Girl);
+        assert_eq!(miku.character.as_deref(), Some("hatsune_miku"));
+        assert_eq!(miku.cosplay, None);
+        assert_eq!(miku.tags[&Slot::Hair], ["twintails", "aqua_hair"]);
+        assert_eq!(miku.tags[&Slot::Shoes], ["boots"]);
+        assert_eq!(miku.tags[&Slot::Pose], ["standing"]);
+        assert_eq!(miku.tags[&Slot::Other], ["fluffy"]);
+        assert!(!miku.tags.contains_key(&Slot::Body));
+        assert_eq!(p.figures[1].kind, FigureKind::Other);
+        assert_eq!(p.figures[1].tags[&Slot::Other], ["wings"]);
+        // no figures key, or too many tags on one
+        assert!(parse_suggestions(r#"{"tags":["sky"]}"#).figures.is_empty());
+        let many: Vec<String> = (0..200).map(|i| format!("\"t{i}\"")).collect();
+        let p = parse_suggestions(&format!(
+            r#"{{"figures":[{{"kind":"boy","hair":[{0}],"eyes":[{0}]}}]}}"#,
+            many.join(",")
+        ));
+        let tags: usize = p.figures[0].tags.values().map(Vec::len).sum();
+        assert!(tags <= crate::figure::MAX_FIGURE_TAGS && tags > 0);
     }
 
     #[test]

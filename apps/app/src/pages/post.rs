@@ -9,6 +9,7 @@ use starbooru_core::{
 };
 
 use super::editor::EditorSheet;
+use super::people::People;
 use super::share::{ShareSheet, copy_text};
 use super::tags::TagGroups;
 use super::{ErrorBanner, Spinner};
@@ -430,6 +431,13 @@ pub fn PostView(id: i64, q: String) -> Element {
                         TagGroups { details: p.tag_details.clone(), names: p.tags.clone() }
                     }
                 }
+                People {
+                    key: "{p.id}",
+                    id: p.id,
+                    figures: p.figures.clone(),
+                    deleted: p.deleted,
+                    onsaved: move |saved: Post| handle(Ok(saved)),
+                }
                 div { class: "card",
                     h2 { class: "card-title", {t!("post-details")} }
                     dl { class: "meta",
@@ -475,7 +483,7 @@ const OCR_FOLD_CHARS: usize = 280;
 const OCR_FOLD_LINES: usize = 6;
 
 /// Which AI tools the server offers, for showing AI buttons.
-fn use_ai_status() -> AiStatus {
+pub(super) fn use_ai_status() -> AiStatus {
     let status = use_resource(|| async move {
         let client = store::client()?;
         client.ai_status().await.ok()

@@ -12,12 +12,12 @@ use serde::de::DeserializeOwned;
 use starbooru_core::{
     API_PREFIX, AdminUser, AliasRequest, ApiError, ApiKey, AuthResponse, Backup, BackupSchedule,
     Backups, BulkEdit, BulkResult, CreatedApiKey, Credentials, DismissDuplicates, Duplicates,
-    Explore, Identity, ImplicationRequest, ImportBatch, ImportJob, ImportRequest, MediaEdit,
-    Neighbors, NewApiKey, NewShare, OidcBegin, OidcFinish, OidcStart, PasswordChange,
-    PasswordReset, Post, PostPage, PostUpdate, PurgeResult, Rating, RelatedPosts, RemotePage,
-    RemoteSearch, ResolveDuplicates, RevokeResult, SaveSearchRequest, SavedSearch, ServerInfo,
-    ServerSettings, ServerStats, SessionInfo, Share, SharedView, SignInMethods, Tag, TagDetail,
-    TagOrder, TagUpdate, Usage, User, UserUpdate, VoteRequest,
+    Explore, Figure, FiguresUpdate, Identity, ImplicationRequest, ImportBatch, ImportJob,
+    ImportRequest, MediaEdit, Neighbors, NewApiKey, NewShare, OidcBegin, OidcFinish, OidcStart,
+    PasswordChange, PasswordReset, Post, PostPage, PostUpdate, PurgeResult, Rating, RelatedPosts,
+    RemotePage, RemoteSearch, ResolveDuplicates, RevokeResult, SaveSearchRequest, SavedSearch,
+    ServerInfo, ServerSettings, ServerStats, SessionInfo, Share, SharedView, SignInMethods, Tag,
+    TagDetail, TagOrder, TagUpdate, Usage, User, UserUpdate, VoteRequest,
 };
 use starbooru_core::{
     AiSettings, AiSettingsUpdate, AiStatus, LocalAiStatus, LocalTestResult, PanelTranslation,
@@ -525,6 +525,17 @@ impl Client {
     pub async fn update_post(&self, id: i64, update: &PostUpdate) -> Result<Post> {
         self.json(Method::PATCH, &format!("/posts/{id}"), update)
             .await
+    }
+
+    /// Replaces the people in a post (their kinds and tags by slot). The
+    /// post's tags follow, count tags like `1girl` included.
+    pub async fn set_figures(&self, id: i64, figures: Vec<Figure>) -> Result<Post> {
+        self.json(
+            Method::PUT,
+            &format!("/posts/{id}/figures"),
+            &FiguresUpdate { figures },
+        )
+        .await
     }
 
     /// Tags, rating or deletion for many posts at once.
