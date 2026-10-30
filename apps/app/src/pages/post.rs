@@ -1140,6 +1140,7 @@ fn PanelOverlay(id: i64, size: (i32, i32), transform: String) -> Element {
             aria_label: label,
             aria_pressed: if have { "{shown()}" },
             disabled: busy(),
+            ondoubleclick: move |e| e.stop_propagation(),
             onclick,
             Ico { icon: Icon::Translate }
         }
@@ -1308,17 +1309,22 @@ fn Stage(
             }
             if let Some(prev) = nav.prev {
                 button { class: "stage-btn stage-prev", title: t!("post-prev-title"), aria_label: t!("post-prev"),
+                    ondoubleclick: move |e| e.stop_propagation(),
                     onclick: move |_| onnav.call(prev),
                     Ico { icon: Icon::ChevronLeft, size: 32 }
                 }
             }
             if let Some(next) = nav.next {
                 button { class: "stage-btn stage-next", title: t!("post-next-title"), aria_label: t!("post-next"),
+                    ondoubleclick: move |e| e.stop_propagation(),
                     onclick: move |_| onnav.call(next),
                     Ico { icon: Icon::ChevronRight, size: 32 }
                 }
             }
+            // Only a double click on the media itself toggles the zoom. On the
+            // bar, not its buttons, so one that has just disabled itself counts.
             div { class: "stage-tools",
+                ondoubleclick: move |e| e.stop_propagation(),
                 if zoomable {
                     button { class: "stage-btn", title: t!("zoom-out-title"), aria_label: t!("zoom-out"),
                         disabled: !z.is_zoomed(),
