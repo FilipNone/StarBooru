@@ -784,6 +784,7 @@ admin-ai-retry = Riprova
 admin-ai-models = Modelli
 admin-ai-no-memory = Memoria insufficiente
 admin-ai-gpu = GPU
+admin-ai-high-accuracy = Alta precisione
 admin-ai-in-use = In uso
 admin-ai-use = Usa
 admin-ai-install = Installa

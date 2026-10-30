@@ -18,8 +18,9 @@ const RUNS: u32 = 6;
 /// Longer than the slices a limited container or a shared server is given, or
 /// short runs would all fit in one and hide the limit.
 const MIN_SPAN: Duration = Duration::from_millis(1000);
-/// Past this, one run is enough and the machine is spared a second one.
-const LONG_RUN_MS: u128 = 10_000;
+/// Past this, even without the time to load it the model is over every budget,
+/// and the machine is spared a second run.
+const LONG_RUN_MS: u128 = 120_000;
 const SENTENCE: &str = "今日はとても天気がいいので、友達と一緒に公園へ散歩に行きました。";
 /// What the catalog's comic times count.
 const PAGE_BLOCKS: u32 = 8;
@@ -248,6 +249,8 @@ fn sample_languages(engine: Engine) -> (&'static str, &'static str) {
     }
 }
 
+/// How long a model takes once it's loaded, which is what the budgets count: a
+/// first run includes reading it from disk, which can take far longer.
 fn timed(rt: &mut Runtime, id: &str, gpu: bool) -> Result<(u32, Vec<String>), String> {
     let start = Instant::now();
     let mut result = run_once(rt, id, gpu)?;

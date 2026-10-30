@@ -108,11 +108,25 @@ fn update_of(s: &AiToolSettings) -> AiToolUpdate {
 }
 
 /// The model a tool in local mode is meant to run: the admin's or the preset's.
+/// The preset in effect: Balanced stands in for one this machine can't meet.
+fn effective_preset(tool: &AiToolStatus) -> AiPreset {
+    let met = tool
+        .presets
+        .iter()
+        .any(|p| p.preset == tool.settings.preset && p.available);
+    if met {
+        tool.settings.preset
+    } else {
+        AiPreset::Balanced
+    }
+}
+
 fn wanted_model(tool: &AiToolStatus) -> Option<&AiModelOption> {
     let id = if tool.settings.model.is_empty() {
+        let preset = effective_preset(tool);
         tool.presets
             .iter()
-            .find(|p| p.preset == tool.settings.preset)
+            .find(|p| p.preset == preset)
             .and_then(|p| p.model.as_deref())
             .or(tool.active.as_deref())?
     } else {
@@ -347,6 +361,7 @@ fn LocalSetup(tool: AiToolStatus, status: Status, error: Failure) -> Element {
     let id = tool.tool;
     let settings = tool.settings.clone();
     let wanted = wanted_model(&tool).cloned();
+    let preset = effective_preset(&tool);
     let unavailable: Vec<String> = tool
         .presets
         .iter()
@@ -357,7 +372,8 @@ fn LocalSetup(tool: AiToolStatus, status: Status, error: Failure) -> Element {
         div { class: "segmented", role: "radiogroup", aria_label: t!("admin-ai-speed"),
             for option in tool.presets.iter().cloned() {
                 {
-                    let on = settings.model.is_empty() && settings.preset == option.preset;
+                    let on = settings.model.is_empty() && preset == option.preset;
+                    let budget = option.preset.budget_ms() / 1000;
                     let settings = settings.clone();
                     rsx! {
                         button {
@@ -380,6 +396,7 @@ fn LocalSetup(tool: AiToolStatus, status: Status, error: Failure) -> Element {
                                 apply(status, error, async move { client.set_ai_tool(id, &update).await });
                             },
                             {preset_label(option.preset)}
+                            small { "{budget} s" }
                         }
                     }
                 }
@@ -491,6 +508,9 @@ fn ModelRow(
             div { class: "ai-model-text",
                 strong { "{model.name}" }
                 span { class: "muted", "{details}" }
+                if model.high_accuracy {
+                    span { class: "pill", {t!("admin-ai-high-accuracy")} }
+                }
                 if model.gpu {
                     span { class: "pill", {t!("admin-ai-gpu")} }
                 }
@@ -655,6 +675,40 @@ mod tests {
         assert_eq!(percent(0, 0), 0);
         assert_eq!(percent(5, 10), 50);
         assert_eq!(percent(u64::MAX, 10), u64::MAX / 10);
+    }
+
+    #[test]
+    fn balanced_stands_in_for_a_preset_out_of_reach() {
+        let option = |preset, available| starbooru_core::AiPresetOption {
+            preset,
+            available,
+            model: available.then(|| preset.as_str().to_owned()),
+            est_ms: None,
+        };
+        let mut tool = AiToolStatus {
+            models: vec![
+                AiModelOption {
+                    id: "balanced".into(),
+                    ..AiModelOption::default()
+                },
+                AiModelOption {
+                    id: "accurate".into(),
+                    ..AiModelOption::default()
+                },
+            ],
+            presets: vec![
+                option(AiPreset::Fast, false),
+                option(AiPreset::Balanced, true),
+                option(AiPreset::Accurate, true),
+            ],
+            ..AiToolStatus::default()
+        };
+        tool.settings.preset = AiPreset::Accurate;
+        assert_eq!(effective_preset(&tool), AiPreset::Accurate);
+        assert_eq!(wanted_model(&tool).unwrap().id, "accurate");
+        tool.settings.preset = AiPreset::Fast;
+        assert_eq!(effective_preset(&tool), AiPreset::Balanced);
+        assert_eq!(wanted_model(&tool).unwrap().id, "balanced");
     }
 
     #[test]

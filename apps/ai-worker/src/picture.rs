@@ -43,8 +43,8 @@ pub fn stretched_chw(image: &RgbImage, size: u32) -> (Vec<i64>, Vec<f32>) {
     (vec![1, 3, side, side], data)
 }
 
-/// Channels last, blue first, 0 to 255, padded to a white square.
-pub fn padded_bgr_hwc(image: &RgbImage, size: u32) -> (Vec<i64>, Vec<f32>) {
+/// The picture on a white square, at `size`².
+fn padded(image: &RgbImage, size: u32) -> RgbImage {
     let side = image.width().max(image.height()).max(1);
     let mut square = RgbImage::from_pixel(side, side, image::Rgb([255, 255, 255]));
     let (x, y) = (
@@ -52,8 +52,37 @@ pub fn padded_bgr_hwc(image: &RgbImage, size: u32) -> (Vec<i64>, Vec<f32>) {
         i64::from((side - image.height()) / 2),
     );
     image::imageops::replace(&mut square, image, x, y);
-    let small = image::imageops::resize(&square, size, size, FilterType::CatmullRom);
-    let data = small
+    image::imageops::resize(&square, size, size, FilterType::CatmullRom)
+}
+
+/// Channels first in the order given, padded to a white square, with each
+/// channel's 0 to 1 shifted by `mean` and scaled by `std`.
+pub fn padded_chw(
+    image: &RgbImage,
+    size: u32,
+    order: [usize; 3],
+    mean: [f32; 3],
+    std: [f32; 3],
+) -> (Vec<i64>, Vec<f32>) {
+    let small = padded(image, size);
+    let pixels = small.as_raw();
+    let mut data = Vec::with_capacity(pixels.len());
+    for ((channel, mean), std) in order.into_iter().zip(mean).zip(std) {
+        data.extend(
+            pixels
+                .iter()
+                .skip(channel)
+                .step_by(3)
+                .map(|&v| (f32::from(v) / 255.0 - mean) / std),
+        );
+    }
+    let side = i64::from(size);
+    (vec![1, 3, side, side], data)
+}
+
+/// Channels last, blue first, 0 to 255, padded to a white square.
+pub fn padded_bgr_hwc(image: &RgbImage, size: u32) -> (Vec<i64>, Vec<f32>) {
+    let data = padded(image, size)
         .pixels()
         .flat_map(|p| [f32::from(p.0[2]), f32::from(p.0[1]), f32::from(p.0[0])])
         .collect();
@@ -122,9 +151,24 @@ mod tests {
         assert_eq!(data.len(), 3 * 8 * 8);
         // The padding is white.
         assert_eq!(data.first(), Some(&255.0));
+        let (shape, data) = padded_chw(&image, 8, [2, 1, 0], [0.5; 3], [0.5; 3]);
+        assert_eq!(shape, [1, 3, 8, 8]);
+        assert_eq!(data.len(), 3 * 8 * 8);
+        assert_eq!(data.first(), Some(&1.0));
         let (shape, data) = ocr_crop(&image, 2, 2, 5, 5, 8);
         assert_eq!(shape, [1, 3, 8, 8]);
         assert!(data.iter().all(|v| (-1.0..=1.0).contains(v)));
+    }
+
+    #[test]
+    fn channels_come_in_the_order_asked() {
+        let red = RgbImage::from_pixel(2, 2, image::Rgb([255, 0, 0]));
+        let (_, rgb) = padded_chw(&red, 2, [0, 1, 2], [0.0; 3], [1.0; 3]);
+        assert_eq!(rgb.first(), Some(&1.0));
+        assert_eq!(rgb.last(), Some(&0.0));
+        let (_, bgr) = padded_chw(&red, 2, [2, 1, 0], [0.0; 3], [1.0; 3]);
+        assert_eq!(bgr.first(), Some(&0.0));
+        assert_eq!(bgr.last(), Some(&1.0));
     }
 
     #[test]

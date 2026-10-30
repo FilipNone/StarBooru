@@ -1,12 +1,16 @@
 //! The AI models StarBooru can run by itself, and which one suits a machine.
 //!
 //! Every model is made for its job (see `docs/architecture.md` › Local AI) and
-//! every file is pinned to a commit and a SHA-256 (`ai_files.rs`). The presets
-//! are time budgets: a preset uses the most accurate model that answers within
-//! its budget on this machine and fits in its memory. A preset no model can
-//! meet is unavailable.
+//! every file is pinned to a commit and a SHA-256 (`ai_files.rs`). The admin can
+//! run any of them; the presets choose one by how fast this machine runs it:
+//!
+//! - Fast: the most accurate model that feels instant here. None: greyed out.
+//! - Balanced: the most accurate model within 5 seconds, or else the quickest
+//!   one, so it's there whenever anything fits in memory.
+//! - Accurate: the most accurate model backed by published benchmarks that
+//!   answers within 30 seconds here. None: greyed out.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -160,17 +164,28 @@ pub enum Kernel {
 /// How a model runs.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Engine {
-    /// Danbooru tagger with pictures stretched to `size`² (ML-Danbooru).
-    TResNet {
+    /// ML-Danbooru: picture stretched to `size`², with its own tag list.
+    MlDanbooru {
         size: u32,
+        file: &'static str,
     },
     /// WD tagger: picture padded to a white square, with its own tag list.
     Wd {
         threshold: f32,
     },
+    /// Like the WD taggers, with channels first and values from -1 to 1.
+    DanbooruV1 {
+        threshold: f32,
+    },
+    /// Trained on photographs as well as drawings.
+    JoyTag {
+        threshold: f32,
+    },
     /// Language pairs, through English when there's no direct one.
     Opus,
     M2m,
+    /// T5 model told the target language at the start of the text.
+    Madlad,
     Gemma,
     /// Finds text, reads it and hands it to a translator.
     Comics {
@@ -187,6 +202,9 @@ pub struct CatalogModel {
     pub tool: AiTool,
     /// Higher is more accurate, within a tool.
     pub rank: u8,
+    /// Published benchmarks put it at the top of its field: what the Accurate
+    /// preset may use.
+    pub high_accuracy: bool,
     pub engine: Engine,
     pub components: &'static [&'static str],
     pub kernel: Kernel,
@@ -213,9 +231,16 @@ const fn part(id: &'static str, tool: AiTool, files: &'static [ModelFile]) -> Co
 
 pub const COMPONENTS: &[Component] = &[
     part("tresnet", AiTool::Tagging, files::TRESNET),
+    part("ml-caformer", AiTool::Tagging, files::ML_CAFORMER),
+    part("joytag", AiTool::Tagging, files::JOYTAG),
+    part("wd-vit", AiTool::Tagging, files::WD_VIT),
+    part("wd-convnext", AiTool::Tagging, files::WD_CONVNEXT),
     part("wd-swinv2", AiTool::Tagging, files::WD_SWINV2),
+    part("wd-vit-large", AiTool::Tagging, files::WD_VIT_LARGE),
+    part("danbooru-v1", AiTool::Tagging, files::DANBOORU_V1),
     part("wd-eva02", AiTool::Tagging, files::WD_EVA02),
     part("m2m", AiTool::Translation, files::M2M),
+    part("madlad", AiTool::Translation, files::MADLAD),
     part("gemma", AiTool::Translation, files::GEMMA),
     part("det-small", AiTool::Comics, files::DET_SMALL),
     part("det-large", AiTool::Comics, files::DET_LARGE),
@@ -239,17 +264,23 @@ pub const COMPONENTS: &[Component] = &[
 /// Installed with the fast translator; other pairs follow when first needed.
 const OPUS_BASE: &[&str] = &["opus-ja-en", "opus-zh-en", "opus-ko-en"];
 
+const TRESNET_FILE: &str = "TResnet-D-FLq_ema_6-30000.onnx";
+
 pub const MODELS: &[CatalogModel] = &[
     CatalogModel {
         id: "tresnet-320",
         name: "ML-Danbooru TResNet (320 px)",
         tool: AiTool::Tagging,
         rank: 1,
-        engine: Engine::TResNet { size: 320 },
+        high_accuracy: false,
+        engine: Engine::MlDanbooru {
+            size: 320,
+            file: TRESNET_FILE,
+        },
         components: &["tresnet"],
         kernel: Kernel::Float,
-        cpu_ms: 172,
-        gpu_ms: 34,
+        cpu_ms: 174,
+        gpu_ms: 33,
         ram_mb: 504,
         license: "MIT",
     },
@@ -258,38 +289,131 @@ pub const MODELS: &[CatalogModel] = &[
         name: "ML-Danbooru TResNet (448 px)",
         tool: AiTool::Tagging,
         rank: 2,
-        engine: Engine::TResNet { size: 448 },
+        high_accuracy: false,
+        engine: Engine::MlDanbooru {
+            size: 448,
+            file: TRESNET_FILE,
+        },
         components: &["tresnet"],
         kernel: Kernel::Float,
-        cpu_ms: 331,
-        gpu_ms: 47,
-        ram_mb: 537,
+        cpu_ms: 338,
+        gpu_ms: 45,
+        ram_mb: 547,
         license: "MIT",
+    },
+    CatalogModel {
+        id: "joytag",
+        name: "JoyTag (also photographs)",
+        tool: AiTool::Tagging,
+        rank: 3,
+        high_accuracy: false,
+        engine: Engine::JoyTag { threshold: 0.4 },
+        components: &["joytag"],
+        kernel: Kernel::Float,
+        cpu_ms: 885,
+        gpu_ms: 65,
+        ram_mb: 755,
+        license: "Apache-2.0",
+    },
+    CatalogModel {
+        id: "ml-caformer",
+        name: "ML-Danbooru CAFormer",
+        tool: AiTool::Tagging,
+        rank: 4,
+        high_accuracy: false,
+        engine: Engine::MlDanbooru {
+            size: 448,
+            file: "ml_caformer_m36_dec-5-97527.onnx",
+        },
+        components: &["ml-caformer"],
+        kernel: Kernel::Float,
+        cpu_ms: 1107,
+        gpu_ms: 177,
+        ram_mb: 853,
+        license: "MIT",
+    },
+    CatalogModel {
+        id: "wd-vit",
+        name: "WD ViT v3",
+        tool: AiTool::Tagging,
+        rank: 5,
+        high_accuracy: false,
+        engine: Engine::Wd { threshold: 0.35 },
+        components: &["wd-vit"],
+        kernel: Kernel::Float,
+        cpu_ms: 814,
+        gpu_ms: 71,
+        ram_mb: 802,
+        license: "Apache-2.0",
+    },
+    CatalogModel {
+        id: "wd-convnext",
+        name: "WD ConvNext v3",
+        tool: AiTool::Tagging,
+        rank: 6,
+        high_accuracy: false,
+        engine: Engine::Wd { threshold: 0.35 },
+        components: &["wd-convnext"],
+        kernel: Kernel::Float,
+        cpu_ms: 745,
+        gpu_ms: 61,
+        ram_mb: 844,
+        license: "Apache-2.0",
     },
     CatalogModel {
         id: "wd-swinv2",
         name: "WD SwinV2 v3",
         tool: AiTool::Tagging,
-        rank: 3,
+        rank: 7,
+        high_accuracy: false,
         engine: Engine::Wd { threshold: 0.35 },
         components: &["wd-swinv2"],
         kernel: Kernel::Float,
-        cpu_ms: 816,
-        gpu_ms: 91,
-        ram_mb: 956,
+        cpu_ms: 850,
+        gpu_ms: 90,
+        ram_mb: 948,
+        license: "Apache-2.0",
+    },
+    CatalogModel {
+        id: "wd-vit-large",
+        name: "WD ViT Large v3",
+        tool: AiTool::Tagging,
+        rank: 8,
+        high_accuracy: true,
+        engine: Engine::Wd { threshold: 0.35 },
+        components: &["wd-vit-large"],
+        kernel: Kernel::Float,
+        cpu_ms: 3834,
+        gpu_ms: 246,
+        ram_mb: 1940,
+        license: "Apache-2.0",
+    },
+    CatalogModel {
+        id: "danbooru-v1",
+        name: "Danbooru Tagger v1 (24,000 tags, no characters)",
+        tool: AiTool::Tagging,
+        rank: 9,
+        high_accuracy: true,
+        engine: Engine::DanbooruV1 { threshold: 0.5 },
+        components: &["danbooru-v1"],
+        kernel: Kernel::Float,
+        cpu_ms: 4553,
+        gpu_ms: 292,
+        ram_mb: 2923,
         license: "Apache-2.0",
     },
     CatalogModel {
         id: "wd-eva02",
         name: "WD EVA02 Large v3",
         tool: AiTool::Tagging,
-        rank: 4,
+        rank: 10,
+        high_accuracy: true,
         engine: Engine::Wd { threshold: 0.5 },
         components: &["wd-eva02"],
         kernel: Kernel::Float,
-        cpu_ms: 3681,
-        gpu_ms: 390,
-        ram_mb: 2063,
+        cpu_ms: 3726,
+        gpu_ms: 388,
+        ram_mb: 2107,
         license: "Apache-2.0",
     },
     CatalogModel {
@@ -297,10 +421,11 @@ pub const MODELS: &[CatalogModel] = &[
         name: "Opus-MT",
         tool: AiTool::Translation,
         rank: 1,
+        high_accuracy: false,
         engine: Engine::Opus,
         components: OPUS_BASE,
         kernel: Kernel::Int8,
-        cpu_ms: 512,
+        cpu_ms: 518,
         gpu_ms: 0,
         ram_mb: 800,
         license: "Apache-2.0",
@@ -310,25 +435,41 @@ pub const MODELS: &[CatalogModel] = &[
         name: "M2M100",
         tool: AiTool::Translation,
         rank: 2,
+        high_accuracy: false,
         engine: Engine::M2m,
         components: &["m2m"],
         kernel: Kernel::Int8,
-        cpu_ms: 1276,
+        cpu_ms: 1311,
         gpu_ms: 0,
-        ram_mb: 2229,
+        ram_mb: 2245,
         license: "MIT",
+    },
+    CatalogModel {
+        id: "madlad",
+        name: "MADLAD-400 3B",
+        tool: AiTool::Translation,
+        rank: 3,
+        high_accuracy: false,
+        engine: Engine::Madlad,
+        components: &["madlad"],
+        kernel: Kernel::Int8,
+        cpu_ms: 1390,
+        gpu_ms: 0,
+        ram_mb: 5351,
+        license: "Apache-2.0",
     },
     CatalogModel {
         id: "gemma",
         name: "TranslateGemma 4B",
         tool: AiTool::Translation,
-        rank: 3,
+        rank: 4,
+        high_accuracy: true,
         engine: Engine::Gemma,
         components: &["gemma"],
         kernel: Kernel::Int8,
-        cpu_ms: 16928,
-        gpu_ms: 1590,
-        ram_mb: 2684,
+        cpu_ms: 10694,
+        gpu_ms: 1479,
+        ram_mb: 2657,
         license: "Gemma Terms of Use",
     },
     CatalogModel {
@@ -336,6 +477,7 @@ pub const MODELS: &[CatalogModel] = &[
         name: "Comic detector S + Manga OCR + Opus-MT",
         tool: AiTool::Comics,
         rank: 1,
+        high_accuracy: false,
         engine: Engine::Comics {
             detector: "det-small",
             translator: "opus",
@@ -348,41 +490,100 @@ pub const MODELS: &[CatalogModel] = &[
             "opus-ko-en",
         ],
         kernel: Kernel::Int8,
-        cpu_ms: 3950,
+        cpu_ms: 3931,
         gpu_ms: 0,
         ram_mb: 1100,
         license: "Apache-2.0",
     },
     CatalogModel {
-        id: "comics-m2m",
-        name: "Comic detector + Manga OCR + M2M100",
+        id: "comics-opus-large",
+        name: "Comic detector L + Manga OCR + Opus-MT",
         tool: AiTool::Comics,
         rank: 2,
+        high_accuracy: false,
+        engine: Engine::Comics {
+            detector: "det-large",
+            translator: "opus",
+        },
+        components: &[
+            "det-large",
+            "manga-ocr",
+            "opus-ja-en",
+            "opus-zh-en",
+            "opus-ko-en",
+        ],
+        kernel: Kernel::Int8,
+        cpu_ms: 4458,
+        gpu_ms: 0,
+        ram_mb: 1200,
+        license: "Apache-2.0",
+    },
+    CatalogModel {
+        id: "comics-m2m-small",
+        name: "Comic detector S + Manga OCR + M2M100",
+        tool: AiTool::Comics,
+        rank: 3,
+        high_accuracy: false,
+        engine: Engine::Comics {
+            detector: "det-small",
+            translator: "m2m",
+        },
+        components: &["det-small", "manga-ocr", "m2m"],
+        kernel: Kernel::Int8,
+        cpu_ms: 4515,
+        gpu_ms: 0,
+        ram_mb: 2571,
+        license: "Apache-2.0, MIT",
+    },
+    CatalogModel {
+        id: "comics-m2m",
+        name: "Comic detector L + Manga OCR + M2M100",
+        tool: AiTool::Comics,
+        rank: 4,
+        high_accuracy: false,
         engine: Engine::Comics {
             detector: "det-large",
             translator: "m2m",
         },
         components: &["det-large", "manga-ocr", "m2m"],
         kernel: Kernel::Int8,
-        cpu_ms: 5313,
+        cpu_ms: 4946,
         gpu_ms: 0,
-        ram_mb: 2658,
+        ram_mb: 2663,
         license: "Apache-2.0, MIT",
     },
     CatalogModel {
-        id: "comics-gemma",
-        name: "Comic detector + Manga OCR + TranslateGemma",
+        id: "comics-madlad",
+        name: "Comic detector L + Manga OCR + MADLAD-400",
         tool: AiTool::Comics,
-        rank: 3,
+        rank: 5,
+        high_accuracy: false,
+        engine: Engine::Comics {
+            detector: "det-large",
+            translator: "madlad",
+        },
+        components: &["det-large", "manga-ocr", "madlad"],
+        kernel: Kernel::Int8,
+        cpu_ms: 5153,
+        gpu_ms: 0,
+        ram_mb: 5669,
+        license: "Apache-2.0",
+    },
+    CatalogModel {
+        id: "comics-gemma",
+        name: "Comic detector L + Manga OCR + TranslateGemma",
+        tool: AiTool::Comics,
+        rank: 6,
+        high_accuracy: true,
         engine: Engine::Comics {
             detector: "det-large",
             translator: "gemma",
         },
         components: &["det-large", "manga-ocr", "gemma"],
         kernel: Kernel::Int8,
-        cpu_ms: 63_881,
-        gpu_ms: 9712,
-        ram_mb: 3044,
+        cpu_ms: 37757,
+        gpu_ms: 6049,
+        ram_mb: 3109,
         license: "Apache-2.0, Gemma Terms of Use",
     },
 ];
@@ -510,6 +711,8 @@ pub struct Machine {
     pub calibration: Calibration,
     /// Memory StarBooru may use, in MiB (0: unknown).
     pub ram_mb: u64,
+    /// Models that failed when they were timed here, by id.
+    pub failed: BTreeSet<String>,
 }
 
 /// How much slower than the reference machine. Not measured yet (0): the same.
@@ -547,44 +750,43 @@ impl Machine {
         self.ram_mb == 0 || u64::from(m.ram_mb).saturating_add(RESERVED_RAM_MB) <= self.ram_mb
     }
 
-    /// The most accurate model of `tool` that meets the preset's budget and
-    /// fits in memory.
-    pub fn pick(&self, tool: AiTool, preset: AiPreset) -> Option<&'static CatalogModel> {
+    /// What a preset chooses from: it fits, and it worked if it was tried.
+    fn usable(&self, tool: AiTool) -> impl Iterator<Item = &'static CatalogModel> + '_ {
         MODELS
             .iter()
-            .filter(|m| m.tool == tool && self.fits(m))
-            .filter(|m| self.estimate_ms(m) <= preset.budget_ms())
+            .filter(move |m| m.tool == tool && self.fits(m) && !self.failed.contains(m.id))
+    }
+
+    /// The most accurate usable model within `budget_ms`.
+    fn best_within(&self, tool: AiTool, budget_ms: u32) -> Option<&'static CatalogModel> {
+        self.usable(tool)
+            .filter(|m| self.estimate_ms(m) <= budget_ms)
             .max_by_key(|m| m.rank)
     }
 
-    /// The fastest model of `tool` that fits: what a preset falls back on
-    /// when nothing meets its budget.
+    /// The fastest usable model of `tool`.
     pub fn lightest(&self, tool: AiTool) -> Option<&'static CatalogModel> {
-        MODELS
-            .iter()
-            .filter(|m| m.tool == tool && self.fits(m))
-            .min_by_key(|m| self.estimate_ms(m))
+        self.usable(tool).min_by_key(|m| self.estimate_ms(m))
     }
 
-    /// The slowest preset's model, then the lightest: the model used for a
-    /// preset this machine can't meet any more.
+    /// The model a preset chooses here. `None`: the preset is greyed out.
+    pub fn pick(&self, tool: AiTool, preset: AiPreset) -> Option<&'static CatalogModel> {
+        let within = self.best_within(tool, preset.budget_ms());
+        match preset {
+            AiPreset::Fast => within,
+            AiPreset::Balanced => within.or_else(|| self.lightest(tool)),
+            AiPreset::Accurate => self
+                .usable(tool)
+                .filter(|m| m.high_accuracy && self.estimate_ms(m) <= preset.budget_ms())
+                .max_by_key(|m| m.rank),
+        }
+    }
+
+    /// The model for a preset, which Balanced stands in for when this machine
+    /// can't meet it any more.
     pub fn resolve(&self, tool: AiTool, preset: AiPreset) -> Option<&'static CatalogModel> {
         self.pick(tool, preset)
-            .or_else(|| {
-                AiPreset::ALL
-                    .into_iter()
-                    .filter_map(|p| self.pick(tool, p))
-                    .next_back()
-            })
-            .or_else(|| self.lightest(tool))
-    }
-
-    /// The first preset this machine can meet, starting from balanced.
-    pub fn default_preset(&self, tool: AiTool) -> AiPreset {
-        [AiPreset::Balanced, AiPreset::Accurate, AiPreset::Fast]
-            .into_iter()
-            .find(|p| self.pick(tool, *p).is_some())
-            .unwrap_or_default()
+            .or_else(|| self.pick(tool, AiPreset::Balanced))
     }
 }
 
@@ -600,6 +802,7 @@ mod tests {
                 ..Calibration::default()
             },
             ram_mb,
+            failed: BTreeSet::new(),
         }
     }
 
@@ -648,28 +851,71 @@ mod tests {
         let id = |t, p| here.pick(t, p).map(|m| m.id);
         assert_eq!(id(AiTool::Tagging, AiPreset::Fast), Some("wd-swinv2"));
         assert_eq!(id(AiTool::Tagging, AiPreset::Balanced), Some("wd-eva02"));
+        assert_eq!(id(AiTool::Tagging, AiPreset::Accurate), Some("wd-eva02"));
         assert_eq!(id(AiTool::Translation, AiPreset::Fast), Some("opus"));
-        assert_eq!(id(AiTool::Translation, AiPreset::Balanced), Some("m2m"));
+        assert_eq!(id(AiTool::Translation, AiPreset::Balanced), Some("madlad"));
         assert_eq!(id(AiTool::Translation, AiPreset::Accurate), Some("gemma"));
         // A whole page can't be instant on two cores.
         assert_eq!(id(AiTool::Comics, AiPreset::Fast), None);
-        assert_eq!(id(AiTool::Comics, AiPreset::Balanced), Some("comics-opus"));
-        assert_eq!(id(AiTool::Comics, AiPreset::Accurate), Some("comics-m2m"));
     }
 
     #[test]
-    fn slow_machines_lose_presets_from_the_fastest_up() {
-        let slow = machine(5.0, 8192);
+    fn the_catalog_is_in_order_of_accuracy() {
+        for tool in AiTool::ALL {
+            let ranks: Vec<u8> = MODELS
+                .iter()
+                .filter(|m| m.tool == tool)
+                .map(|m| m.rank)
+                .collect();
+            assert!(ranks.windows(2).all(|w| w[0] < w[1]), "{tool:?}: {ranks:?}");
+            // Every tool has something for the Accurate preset.
+            assert!(MODELS.iter().any(|m| m.tool == tool && m.high_accuracy));
+        }
+    }
+
+    #[test]
+    fn fast_is_for_whatever_is_instant_here() {
+        let quick = machine(0.1, 16384);
         assert_eq!(
-            slow.pick(AiTool::Tagging, AiPreset::Fast).map(|m| m.id),
-            Some("tresnet-320")
+            quick.pick(AiTool::Tagging, AiPreset::Fast).map(|m| m.id),
+            Some("wd-eva02"),
+            "a fast machine gets the most demanding model"
         );
-        assert_eq!(slow.pick(AiTool::Translation, AiPreset::Fast), None);
         let hopeless = machine(100.0, 8192);
         assert_eq!(hopeless.pick(AiTool::Tagging, AiPreset::Fast), None);
-        assert_eq!(hopeless.pick(AiTool::Tagging, AiPreset::Balanced), None);
-        assert!(hopeless.pick(AiTool::Tagging, AiPreset::Accurate).is_some());
-        assert_eq!(hopeless.default_preset(AiTool::Tagging), AiPreset::Accurate);
+    }
+
+    #[test]
+    fn balanced_is_there_even_when_nothing_meets_its_target() {
+        let hopeless = machine(1000.0, 8192);
+        for tool in AiTool::ALL {
+            let quickest = hopeless.lightest(tool).unwrap();
+            assert!(hopeless.estimate_ms(quickest) > AiPreset::Balanced.budget_ms());
+            assert_eq!(hopeless.pick(tool, AiPreset::Balanced), Some(quickest));
+        }
+    }
+
+    #[test]
+    fn accurate_needs_a_high_accuracy_model_that_runs_well_here() {
+        // Plenty of models within 30 seconds, but none of the good ones.
+        let slow = machine(30.0, 8192);
+        assert!(slow.best_within(AiTool::Tagging, 30_000).is_some());
+        assert_eq!(slow.pick(AiTool::Tagging, AiPreset::Accurate), None);
+        // It can't be reached by a model that doesn't fit, either.
+        let small = machine(1.0, 2100);
+        assert_eq!(small.pick(AiTool::Tagging, AiPreset::Accurate), None);
+        assert!(small.pick(AiTool::Tagging, AiPreset::Balanced).is_some());
+    }
+
+    #[test]
+    fn a_model_that_failed_here_isnt_chosen() {
+        let mut here = machine(1.0, 8192);
+        here.failed.insert("wd-eva02".into());
+        here.failed.insert("danbooru-v1".into());
+        assert_eq!(
+            here.pick(AiTool::Tagging, AiPreset::Accurate).map(|m| m.id),
+            Some("wd-vit-large")
+        );
     }
 
     #[test]
@@ -677,11 +923,11 @@ mod tests {
         let small = machine(1.0, 2100);
         assert_eq!(
             small
-                .pick(AiTool::Tagging, AiPreset::Accurate)
+                .pick(AiTool::Tagging, AiPreset::Balanced)
                 .map(|m| m.id),
             Some("tresnet-448")
         );
-        assert_eq!(small.pick(AiTool::Translation, AiPreset::Accurate), None);
+        assert_eq!(small.pick(AiTool::Translation, AiPreset::Balanced), None);
         // An unknown amount doesn't block anything.
         assert!(
             machine(1.0, 0)
@@ -693,15 +939,18 @@ mod tests {
     #[test]
     fn real_timings_replace_estimates() {
         let mut here = machine(1.0, 8192);
-        here.calibration.measured.insert(
-            "wd-eva02".into(),
-            Measured {
-                ms: 60_000,
-                gpu: false,
-            },
-        );
+        for id in ["wd-eva02", "danbooru-v1", "wd-vit-large"] {
+            here.calibration.measured.insert(
+                id.into(),
+                Measured {
+                    ms: 60_000,
+                    gpu: false,
+                },
+            );
+        }
+        assert_eq!(here.pick(AiTool::Tagging, AiPreset::Accurate), None);
         assert_eq!(
-            here.pick(AiTool::Tagging, AiPreset::Accurate).map(|m| m.id),
+            here.pick(AiTool::Tagging, AiPreset::Balanced).map(|m| m.id),
             Some("wd-swinv2")
         );
     }
@@ -740,18 +989,11 @@ mod tests {
     }
 
     #[test]
-    fn a_preset_out_of_reach_falls_back_on_a_slower_model() {
+    fn a_preset_out_of_reach_falls_back_on_balanced() {
         let slow = machine(5.0, 8192);
-        // Nothing translates instantly here: the slowest preset's model runs.
+        // Nothing translates instantly here.
         let m = slow.resolve(AiTool::Translation, AiPreset::Fast).unwrap();
-        assert_eq!(m.id, "m2m");
-        let hopeless = machine(1000.0, 8192);
-        assert_eq!(
-            hopeless
-                .resolve(AiTool::Tagging, AiPreset::Fast)
-                .map(|m| m.id),
-            Some("tresnet-320")
-        );
+        assert_eq!(Some(m), slow.pick(AiTool::Translation, AiPreset::Balanced));
         assert_eq!(
             machine(1.0, 1024).resolve(AiTool::Tagging, AiPreset::Fast),
             None

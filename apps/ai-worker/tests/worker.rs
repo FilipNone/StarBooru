@@ -10,6 +10,7 @@ use std::path::Path;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 use base64::Engine as _;
+use starbooru_core::ai_catalog::{AiTool, MODELS};
 use starbooru_core::ai_worker::{DAMAGED_MODEL, WorkerReply, WorkerRequest};
 
 struct Worker {
@@ -152,6 +153,12 @@ fn calibrates_without_any_download() {
     }
 }
 
+fn installed(models: &str, components: &[&str]) -> bool {
+    components.iter().all(|c| {
+        std::fs::read_dir(Path::new(models).join(c)).is_ok_and(|mut files| files.next().is_some())
+    })
+}
+
 #[test]
 fn real_models_answer() {
     let Some(ort) = runtime() else { return };
@@ -160,12 +167,23 @@ fn real_models_answer() {
         return;
     };
     let mut worker = Worker::start(&ort, &models);
-    let tagged = worker.ask(&WorkerRequest::Tag {
-        model: "tresnet-320".into(),
-        gpu: false,
-        jpeg: jpeg(),
-    });
-    assert!(matches!(tagged, WorkerReply::Tags { .. }), "{tagged:?}");
+    for model in MODELS.iter().filter(|m| m.tool == AiTool::Tagging) {
+        // Each is there only if a test machine has it.
+        if !installed(&models, model.components) {
+            eprintln!("skipped: {} is not installed", model.id);
+            continue;
+        }
+        let tagged = worker.ask(&WorkerRequest::Tag {
+            model: model.id.into(),
+            gpu: false,
+            jpeg: jpeg(),
+        });
+        assert!(
+            matches!(tagged, WorkerReply::Tags { .. }),
+            "{}: {tagged:?}",
+            model.id
+        );
+    }
     let translated = worker.ask(&WorkerRequest::Translate {
         model: "opus".into(),
         gpu: false,
@@ -178,5 +196,44 @@ fn real_models_answer() {
             assert!(texts.first().is_some_and(|t| !t.trim().is_empty()));
         }
         other => panic!("{other:?}"),
+    }
+    // Twice, as the second time starts from what it remembers of the first.
+    if installed(&models, &["gemma"]) {
+        let ask = |worker: &mut Worker| {
+            worker.ask(&WorkerRequest::Translate {
+                model: "gemma".into(),
+                gpu: false,
+                from: "ja".into(),
+                to: "it".into(),
+                texts: vec!["今日はいい天気ですね。".into()],
+            })
+        };
+        let first = ask(&mut worker);
+        assert!(matches!(first, WorkerReply::Translated { .. }), "{first:?}");
+        assert_eq!(format!("{first:?}"), format!("{:?}", ask(&mut worker)));
+    }
+    if installed(&models, &["madlad"]) {
+        let translated = worker.ask(&WorkerRequest::Translate {
+            model: "madlad".into(),
+            gpu: false,
+            from: "en".into(),
+            to: "it".into(),
+            texts: vec!["The weather is lovely today.".into()],
+        });
+        match translated {
+            WorkerReply::Translated { texts } => {
+                assert!(texts.first().is_some_and(|t| !t.trim().is_empty()));
+            }
+            other => panic!("{other:?}"),
+        }
+        // A language it doesn't know is an answer too.
+        let unknown = worker.ask(&WorkerRequest::Translate {
+            model: "madlad".into(),
+            gpu: false,
+            from: "en".into(),
+            to: "xx".into(),
+            texts: vec!["Hello there.".into()],
+        });
+        assert!(error_of(&unknown).contains("no model"), "{unknown:?}");
     }
 }

@@ -801,6 +801,8 @@ button.thumb { width: 100%; padding: 0; border: 0; font: inherit; color: inherit
 .ai-tool { display: grid; gap: 12px; padding: 16px 0; border-top: 1px solid var(--outline); min-width: 0; }
 .ai-tool:last-child { padding-bottom: 0; }
 .ai-tool .segmented { justify-self: start; max-width: 100%; }
+.ai-tool .seg { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 48px; line-height: 1.25; }
+.ai-tool .seg small { font-size: 12px; font-weight: 400; text-transform: none; }
 .ai-tool .field, .ai-tool .check { margin: 0; }
 .ai-tool-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 28px; }
 .ai-tool-head h3 { margin: 0; font-size: 16px; font-weight: 600; }

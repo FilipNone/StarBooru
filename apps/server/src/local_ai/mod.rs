@@ -113,9 +113,15 @@ impl LocalAi {
     }
 
     fn machine(&self) -> Machine {
+        let shared = self.shared();
         Machine {
-            calibration: self.shared().calibration.clone(),
+            calibration: shared.calibration.clone(),
             ram_mb: hardware::ram_mb(),
+            failed: shared
+                .unmeasurable
+                .iter()
+                .map(|&id| id.to_owned())
+                .collect(),
         }
     }
 
@@ -132,6 +138,11 @@ impl LocalAi {
             return Err(AppError::BadRequest(
                 "this model doesn't fit in this machine's memory".into(),
             ));
+        }
+        {
+            let mut shared = self.shared();
+            shared.unmeasurable.remove(model.id);
+            shared.errors.remove(model.id);
         }
         self.enqueue(model);
         self.wake();
@@ -265,6 +276,7 @@ fn tool_status(ai: &LocalAi, machine: &Machine, setup: &ToolSetup) -> AiToolStat
                 name: m.name.to_owned(),
                 size: m.size(),
                 ram_mb: m.ram_mb,
+                high_accuracy: m.high_accuracy,
                 est_ms: machine.estimate_ms(m),
                 measured: measured.is_some(),
                 gpu: measured.is_some_and(|x| x.gpu),
@@ -322,22 +334,36 @@ fn same_parts(a: &CatalogModel, b: &CatalogModel) -> bool {
         && a.components.iter().all(|c| b.components.contains(c))
 }
 
-/// What uninstalling `model` frees: its files, except those another installed
-/// model needs as well. Two models that are the same files go together.
-fn removable(ai: &LocalAi, model: &CatalogModel) -> Vec<&'static Component> {
-    let mut parts: Vec<&'static Component> = model
-        .parts()
-        .filter(|c| {
-            !MODELS.iter().any(|other| {
+/// What uninstalling `model` frees: its files that the fewest other installed
+/// models need, so that as many of them as possible keep working, and none of
+/// what's in use. Two models that are the same files go together.
+fn removable(
+    ai: &LocalAi,
+    model: &CatalogModel,
+    in_use: &[&CatalogModel],
+) -> Vec<&'static Component> {
+    let needed_by = |c: &Component| {
+        MODELS
+            .iter()
+            .filter(|other| {
                 other.id != model.id
                     && other.components.contains(&c.id)
                     && !same_parts(other, model)
                     && ai.is_installed(other)
             })
-        })
+            .count()
+    };
+    let free: Vec<&'static Component> = model
+        .parts()
+        .filter(|c| !in_use.iter().any(|m| m.components.contains(&c.id)))
+        .collect();
+    let fewest = free.iter().map(|c| needed_by(c)).min().unwrap_or(0);
+    let mut parts: Vec<&'static Component> = free
+        .into_iter()
+        .filter(|c| needed_by(c) == fewest)
         .collect();
     // Language pairs fetched when first needed go with the last that uses them.
-    if matches!(model.engine, Engine::Opus) && !parts.is_empty() {
+    if matches!(model.engine, Engine::Opus) && !parts.is_empty() && fewest == 0 {
         parts.extend(
             COMPONENTS
                 .iter()
@@ -411,33 +437,23 @@ pub async fn uninstall(state: &AppState, id: &str) -> AppResult<()> {
         shared.queue.retain(|q| *q != model.id);
         shared.progress.remove(model.id);
         shared.errors.remove(model.id);
+        shared.unmeasurable.remove(model.id);
     }
-    let parts = removable(ai, model);
     let setup = crate::settings::ai(state).await?;
     let machine = ai.machine();
+    let mut in_use: Vec<&CatalogModel> = Vec::new();
     for tool in AiTool::ALL {
         let tool = setup.tool(tool);
-        if tool.mode != AiMode::Local {
-            continue;
-        }
-        let in_use = [ai.answering(&machine, &tool), ai.target(&machine, &tool)]
-            .into_iter()
-            .flatten()
-            .any(|m| m.id == model.id || parts.iter().any(|c| m.components.contains(&c.id)));
-        if in_use {
-            return Err(AppError::BadRequest(
-                "this model is in use; choose another one first".into(),
-            ));
+        if tool.mode == AiMode::Local {
+            in_use.extend(ai.answering(&machine, &tool));
+            in_use.extend(ai.target(&machine, &tool));
         }
     }
-    if parts.is_empty() && ai.is_installed(model) {
-        let user = MODELS
-            .iter()
-            .find(|o| o.id != model.id && !same_parts(o, model) && ai.is_installed(o));
-        return Err(AppError::BadRequest(format!(
-            "another installed model needs these files: {}",
-            user.map_or("", |o| o.name)
-        )));
+    let parts = removable(ai, model, &in_use);
+    if in_use.iter().any(|m| m.id == model.id) || (parts.is_empty() && ai.is_installed(model)) {
+        return Err(AppError::BadRequest(
+            "this model is in use; choose another one first".into(),
+        ));
     }
     // Loaded models keep their files in use.
     if let Err(e) = ai
@@ -655,7 +671,9 @@ async fn measure_next(state: &AppState) -> bool {
                 .err()
                 .map_or_else(|| "bad reply".to_owned(), |e| e.to_string());
             warn!(model = model.id, "timing an AI model failed: {reason}");
-            ai.shared().unmeasurable.insert(model.id);
+            let mut shared = ai.shared();
+            shared.unmeasurable.insert(model.id);
+            shared.errors.insert(model.id, reason);
         }
     }
     true
@@ -1071,20 +1089,42 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let ai = LocalAi::new(None, dir.path());
         let model = |id| ai_catalog::model(id).unwrap();
-        let ids = |m: &CatalogModel, ai: &LocalAi| {
-            removable(ai, m).iter().map(|c| c.id).collect::<Vec<_>>()
+        let ids = |m: &CatalogModel, in_use: &[&CatalogModel]| {
+            removable(&ai, m, in_use)
+                .iter()
+                .map(|c| c.id)
+                .collect::<Vec<_>>()
         };
         mark_all_installed(&ai, model("comics-opus"));
         mark_all_installed(&ai, model("comics-m2m"));
         mark_all_installed(&ai, model("tresnet-320"));
-        // The reader is shared and the translators belong to their tool.
-        assert_eq!(ids(model("comics-opus"), &ai), vec!["det-small"]);
-        assert_eq!(ids(model("comics-m2m"), &ai), vec!["det-large"]);
+        // The reader and the translators are needed by more models.
+        assert_eq!(ids(model("comics-opus"), &[]), vec!["det-small"]);
+        assert_eq!(ids(model("comics-m2m"), &[]), vec!["det-large"]);
         // Both sizes of TResNet are the same files.
-        assert_eq!(ids(model("tresnet-448"), &ai), vec!["tresnet"]);
-        // A translator a comics model uses stays.
-        assert!(ids(model("m2m"), &ai).is_empty());
-        assert!(ids(model("opus"), &ai).is_empty());
+        assert_eq!(ids(model("tresnet-448"), &[]), vec!["tresnet"]);
+        // A translator goes only if the tool's model is what's asked to go.
+        assert_eq!(ids(model("m2m"), &[]), vec!["m2m"]);
+        // What's in use stays, whatever the others need.
+        assert_eq!(
+            ids(model("comics-m2m"), &[model("comics-opus-large")]),
+            vec!["m2m"]
+        );
+        assert!(ids(model("m2m"), &[model("comics-m2m")]).is_empty());
+    }
+
+    #[test]
+    fn overlapping_models_can_always_be_uninstalled() {
+        let dir = tempfile::tempdir().unwrap();
+        let ai = LocalAi::new(None, dir.path());
+        let comics: Vec<&CatalogModel> =
+            MODELS.iter().filter(|m| m.tool == AiTool::Comics).collect();
+        for m in &comics {
+            mark_all_installed(&ai, m);
+        }
+        for m in &comics {
+            assert!(!removable(&ai, m, &[]).is_empty(), "{}", m.id);
+        }
     }
 
     #[test]
@@ -1093,7 +1133,7 @@ mod tests {
         let ai = LocalAi::new(None, dir.path());
         let opus = ai_catalog::model("opus").unwrap();
         mark_all_installed(&ai, opus);
-        let parts = removable(&ai, opus);
+        let parts = removable(&ai, opus, &[]);
         assert!(parts.iter().any(|c| c.id == "opus-ja-en"));
         assert!(parts.iter().any(|c| c.id == "opus-en-it"));
     }

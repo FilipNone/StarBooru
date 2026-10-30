@@ -112,27 +112,39 @@ Tag suggestions, translation and comic translation can run inside StarBooru, on 
 
 **Local** needs nothing else: choose a speed and the server downloads the model, resumes after a failure, checks every file's SHA-256, restarts the worker if it dies, downloads again any file that gets damaged, and frees the memory after 10 idle minutes. Models live in `STARBOORU_DATA_DIR/ai/models`, so they survive updates (and are in volume backups of `/data`; leave that folder out to save space).
 
-| Speed | Answers within | Runs |
+| Speed | Runs | Greyed out |
 |---|---|---|
-| Fast | 1 s | The most accurate model that meets the limit on this machine |
-| Balanced | 5 s | The same |
-| Accurate | 30 s | The same |
+| Fast (1 s) | The most accurate model that answers within 1 s on this machine | When none does |
+| Balanced (5 s) | The most accurate model that answers within 5 s, or else the quickest one | Only when no model fits in memory |
+| Accurate (30 s) | The most accurate *High accuracy* model that answers within 30 s | When none does |
 
-A speed no model can meet, in time or memory, is greyed out. The first runs time each model on this machine and replace the estimate; a model whose time is still estimated shows `≈`. Longer text takes longer than the limit, which is for a typical answer.
+*High accuracy* marks models that published benchmarks put at the top of their field: for tags, the three that lead the shared [Danbooru Tagger v1 comparison](https://huggingface.co/Redstonexs/danbooru-tagger-v1); for translation, [TranslateGemma on WMT24++](https://arxiv.org/abs/2601.09012). The first runs time each model on this machine and replace the estimate; a model whose time is still estimated shows `≈`. A model that fails its timing isn't chosen. Longer text takes longer than the limit, which is for a typical answer. If a speed goes out of reach later, the tool runs Balanced.
 
-| Tool | Model | Download | Time on 2 cores | Memory | License |
-|---|---|---|---|---|---|
-| Tags | ML-Danbooru TResNet | 236 MB | 0.2–0.3 s | 0.5 GB | MIT |
-| Tags | WD SwinV2 Tagger v3 | 470 MB | 0.8 s | 1 GB | Apache-2.0 |
-| Tags | WD EVA02 Large Tagger v3 | 1.3 GB | 3.7 s | 2.1 GB | Apache-2.0 |
-| Translation | Opus-MT | 354 MB, plus about 120 MB per extra language | 0.5 s | 0.8 GB | Apache-2.0 |
-| Translation | M2M-100 418M | 640 MB | 1.3 s | 2.2 GB | MIT |
-| Translation | TranslateGemma 4B | 3.1 GB | 17 s | 2.7 GB | Gemma Terms |
-| Comics | Comic detector S, Manga OCR, Opus-MT | see above | 4 s | 1.1 GB | Apache-2.0 |
-| Comics | Comic detector S, Manga OCR, M2M-100 | see above | 5.3 s | 2.7 GB | Apache-2.0, MIT |
-| Comics | Comic detector, Manga OCR, TranslateGemma | see above | 64 s | 3 GB | Apache-2.0, Gemma Terms |
+Under *Models* you can install, uninstall or use any model that fits in memory; picking a speed goes back to the automatic choice.
 
-Times are for one picture, one sentence or one page, measured on two cores of a Ryzen 5900X. A slower server reads longer; a Raspberry Pi hasn't been measured. On a Radeon RX 9060 XT through Vulkan the taggers take 0.03–0.4 s, TranslateGemma 1.6 s and its comics set 10 s, so those become the automatic choices; Opus-MT and M2M-100 stay on the processor, which is faster for them. Any model can be picked by hand under *Models* unless it doesn't fit in memory; picking a speed goes back to the automatic choice.
+| Tool | Model | Download | 2 cores | Radeon RX 9060 XT | Memory | License |
+|---|---|---|---|---|---|---|
+| Tags | ML-Danbooru TResNet (320 and 448 px) | 236 MB | 0.2 and 0.3 s | 0.03 and 0.05 s | 0.5 GB | MIT |
+| Tags | JoyTag, also for photographs | 366 MB | 0.9 s | 0.07 s | 0.8 GB | Apache-2.0 |
+| Tags | ML-Danbooru CAFormer | 287 MB | 1.1 s | 0.2 s | 0.9 GB | MIT |
+| Tags | WD ViT v3 | 378 MB | 0.8 s | 0.07 s | 0.8 GB | Apache-2.0 |
+| Tags | WD ConvNext v3 | 395 MB | 0.7 s | 0.06 s | 0.8 GB | Apache-2.0 |
+| Tags | WD SwinV2 v3 | 470 MB | 0.9 s | 0.09 s | 0.9 GB | Apache-2.0 |
+| Tags | WD ViT Large v3 (high accuracy) | 1.3 GB | 3.8 s | 0.2 s | 1.9 GB | Apache-2.0 |
+| Tags | Danbooru Tagger v1 (high accuracy; 24,000 tags, no characters or rating) | 660 MB | 4.6 s | 0.3 s | 2.9 GB | Apache-2.0 |
+| Tags | WD EVA02 Large v3 (high accuracy) | 1.3 GB | 3.7 s | 0.4 s | 2.1 GB | Apache-2.0 |
+| Translation | Opus-MT | 354 MB, plus about 120 MB per extra language | 0.5 s | | 0.8 GB | Apache-2.0 |
+| Translation | M2M-100 418M | 640 MB | 1.3 s | | 2.2 GB | MIT |
+| Translation | MADLAD-400 3B | 3.2 GB | 1.4 s | | 5.3 GB | Apache-2.0 |
+| Translation | TranslateGemma 4B (high accuracy) | 3.1 GB | 11 s | 1.5 s | 2.7 GB | Gemma Terms |
+| Comics | Detector S, Manga OCR, Opus-MT | see above | 3.9 s | | 1.1 GB | Apache-2.0 |
+| Comics | Detector L, Manga OCR, Opus-MT | see above | 4.5 s | | 1.2 GB | Apache-2.0 |
+| Comics | Detector S, Manga OCR, M2M-100 | see above | 4.5 s | | 2.6 GB | Apache-2.0, MIT |
+| Comics | Detector L, Manga OCR, M2M-100 | see above | 4.9 s | | 2.7 GB | Apache-2.0, MIT |
+| Comics | Detector L, Manga OCR, MADLAD-400 | see above | 5.2 s | | 5.7 GB | Apache-2.0 |
+| Comics | Detector L, Manga OCR, TranslateGemma (high accuracy) | see above | 38 s | 6 s | 3.1 GB | Apache-2.0, Gemma Terms |
+
+Times are for one picture, one sentence or one page of eight balloons with the model already loaded, measured on two cores of a Ryzen 5900X and on the card through Vulkan. The first answer after loading also reads the model from disk, up to about 10 s more for the big ones. An empty card column means the processor is faster and stays in use. A slower server takes longer; a Raspberry Pi hasn't been measured. So on those two cores Accurate is greyed out for comics, and with that card all three speeds run the High accuracy models for tags.
 
 **API** sends the same work to any OpenAI-compatible address, hosted or on your network, such as Ollama (`http://host:11434/v1`), LM Studio or llama.cpp. Each tool has its own address, model and key. Tagging and comics need a model that reads images.
 

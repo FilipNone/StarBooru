@@ -185,6 +185,9 @@ pub struct AiModelOption {
     pub name: String,
     pub size: u64,
     pub ram_mb: u32,
+    /// Published benchmarks put it at the top of its field.
+    #[serde(default)]
+    pub high_accuracy: bool,
     pub est_ms: u32,
     /// `est_ms` was timed here, not estimated.
     pub measured: bool,

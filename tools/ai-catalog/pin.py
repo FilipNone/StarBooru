@@ -10,9 +10,16 @@ OPUS = "ja-en zh-en ko-en ru-en fr-en de-en es-en it-en en-it en-fr en-de en-es 
 Q = ["onnx/encoder_model_quantized.onnx", "onnx/decoder_model_merged_quantized.onnx", "tokenizer.json", "config.json"]
 MODELS = [
     ("TRESNET", "deepghs/ml-danbooru-onnx", ["TResnet-D-FLq_ema_6-30000.onnx", "tags.csv"]),
+    ("ML_CAFORMER", "deepghs/ml-danbooru-onnx", ["ml_caformer_m36_dec-5-97527.onnx", "tags.csv"]),
+    ("JOYTAG", "fancyfeast/joytag", ["model.onnx", "top_tags.txt"]),
+    ("WD_VIT", "SmilingWolf/wd-vit-tagger-v3", ["model.onnx", "selected_tags.csv"]),
+    ("WD_CONVNEXT", "SmilingWolf/wd-convnext-tagger-v3", ["model.onnx", "selected_tags.csv"]),
     ("WD_SWINV2", "SmilingWolf/wd-swinv2-tagger-v3", ["model.onnx", "selected_tags.csv"]),
+    ("WD_VIT_LARGE", "SmilingWolf/wd-vit-large-tagger-v3", ["model.onnx", "selected_tags.csv"]),
+    ("DANBOORU_V1", "Redstonexs/danbooru-tagger-v1", ["onnx/model_prob.onnx", "selected_tags.csv"]),
     ("WD_EVA02", "SmilingWolf/wd-eva02-large-tagger-v3", ["model.onnx", "selected_tags.csv"]),
     ("M2M", "Xenova/m2m100_418M", Q),
+    ("MADLAD", "Kutalia/madlad400-3b-mt-onnx", Q),
     ("GEMMA", "onnx-community/translategemma-text-4b-it-ONNX",
      ["onnx/model_q4.onnx", "onnx/model_q4.onnx_data", "onnx/model_q4.onnx_data_1", "tokenizer.json"]),
     ("DET_SMALL", "ogkalu/comic-text-and-bubble-detector", ["detector-v4-s_int8.onnx"]),

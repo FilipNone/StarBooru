@@ -15,7 +15,13 @@ use crate::runtime::Runtime;
 /// What the WD taggers were trained on.
 const WD_SIZE: u32 = 448;
 const WD_CHARACTER_THRESHOLD: f32 = 0.85;
-const TRESNET_THRESHOLD: f32 = 0.5;
+const ML_DANBOORU_THRESHOLD: f32 = 0.5;
+const RGB: [usize; 3] = [0, 1, 2];
+const BGR: [usize; 3] = [2, 1, 0];
+/// What JoyTag was trained on (the CLIP values).
+const JOYTAG_SIZE: u32 = 448;
+const JOYTAG_MEAN: [f32; 3] = [0.481_454_66, 0.457_827_5, 0.408_210_73];
+const JOYTAG_STD: [f32; 3] = [0.268_629_54, 0.261_302_6, 0.275_777_1];
 /// Tags kept per picture, best first.
 const MAX_TAGS: usize = 40;
 
@@ -46,7 +52,7 @@ fn fields(line: &str) -> Vec<String> {
     out
 }
 
-/// Reads `tag,…` (TResNet) or `id,name,category,…` (WD) rows.
+/// Reads `tag,…` (ML-Danbooru) or `id,name,category,…` (WD) rows.
 fn parse_tags(text: &str, wd: bool) -> TagList {
     text.lines()
         .skip(1)
@@ -66,18 +72,28 @@ fn parse_tags(text: &str, wd: bool) -> TagList {
         .collect()
 }
 
+/// Reads one tag per line (JoyTag).
+fn parse_lines(text: &str) -> TagList {
+    text.lines()
+        .map(|name| Row {
+            name: name.trim().to_string(),
+            category: 0,
+        })
+        .collect()
+}
+
 fn tag_list(
     rt: &mut Runtime,
     component: &str,
     file: &str,
-    wd: bool,
+    parse: impl FnOnce(&str) -> TagList,
 ) -> Result<Rc<TagList>, String> {
     if let Some(list) = rt.tags.get(component) {
         return Ok(list.clone());
     }
     let path = rt.file(component, file)?;
     let text = std::fs::read_to_string(path).map_err(|_| DAMAGED_MODEL)?;
-    let list = Rc::new(parse_tags(&text, wd));
+    let list = Rc::new(parse(&text));
     rt.tags.insert(component.to_string(), list.clone());
     Ok(list)
 }
@@ -136,22 +152,45 @@ pub fn tag(
     let entry = ai_catalog::model(model).ok_or("unknown model")?;
     let component = entry.components.first().ok_or("unknown model")?;
     match entry.engine {
-        Engine::TResNet { size } => {
-            let list = tag_list(rt, component, "tags.csv", false)?;
-            let path = rt.file(component, "TResnet-D-FLq_ema_6-30000.onnx")?;
+        Engine::MlDanbooru { size, file } => {
+            let list = tag_list(rt, component, "tags.csv", |t| parse_tags(t, false))?;
+            let path = rt.file(component, file)?;
             let (shape, data) = picture::stretched_chw(image, size);
             let scores: Vec<f32> = run(rt, &path, gpu, &shape, data)?
                 .into_iter()
                 .map(sigmoid)
                 .collect();
-            Ok(choose(&list, &scores, TRESNET_THRESHOLD, TRESNET_THRESHOLD))
+            Ok(choose(
+                &list,
+                &scores,
+                ML_DANBOORU_THRESHOLD,
+                ML_DANBOORU_THRESHOLD,
+            ))
         }
         Engine::Wd { threshold } => {
-            let list = tag_list(rt, component, "selected_tags.csv", true)?;
+            let list = tag_list(rt, component, "selected_tags.csv", |t| parse_tags(t, true))?;
             let path = rt.file(component, "model.onnx")?;
             let (shape, data) = picture::padded_bgr_hwc(image, WD_SIZE);
             let scores = run(rt, &path, gpu, &shape, data)?;
             Ok(choose(&list, &scores, threshold, WD_CHARACTER_THRESHOLD))
+        }
+        Engine::DanbooruV1 { threshold } => {
+            let list = tag_list(rt, component, "selected_tags.csv", |t| parse_tags(t, true))?;
+            let path = rt.file(component, "model_prob.onnx")?;
+            let (shape, data) = picture::padded_chw(image, WD_SIZE, BGR, [0.5; 3], [0.5; 3]);
+            let scores = run(rt, &path, gpu, &shape, data)?;
+            Ok(choose(&list, &scores, threshold, threshold))
+        }
+        Engine::JoyTag { threshold } => {
+            let list = tag_list(rt, component, "top_tags.txt", parse_lines)?;
+            let path = rt.file(component, "model.onnx")?;
+            let (shape, data) =
+                picture::padded_chw(image, JOYTAG_SIZE, RGB, JOYTAG_MEAN, JOYTAG_STD);
+            let scores: Vec<f32> = run(rt, &path, gpu, &shape, data)?
+                .into_iter()
+                .map(sigmoid)
+                .collect();
+            Ok(choose(&list, &scores, threshold, threshold))
         }
         _ => Err("not a tagger".into()),
     }
@@ -192,13 +231,16 @@ mod tests {
     }
 
     #[test]
-    fn reads_both_lists() {
+    fn reads_every_list() {
         let list = wd_list();
         assert_eq!(list.len(), 6);
         assert_eq!(list[3].name, "odd,name");
         assert_eq!(list[4].category, 4);
         let tres = parse_tags("tag,root,pos,count\nlong_hair,x,0,1\n", false);
         assert_eq!(tres[0].name, "long_hair");
+        let joy = parse_lines("1girl\nsolo\n");
+        assert_eq!(joy[1].name, "solo");
+        assert_eq!(joy[1].category, 0);
         // Broken rows don't stop anything.
         assert_eq!(parse_tags("h\n\n,,,\n", true).len(), 2);
     }

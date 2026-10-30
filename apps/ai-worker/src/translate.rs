@@ -1,9 +1,10 @@
-//! Text translators: encoder and decoder pairs (Opus-MT, M2M100) and
-//! TranslateGemma.
+//! Text translators: encoder and decoder pairs (Opus-MT, M2M100, MADLAD-400)
+//! and TranslateGemma.
 
 use std::rc::Rc;
 
-use ort::session::SessionInputValue;
+use ort::session::{Session, SessionInputValue};
+use ort::value::DynValue;
 use serde_json::Value;
 use starbooru_core::ai_catalog::{self, Engine};
 use starbooru_core::ai_worker::DAMAGED_MODEL;
@@ -192,19 +193,33 @@ pub fn translate(
                 })
                 .collect()
         }
+        Engine::Madlad => {
+            if from == to {
+                return Ok(texts.to_vec());
+            }
+            let target = format!("<2{to}>");
+            tokenizer(rt, "madlad")?
+                .token_to_id(&target)
+                .ok_or("no model for these languages")?;
+            texts
+                .iter()
+                .map(|text| {
+                    by_pieces(text, |p| {
+                        seq2seq(rt, "madlad", gpu, &format!("{target} {p}"), None)
+                    })
+                })
+                .collect()
+        }
         Engine::Gemma => {
             if from == to {
                 return Ok(texts.to_vec());
             }
             let source = ai_catalog::language_name(&from).ok_or("no model for these languages")?;
             let target = ai_catalog::language_name(&to).ok_or("no model for these languages")?;
+            let start = gemma_start(source, &from, target, &to);
             texts
                 .iter()
-                .map(|text| {
-                    by_pieces(text, |p| {
-                        gemma(rt, gpu, &gemma_prompt(source, &from, target, &to, p))
-                    })
-                })
+                .map(|text| by_pieces(text, |p| gemma(rt, gpu, &start, &gemma_text(p))))
                 .collect()
         }
         _ => Err("not a translator".into()),
@@ -355,66 +370,118 @@ fn seq2seq(
         .map_err(|_| "the answer doesn't decode".to_string())
 }
 
-fn gemma_prompt(source: &str, sc: &str, target: &str, tc: &str, text: &str) -> String {
+/// Every prompt for a pair of languages begins the same way.
+fn gemma_start(source: &str, sc: &str, target: &str, tc: &str) -> String {
     format!(
         "<start_of_turn>user\nYou are a professional {source} ({sc}) to {target} ({tc}) translator. \
          Your goal is to accurately convey the meaning and nuances of the original {source} text \
          while adhering to {target} grammar, vocabulary, and cultural sensitivities.\n\
          Produce only the {target} translation, without any additional explanations or commentary. \
-         Please translate the following {source} text into {target}:\n\n\n{text}<end_of_turn>\n\
-         <start_of_turn>model\n"
+         Please translate the following {source} text into {target}:\n\n\n"
     )
 }
 
-fn gemma(rt: &mut Runtime, gpu: bool, prompt: &str) -> Result<String, String> {
+fn gemma_text(text: &str) -> String {
+    format!("{text}<end_of_turn>\n<start_of_turn>model\n")
+}
+
+/// What TranslateGemma made of the start of a prompt. It's longer than most
+/// speech bubbles, so it's worked out once rather than for each of them.
+pub struct GemmaStart {
+    text: String,
+    gpu: bool,
+    tokens: usize,
+    past: Past,
+}
+
+type Past = Vec<(String, DynValue)>;
+
+/// Feeds tokens to the model: the token that comes next, and its memory now.
+fn gemma_step(
+    session: &mut Session,
+    names: &[String],
+    ids: Vec<i64>,
+    seen: usize,
+    past: &[(String, DynValue)],
+) -> Result<(u32, Past), String> {
+    let step = i64::try_from(ids.len()).map_err(|e| e.to_string())?;
+    let total = i64::try_from(seen).map_err(|e| e.to_string())?;
+    let mut inputs: Inputs = vec![
+        ("input_ids".to_string(), onnx::ints(&[1, step], ids)?.into()),
+        (
+            "attention_mask".to_string(),
+            onnx::ints(&[1, total], vec![1; seen])?.into(),
+        ),
+    ];
+    for (name, value) in past {
+        inputs.push((name.clone(), SessionInputValue::from(value)));
+    }
+    let mut result = session.run(inputs).map_err(|e| e.to_string())?;
+    let logits_name = names.first().ok_or("unexpected model")?;
+    let logits = result.get(logits_name).ok_or("unexpected model output")?;
+    let next = onnx::best(onnx::last_logits(logits)?, None).ok_or("unexpected model output")?;
+    let mut fresh = Vec::with_capacity(past.len());
+    for (name, _) in past {
+        let output = name.replacen("past_key_values", "present", 1);
+        let value = result.remove(&output).ok_or("unexpected model output")?;
+        fresh.push((name.clone(), value));
+    }
+    Ok((next, fresh))
+}
+
+fn gemma(rt: &mut Runtime, gpu: bool, start: &str, text: &str) -> Result<String, String> {
     let tk = tokenizer(rt, "gemma")?;
-    let encoding = tk
-        .encode(prompt, true)
-        .map_err(|_| "the text doesn't tokenize")?;
-    let mut current: Vec<i64> = encoding.get_ids().iter().map(|&id| i64::from(id)).collect();
-    let mut seen = i64::try_from(current.len()).map_err(|e| e.to_string())?;
+    let encode = |text: &str| -> Result<Vec<i64>, String> {
+        let encoding = tk
+            .encode(text, true)
+            .map_err(|_| "the text doesn't tokenize")?;
+        Ok(encoding.get_ids().iter().map(|&id| i64::from(id)).collect())
+    };
+    let start_ids = encode(start)?;
+    let all = encode(&format!("{start}{text}"))?;
+    let known = rt
+        .gemma_start
+        .take()
+        .filter(|s| s.gpu == gpu && s.text == start);
     let path = rt.file("gemma", GEMMA)?;
     let session = rt.session(&path, gpu)?;
     let names = onnx::output_names(session);
-    let mut past = onnx::empty_past(session)?;
-    let mut produced: Vec<u32> = Vec::new();
-    for _ in 0..MAX_OUTPUT_TOKENS {
-        let step = i64::try_from(current.len()).map_err(|e| e.to_string())?;
-        let mut inputs: Inputs = vec![
-            (
-                "input_ids".to_string(),
-                onnx::ints(&[1, step], current.clone())?.into(),
-            ),
-            (
-                "attention_mask".to_string(),
-                onnx::ints(
-                    &[1, seen],
-                    vec![1; usize::try_from(seen).map_err(|e| e.to_string())?],
-                )?
-                .into(),
-            ),
-        ];
-        for (name, value) in &past {
-            inputs.push((name.clone(), SessionInputValue::from(value)));
+    let empty = onnx::empty_past(session)?;
+    // The tokenizer could join the text to the end of the start.
+    let shared = all.len() > start_ids.len() && all.starts_with(&start_ids);
+    let begun = match known {
+        Some(known) if shared => Some(known),
+        _ if shared => {
+            let tokens = start_ids.len();
+            let (_, past) = gemma_step(session, &names, start_ids, tokens, &empty)?;
+            Some(GemmaStart {
+                text: start.to_string(),
+                gpu,
+                tokens,
+                past,
+            })
         }
-        let mut result = session.run(inputs).map_err(|e| e.to_string())?;
-        let logits_name = names.first().ok_or("unexpected model")?;
-        let logits = result.get(logits_name).ok_or("unexpected model output")?;
-        let next = onnx::best(onnx::last_logits(logits)?, None).ok_or("unexpected model output")?;
+        _ => None,
+    };
+    let seen = all.len();
+    let (rest, first_past) = match &begun {
+        Some(begun) => (
+            all.get(begun.tokens..).unwrap_or_default().to_vec(),
+            begun.past.as_slice(),
+        ),
+        None => (all, empty.as_slice()),
+    };
+    let (mut next, mut past) = gemma_step(session, &names, rest, seen, first_past)?;
+    let mut produced: Vec<u32> = Vec::new();
+    for count in 1..MAX_OUTPUT_TOKENS {
         if GEMMA_STOP.contains(&next) {
             break;
         }
         produced.push(next);
-        current = vec![i64::from(next)];
-        seen = seen.saturating_add(1);
-        let mut updated = Vec::with_capacity(past.len());
-        for (name, _) in past {
-            let output = name.replacen("past_key_values", "present", 1);
-            let fresh = result.remove(&output).ok_or("unexpected model output")?;
-            updated.push((name, fresh));
-        }
-        past = updated;
+        let ids = vec![i64::from(next)];
+        (next, past) = gemma_step(session, &names, ids, seen.saturating_add(count), &past)?;
     }
+    rt.gemma_start = begun;
     tk.decode(&produced, true)
         .map_err(|_| "the answer doesn't decode".to_string())
 }
@@ -506,10 +573,14 @@ mod tests {
 
     #[test]
     fn the_prompt_names_both_languages() {
-        let prompt = gemma_prompt("Japanese", "ja", "Italian", "it", "こんにちは");
-        assert!(prompt.starts_with(
+        let start = gemma_start("Japanese", "ja", "Italian", "it");
+        assert!(start.starts_with(
             "<start_of_turn>user\nYou are a professional Japanese (ja) to Italian (it)"
         ));
-        assert!(prompt.ends_with("こんにちは<end_of_turn>\n<start_of_turn>model\n"));
+        assert!(start.ends_with("text into Italian:\n\n\n"));
+        assert_eq!(
+            gemma_text("こんにちは"),
+            "こんにちは<end_of_turn>\n<start_of_turn>model\n"
+        );
     }
 }

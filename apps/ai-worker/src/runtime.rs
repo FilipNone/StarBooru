@@ -13,6 +13,7 @@ use starbooru_core::ai_worker::DAMAGED_MODEL;
 use tokenizers::Tokenizer;
 
 use crate::tag::TagList;
+use crate::translate::GemmaStart;
 
 /// More threads than this mostly wait on each other.
 const MAX_THREADS: usize = 8;
@@ -27,6 +28,7 @@ pub struct Runtime {
     sessions: Vec<Loaded>,
     pub tokenizers: HashMap<String, Rc<Tokenizer>>,
     pub tags: HashMap<String, Rc<TagList>>,
+    pub gemma_start: Option<GemmaStart>,
 }
 
 struct Loaded {
@@ -133,6 +135,7 @@ impl Runtime {
             sessions: Vec::new(),
             tokenizers: HashMap::new(),
             tags: HashMap::new(),
+            gemma_start: None,
         })
     }
 
@@ -140,6 +143,7 @@ impl Runtime {
         self.sessions.clear();
         self.tokenizers.clear();
         self.tags.clear();
+        self.gemma_start = None;
     }
 
     /// A file of an installed component.

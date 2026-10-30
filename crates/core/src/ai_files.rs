@@ -19,6 +19,74 @@ pub const TRESNET: &[ModelFile] = &[
     },
 ];
 
+pub const ML_CAFORMER: &[ModelFile] = &[
+    ModelFile {
+        repo: "deepghs/ml-danbooru-onnx",
+        rev: "eb9058324a741f1b90d4db168f6e1d6b6cb7e63d",
+        path: "ml_caformer_m36_dec-5-97527.onnx",
+        sha256: "4ea7aa66df59632c71e036cd9eda9c89e0eaf58bcd39bf9718e63583378cba75",
+        size: 286584124,
+    },
+    ModelFile {
+        repo: "deepghs/ml-danbooru-onnx",
+        rev: "eb9058324a741f1b90d4db168f6e1d6b6cb7e63d",
+        path: "tags.csv",
+        sha256: "59e337ca4cef6bf9571ea65e4281f3798433ba8c00a3ab8f660c7d8f4f5e57a2",
+        size: 368541,
+    },
+];
+
+pub const JOYTAG: &[ModelFile] = &[
+    ModelFile {
+        repo: "fancyfeast/joytag",
+        rev: "6b7f16331a6ccf0fdce37d5a9564715f6e772b22",
+        path: "model.onnx",
+        sha256: "f85b7130e6e549b5b0822537007b7482e8c4c8e754c8d9a5bee08e27050e1097",
+        size: 366116154,
+    },
+    ModelFile {
+        repo: "fancyfeast/joytag",
+        rev: "6b7f16331a6ccf0fdce37d5a9564715f6e772b22",
+        path: "top_tags.txt",
+        sha256: "32b1963a234af848643b2bbf47d8eff1f1c7889406810c57b980f41b2b9e01d0",
+        size: 76752,
+    },
+];
+
+pub const WD_VIT: &[ModelFile] = &[
+    ModelFile {
+        repo: "SmilingWolf/wd-vit-tagger-v3",
+        rev: "7f6b584d0bd3f55c4531f14ba3d4761b2bccdc0f",
+        path: "model.onnx",
+        sha256: "35f23693620b668f4d53fd3c62bf65e40af739bc52c7eb0fbc49258b58d065b6",
+        size: 378536310,
+    },
+    ModelFile {
+        repo: "SmilingWolf/wd-vit-tagger-v3",
+        rev: "7f6b584d0bd3f55c4531f14ba3d4761b2bccdc0f",
+        path: "selected_tags.csv",
+        sha256: "298633d94d0031d2081c0893f29c82eab7f0df00b08483ba8f29d1e979441217",
+        size: 308468,
+    },
+];
+
+pub const WD_CONVNEXT: &[ModelFile] = &[
+    ModelFile {
+        repo: "SmilingWolf/wd-convnext-tagger-v3",
+        rev: "d39e46de298d27340111b64965e20b8185c407e6",
+        path: "model.onnx",
+        sha256: "1b8a7abf13d9b8368267df47501d523789c4aeae66b2296ad98483239dfa32eb",
+        size: 394990732,
+    },
+    ModelFile {
+        repo: "SmilingWolf/wd-convnext-tagger-v3",
+        rev: "d39e46de298d27340111b64965e20b8185c407e6",
+        path: "selected_tags.csv",
+        sha256: "298633d94d0031d2081c0893f29c82eab7f0df00b08483ba8f29d1e979441217",
+        size: 308468,
+    },
+];
+
 pub const WD_SWINV2: &[ModelFile] = &[
     ModelFile {
         repo: "SmilingWolf/wd-swinv2-tagger-v3",
@@ -33,6 +101,40 @@ pub const WD_SWINV2: &[ModelFile] = &[
         path: "selected_tags.csv",
         sha256: "298633d94d0031d2081c0893f29c82eab7f0df00b08483ba8f29d1e979441217",
         size: 308468,
+    },
+];
+
+pub const WD_VIT_LARGE: &[ModelFile] = &[
+    ModelFile {
+        repo: "SmilingWolf/wd-vit-large-tagger-v3",
+        rev: "ae469aa2e4706a3af08d3673cf73a11d1add314c",
+        path: "model.onnx",
+        sha256: "e4c8001b000a6c98f2db10794f7c406daa79873d071d6ca924330fa053fa1845",
+        size: 1260645673,
+    },
+    ModelFile {
+        repo: "SmilingWolf/wd-vit-large-tagger-v3",
+        rev: "ae469aa2e4706a3af08d3673cf73a11d1add314c",
+        path: "selected_tags.csv",
+        sha256: "298633d94d0031d2081c0893f29c82eab7f0df00b08483ba8f29d1e979441217",
+        size: 308468,
+    },
+];
+
+pub const DANBOORU_V1: &[ModelFile] = &[
+    ModelFile {
+        repo: "Redstonexs/danbooru-tagger-v1",
+        rev: "bb6ca90f95ed7bf5691cfe9ef899b0082fd11986",
+        path: "onnx/model_prob.onnx",
+        sha256: "7ab2ffe506eb303a1568ce873681cb353ff2f5e2f20ae95cd5902c721e7cc556",
+        size: 659930532,
+    },
+    ModelFile {
+        repo: "Redstonexs/danbooru-tagger-v1",
+        rev: "bb6ca90f95ed7bf5691cfe9ef899b0082fd11986",
+        path: "selected_tags.csv",
+        sha256: "37282c29f2971e025ca3ba31f00ff131d36a05abac0b0d7c7327c7c5caaa5b0f",
+        size: 867626,
     },
 ];
 
@@ -81,6 +183,37 @@ pub const M2M: &[ModelFile] = &[
         path: "config.json",
         sha256: "1dbdf77ddc7809acd4c54ccf0eab46f840b40174afb1b6f6de8787244e832938",
         size: 908,
+    },
+];
+
+pub const MADLAD: &[ModelFile] = &[
+    ModelFile {
+        repo: "Kutalia/madlad400-3b-mt-onnx",
+        rev: "066656188a5390d1d0af6e824707a12cf28fc309",
+        path: "onnx/encoder_model_quantized.onnx",
+        sha256: "3ab4690aab2174ca29a9ce30cdb8152d9b639606cf2cf48e77112314e064e393",
+        size: 1337248123,
+    },
+    ModelFile {
+        repo: "Kutalia/madlad400-3b-mt-onnx",
+        rev: "066656188a5390d1d0af6e824707a12cf28fc309",
+        path: "onnx/decoder_model_merged_quantized.onnx",
+        sha256: "6bd545f6b67ae96ff21d207c7b630b3df7a97a2379b433e060d2a5ea2a4a9a1d",
+        size: 1870804464,
+    },
+    ModelFile {
+        repo: "Kutalia/madlad400-3b-mt-onnx",
+        rev: "066656188a5390d1d0af6e824707a12cf28fc309",
+        path: "tokenizer.json",
+        sha256: "03f5d7dc88da0cb4bb6b7a1d9d66ee62f5bd339ef0aaaf6e89d74829df5830c0",
+        size: 16613995,
+    },
+    ModelFile {
+        repo: "Kutalia/madlad400-3b-mt-onnx",
+        rev: "066656188a5390d1d0af6e824707a12cf28fc309",
+        path: "config.json",
+        sha256: "a7f208db9a60aad30bdbbdd6beb1de5c92a14e1a4c85ce37de7201ea6c3712d9",
+        size: 850,
     },
 ];
 
