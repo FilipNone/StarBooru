@@ -32,6 +32,7 @@ apps/
   app       starbooru-app: Dioxus UI for web, desktop and Android (features web/desktop/mobile)
 tools/
   vscode-starbooru   VS Code "play button" runner (plain JS: VS Code extensions run on Node; keep it dependency-free)
+  nested-kwin.sh     throwaway headless KWin with a private D-Bus session, for UI tests that need a compositor
 ```
 
 Dependency direction: `core` ← `client` ← `app`, and `core` ← `server`. The server never depends on
@@ -66,6 +67,13 @@ People trust StarBooru with their collection. A malformed upload, a bad query, a
 8. **Privacy.** Collections are private. Never log file contents, tokens or passwords. Network requests from tooling use a generic User-Agent and never carry personal details.
 9. **Assets.** Third-party assets must be permissively licensed and get a row in `ATTRIBUTION.md`. Never commit font files.
 10. **Time goes through `chrono`.**
+11. **UI tests never touch the owner's desktop session.** Anything that needs a compositor, `xdotool` or `import -window root` runs inside `tools/nested-kwin.sh`.
+    - Never start `kwin_wayland` directly, not even with `--virtual`, and never start one whose D-Bus session is the desktop's. A nested KWin on the desktop's bus broke Alt+Tab and Super+Tab everywhere when it exited.
+    - Never stop processes by name (`pkill kwin_wayland`, `pkill -f 'kwin_wayland --virtual'`). Never restart or signal the host compositor.
+    - Don't run commands that change the desktop's shortcuts, such as `kglobalaccel` calls, as part of a test.
+    - If you find a nested KWin already running on the desktop's bus, don't stop it: its exit is what does the damage. Tell the owner.
+
+    The rules and what to check are in `docs/development.md` › Nested KWin.
 
 ## 4. Before you finish a task
 

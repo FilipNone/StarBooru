@@ -19,7 +19,7 @@ Starting a target starts whatever it depends on first. The runner waits until th
 
 The steps below are what it runs, if you prefer a terminal.
 
-The runner is plain JavaScript (Node built-ins only, no build step), because VS Code extensions run on Node. It is the one non-Rust part of the repository.
+The runner is plain JavaScript (Node built-ins only, no build step), because VS Code extensions run on Node. Apart from the test harness in [Nested KWin](#nested-kwin), it is the one non-Rust part of the repository.
 
 ## Run the server
 
@@ -151,3 +151,41 @@ To check a language visually, set `"language": "it"` in the stored preferences o
 3. Drive it with a headless Chromium or Playwright.
 
 Check the sign-in page, the gallery, a post, upload and settings. Do each in light and dark, at 1280px and 390px wide. Use generated test images (for example solid colours made with ImageMagick or Python), never personal photos.
+
+## Nested KWin
+
+The desktop app, real wheel and click events through `xdotool`, and root screenshots need a compositor. Never use the one you are working in. Run the test through `tools/nested-kwin.sh`, which starts a headless KWin and runs your command inside it:
+
+```sh
+tools/nested-kwin.sh -- ./my-test.sh
+tools/nested-kwin.sh --x-display :77=1280x800 --x-display :78=2560x1600 --log kwin.log --timeout 300 -- ./my-test.sh
+```
+
+`--x-display` adds a rootful Xwayland, which `xdotool` and `import -window root` need. The first one becomes `DISPLAY`; address another with `DISPLAY=:78`. The command's exit status is returned. The other options and exit codes are at the top of the script.
+
+Why it exists: a `kwin_wayland --virtual` started directly joins the desktop's D-Bus session. It logs `Failed to register service org.kde.kglobalaccel`, but still registers the same `kwin` shortcut component as the real compositor. When it exited, Alt+Tab and Super+Tab stopped working everywhere: the real component reported `isActive() == false` while keeping its bindings. It also wrote to the real `~/.config`, adding a `Virtual-0` output to `kwinoutputconfig.json` and a tiling section to `kwinrc`.
+
+What the harness does:
+- **Private bus:** KWin and your command run under `dbus-run-session`. Before your command starts, the harness checks that KWin really owns `org.kde.kglobalaccel` on that bus, and aborts if it doesn't.
+- **Temporary settings:** `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME` and `XDG_STATE_HOME` point at a temporary directory that is deleted afterwards.
+- **No host display:** `--virtual` needs none, so `WAYLAND_DISPLAY`, `DISPLAY`, `XAUTHORITY` and `SESSION_MANAGER` are dropped, then set to the nested values.
+- **Refuses collisions:** it won't start on a Wayland socket or X display that already exists.
+- **Scoped cleanup:** on exit, error, timeout or `INT`, `TERM` and `HUP` it stops only processes in its own session or carrying its random id in their environment. If the harness itself is killed with `SIGKILL`, a watchdog stops the tree.
+
+`XDG_RUNTIME_DIR` stays the desktop's, because it only holds the uniquely named socket, and `DBUS_SESSION_BUS_ADDRESS` is only replaced inside the harness. Never export either into a normal shell.
+
+Limits, so keep tests inside them:
+- `HOME` is the real one. A program that writes to a fixed path under it isn't contained, so give browsers an explicit profile, for example `--user-data-dir="$XDG_CACHE_HOME/chromium"`.
+- `$XDG_RUNTIME_DIR/bus` is still reachable. Don't run `systemctl --user` or pass the desktop's bus address inside a test.
+- Test scripts that drive a display should refuse to run outside the harness, so a wrong `DISPLAY` can't send clicks to the real desktop:
+  ```sh
+  [ "${STARBOORU_NESTED_KWIN:-}" = 1 ] || { echo "run this inside tools/nested-kwin.sh" >&2; exit 2; }
+  ```
+
+If you change the harness, check it again, without launching anything on the desktop's bus. All of these are read-only on the desktop's side:
+1. Inside, `DBUS_SESSION_BUS_ADDRESS` differs from the desktop's, and no process of the harness appears in `busctl --user list`.
+2. Before, during and after a run, these are unchanged: the owner of `org.kde.kglobalaccel`, `isActive` and `allShortcutInfos` on `/component/kwin`, and `~/.config/kglobalshortcutsrc`, `kwinrc` and `kwinoutputconfig.json`.
+3. `dbus-monitor --session --profile` shows no calls to `org.kde.kglobalaccel` from the run. Always use `--profile`: without it the capture holds message bodies, including other applications' secrets.
+4. Nothing is left after a normal exit, a failing command, each signal, a timeout, or `SIGKILL` of the harness or of the nested KWin.
+
+A D-Bus check can't prove the physical keys work, so ask the owner to press Alt+Tab and Super+Tab afterwards.
