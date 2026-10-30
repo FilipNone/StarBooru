@@ -298,6 +298,7 @@ pub fn PostView(id: i64, q: String) -> Element {
     let ext = p.mime.rsplit('/').next().unwrap_or("bin").to_owned();
     let alt = p.tags.join(" ");
     let added = p.created_at.format("%Y-%m-%d %H:%M").to_string();
+    let file_date = p.file_date.map(|d| d.format("%Y-%m-%d %H:%M").to_string());
     let dims = match (p.width, p.height) {
         (Some(w), Some(h)) => format!("{w} × {h}"),
         _ => "—".into(),
@@ -448,6 +449,9 @@ pub fn PostView(id: i64, q: String) -> Element {
                             dt { {t!("post-length")} } dd { "{d}" }
                         }
                         dt { {t!("post-type")} } dd { "{p.mime}" }
+                        if let Some(date) = file_date {
+                            dt { {t!("post-file-date")} } dd { "{date}" }
+                        }
                         dt { {t!("post-added")} } dd { "{added}" }
                         if let Some(source) = &p.source {
                             dt { {t!("post-source")} } dd { class: "break", "{source}" }

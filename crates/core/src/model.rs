@@ -279,6 +279,10 @@ pub struct Post {
     pub source: Option<String>,
     pub tags: Vec<String>,
     pub created_at: DateTime<Utc>,
+    /// The date in the file: EXIF for images (its wall clock, marked UTC, as
+    /// EXIF has no time zone), the creation time for videos.
+    #[serde(default)]
+    pub file_date: Option<DateTime<Utc>>,
     pub deleted: bool,
     /// Signed, server-relative URL of the original file.
     pub file_url: String,

@@ -83,6 +83,7 @@ async fn run() -> Result<(), StartupError> {
     let backfill = state.clone();
     tokio::spawn(async move {
         routes::backfill_media(backfill.clone()).await;
+        routes::backfill_file_dates(backfill.clone()).await;
         routes::backfill_hashes(backfill.clone()).await;
         routes::backfill_samples(backfill.clone()).await;
         routes::backfill_meta_tags(backfill.clone()).await;

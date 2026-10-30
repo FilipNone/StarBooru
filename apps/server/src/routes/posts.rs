@@ -8,6 +8,7 @@ use axum::http::StatusCode;
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use sqlx::{FromRow, Postgres, QueryBuilder, Transaction};
+use starbooru_core::filter::SizeField;
 use starbooru_core::query::{FigureTerm, SearchQuery, SortKey};
 use starbooru_core::tag::normalize_tags;
 use starbooru_core::{
@@ -45,6 +46,7 @@ pub(super) struct PostRow {
     source: Option<String>,
     score: i32,
     created_at: DateTime<Utc>,
+    file_date: Option<DateTime<Utc>>,
     deleted_at: Option<DateTime<Utc>>,
     tags: Vec<String>,
     my_vote: i16,
@@ -54,7 +56,7 @@ pub(super) struct PostRow {
 fn post_columns(user_id: i64) -> QueryBuilder<Postgres> {
     let mut qb = QueryBuilder::new(
         "SELECT p.id, p.sha256, p.ext, p.mime, p.kind, p.file_size, p.width, p.height, \
-         p.duration_ms, p.has_thumb, p.has_sample, p.rating, p.source, p.score, p.created_at, p.deleted_at, \
+         p.duration_ms, p.has_thumb, p.has_sample, p.rating, p.source, p.score, p.created_at, p.file_date, p.deleted_at, \
          COALESCE((SELECT array_agg(t.name ORDER BY t.name) FROM tags t \
                    WHERE t.id = ANY(p.tag_ids)), '{}'::text[]) AS tags, \
          COALESCE((SELECT v.value FROM post_votes v \
@@ -140,6 +142,7 @@ pub(super) fn to_post(state: &AppState, row: PostRow) -> Post {
         source: row.source,
         tags: row.tags,
         created_at: row.created_at,
+        file_date: row.file_date,
         deleted: row.deleted_at.is_some(),
         file_url,
         thumb_url,
@@ -264,15 +267,27 @@ pub(super) async fn tag_filter(
 }
 
 /// Sort expression for a key; the id is always the tie-breaker. These match
-/// the partial indexes in migration 0002.
+/// the partial indexes in migrations 0002 and 0024.
 fn sort_column(key: SortKey) -> Option<&'static str> {
     match key {
         SortKey::Id | SortKey::Random => None,
         SortKey::Score => Some("p.score"),
         SortKey::Size => Some("p.file_size"),
         SortKey::Pixels => Some("(p.width::bigint * p.height)"),
+        SortKey::LongSide => Some("GREATEST(p.width, p.height)"),
         SortKey::TagCount => Some("cardinality(p.tag_ids)"),
         SortKey::Updated => Some("p.updated_at"),
+    }
+}
+
+/// A size term's column, in the term's unit. These match the indexes of
+/// migrations 0002 and 0024.
+fn size_column(field: SizeField) -> &'static str {
+    match field {
+        SizeField::Width => "p.width",
+        SizeField::Height => "p.height",
+        SizeField::Pixels => "(p.width::bigint * p.height)",
+        SizeField::Ratio => "(p.width::bigint * 1000 / NULLIF(p.height, 0))",
     }
 }
 
@@ -338,6 +353,40 @@ pub(super) fn push_filters(qb: &mut QueryBuilder<Postgres>, query: &SearchQuery,
         .push_bind(text.clone())
         .push("))");
     }
+    let now = Utc::now();
+    for (dates, negated) in [(&query.dates, false), (&query.exclude_dates, true)] {
+        for date in dates {
+            let (from, to) = date.bounds(now);
+            qb.push(if negated {
+                " AND NOT (TRUE"
+            } else {
+                " AND (TRUE"
+            });
+            if let Some(from) = from {
+                qb.push(" AND COALESCE(p.file_date, p.created_at) >= ")
+                    .push_bind(from);
+            }
+            if let Some(to) = to {
+                qb.push(" AND COALESCE(p.file_date, p.created_at) < ")
+                    .push_bind(to);
+            }
+            qb.push(")");
+        }
+    }
+    for (sizes, negated) in [(&query.sizes, false), (&query.exclude_sizes, true)] {
+        for size in sizes {
+            let column = size_column(size.field);
+            qb.push(" AND (TRUE");
+            if let Some(min) = size.min {
+                qb.push(" AND ").push(column).push(" >= ").push_bind(min);
+            }
+            if let Some(max) = size.max {
+                qb.push(" AND ").push(column).push(" <= ").push_bind(max);
+            }
+            // A post of unknown size isn't known to be in the range.
+            qb.push(if negated { ") IS NOT TRUE" } else { ")" });
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -386,7 +435,7 @@ pub async fn search(
         qb.push(" ORDER BY ");
         if let Some(column) = sort_column(query.order.key) {
             qb.push(column).push(dir);
-            if query.order.key == SortKey::Pixels {
+            if matches!(query.order.key, SortKey::Pixels | SortKey::LongSide) {
                 qb.push(" NULLS LAST");
             }
             qb.push(", ");
@@ -426,6 +475,8 @@ fn step_column(key: SortKey, descending: bool) -> Option<&'static str> {
         (SortKey::Pixels, false) => {
             Some("COALESCE(p.width::bigint * p.height, 9223372036854775807)")
         }
+        (SortKey::LongSide, true) => Some("COALESCE(GREATEST(p.width, p.height), -1)"),
+        (SortKey::LongSide, false) => Some("COALESCE(GREATEST(p.width, p.height), 2147483647)"),
         _ => sort_column(key),
     }
 }
@@ -865,8 +916,10 @@ async fn insert_post(
     check_quota(&mut *tx, user_id, file_size).await?;
     let id: i64 = sqlx::query_scalar(
         "INSERT INTO posts (sha256, ext, mime, kind, file_size, width, height, duration_ms, \
-         has_thumb, rating, source, uploader_id, phash, pcolor, has_sample) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING id",
+         has_thumb, rating, source, uploader_id, phash, pcolor, has_sample, file_date, \
+         file_date_scanned) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, true) \
+         RETURNING id",
     )
     .bind(info.sha256.as_slice())
     .bind(info.ext)
@@ -883,6 +936,7 @@ async fn insert_post(
     .bind(info.print.map(|p| p.hash_db()))
     .bind(info.print.map(|p| p.color_db()))
     .bind(info.has_sample)
+    .bind(info.file_date)
     .fetch_one(&mut *tx)
     .await
     .map_err(|e| match AppError::from(e) {
@@ -977,6 +1031,68 @@ pub async fn backfill_media(state: AppState) {
     }
     if done > 0 {
         tracing::info!("media backfill: updated {done} posts");
+    }
+}
+
+/// At startup: the date in the file, for posts not looked at yet (uploaded
+/// before this existed). Videos wait for a server with ffprobe. A post that
+/// gains a date hasn't been edited, so `updated_at` stays.
+pub async fn backfill_file_dates(state: AppState) {
+    let mut after = 0i64;
+    let mut found = 0u64;
+    loop {
+        let batch: Result<Vec<BackfillRow>, _> = sqlx::query_as(
+            "SELECT id, sha256, ext, kind FROM posts \
+             WHERE NOT file_date_scanned AND (kind <> $1 OR $2) AND id > $3 \
+             ORDER BY id LIMIT 200",
+        )
+        .bind(MediaKind::Video.to_db())
+        .bind(state.storage.has_tools())
+        .bind(after)
+        .fetch_all(&state.db)
+        .await;
+        let batch = match batch {
+            Ok(b) if !b.is_empty() => b,
+            Ok(_) => break,
+            Err(e) => {
+                warn!("file date backfill stopped: {e}");
+                return;
+            }
+        };
+        for (id, sha, ext, kind) in batch {
+            after = id;
+            let kind = MediaKind::from_db(kind).unwrap_or(MediaKind::Image);
+            let sha_hex = hex::encode(sha);
+            let st = state.clone();
+            let date =
+                tokio::task::spawn_blocking(move || st.storage.file_date(&sha_hex, &ext, kind))
+                    .await;
+            let date = match date {
+                Ok(Ok(d)) => d,
+                Ok(Err(e)) => {
+                    warn!("file date backfill: post {id}: {e}");
+                    continue;
+                }
+                Err(e) => {
+                    warn!("file date backfill: post {id}: {e}");
+                    continue;
+                }
+            };
+            let updated = sqlx::query(
+                "UPDATE posts SET file_date = $2, file_date_scanned = true WHERE id = $1",
+            )
+            .bind(id)
+            .bind(date)
+            .execute(&state.db)
+            .await;
+            match updated {
+                Ok(_) => found += u64::from(date.is_some()),
+                Err(e) => warn!("file date backfill: post {id}: {e}"),
+            }
+        }
+    }
+    if found > 0 {
+        tracing::info!("file date backfill: found {found} dates");
     }
 }
 
@@ -1505,6 +1621,283 @@ mod tests {
             .iter()
             .map(|p| p["id"].as_i64().unwrap())
             .collect()
+    }
+
+    /// Uploads a file and returns its post.
+    async fn upload_file(app: &testing::TestApp, token: &str, bytes: &[u8]) -> serde_json::Value {
+        let r = app.upload(token, bytes, &[("tags", "")]).await;
+        assert_eq!(r.status, 200, "{:?}", r.json());
+        r.json()
+    }
+
+    #[tokio::test]
+    async fn filters_by_size() {
+        let Some(app) = testing::app().await else {
+            return;
+        };
+        let t = app.register("admin").await;
+        let mut ids = Vec::new();
+        for (seed, (w, h)) in [(2000, 1000), (600, 1200), (800, 800), (64, 36)]
+            .into_iter()
+            .enumerate()
+        {
+            let post = upload_file(&app, &t, &testing::png(w, h, seed as u32)).await;
+            ids.push(post["id"].as_i64().unwrap());
+        }
+        let &[wide, tall, square, small] = ids.as_slice() else {
+            panic!("four posts");
+        };
+        // A post whose size the server couldn't read.
+        let unknown = upload_file(&app, &t, &testing::png(10, 10, 9)).await["id"]
+            .as_i64()
+            .unwrap();
+        sqlx::query("UPDATE posts SET width = NULL, height = NULL WHERE id = $1")
+            .bind(unknown)
+            .execute(app.db())
+            .await
+            .unwrap();
+
+        for (q, expected) in [
+            ("width:%3E1000", vec![wide]),
+            ("width:2000", vec![wide]),
+            ("width:%3E=800", vec![square, wide]),
+            ("width:%3C800", vec![small, tall]),
+            ("width:600..800", vec![square, tall]),
+            ("height:1200", vec![tall]),
+            ("height:..800", vec![small, square]),
+            ("mpixels:2", vec![wide]),
+            ("mpixels:%3E0.7", vec![tall, wide]),
+            ("mpixels:0.72", vec![tall]),
+            ("ratio:2", vec![wide]),
+            ("ratio:1", vec![square]),
+            ("ratio:0.5", vec![tall]),
+            ("ratio:16:9", vec![small]),
+            ("ratio:%3E1", vec![small, wide]),
+            ("ratio:%3C1", vec![tall]),
+            ("width:%3E500+height:%3E1000", vec![tall]),
+            ("width:9999", vec![]),
+            // Excluding keeps posts of unknown size.
+            ("-width:%3E1000", vec![unknown, small, square, tall]),
+            ("-ratio:%3E=1", vec![unknown, tall]),
+        ] {
+            assert_eq!(order_of(&app, &t, q).await, expected, "{q}");
+        }
+
+        // A bad value says so, rather than searching a tag.
+        for q in ["width:wide", "ratio:1:0", "mpixels:lots", "date:soon"] {
+            let r = app.get(&format!("/api/v1/posts?q={q}"), &t).await;
+            assert_eq!(r.status, 400, "{q}");
+            assert!(r.json()["message"].as_str().is_some(), "{q}");
+        }
+
+        // Longest side first, unknown sizes last, in either direction.
+        assert_eq!(
+            order_of(&app, &t, "order:longside").await,
+            [wide, tall, square, small, unknown]
+        );
+        assert_eq!(
+            order_of(&app, &t, "order:longside_asc").await,
+            [small, square, tall, wide, unknown]
+        );
+        assert_eq!(
+            order_of(&app, &t, "order:mpixels").await,
+            [wide, tall, square, small, unknown]
+        );
+        for (q, id, prev, next) in [
+            ("order:longside", tall, Some(wide), Some(square)),
+            ("order:longside", small, Some(square), Some(unknown)),
+            ("order:longside", unknown, Some(small), None),
+            ("order:longside_asc", wide, Some(tall), Some(unknown)),
+            ("order:longside_asc", unknown, Some(wide), None),
+        ] {
+            let n = app
+                .get(&format!("/api/v1/posts/{id}/neighbors?q={q}"), &t)
+                .await
+                .json();
+            assert_eq!(n["prev"].as_i64(), prev, "{q} {id}");
+            assert_eq!(n["next"].as_i64(), next, "{q} {id}");
+        }
+        app.finish().await;
+    }
+
+    #[tokio::test]
+    async fn filters_by_date() {
+        let Some(app) = testing::app().await else {
+            return;
+        };
+        let t = app.register("admin").await;
+        let photo =
+            testing::jpeg_with_exif(32, 32, 1, "2021:01:01 00:00:00", "2019:05:06 23:30:00");
+        let old = upload_file(&app, &t, &photo).await;
+        assert_eq!(old["file_date"], "2019-05-06T23:30:00Z");
+        let old = old["id"].as_i64().unwrap();
+        // No date in the file: the upload date counts.
+        let fresh = upload_file(&app, &t, &testing::png(32, 32, 2)).await;
+        assert!(fresh["file_date"].is_null());
+        let fresh = fresh["id"].as_i64().unwrap();
+        let year = chrono::Utc::now().format("%Y").to_string();
+
+        for (q, expected) in [
+            ("date:2019".to_owned(), vec![old]),
+            ("date:2019-05".to_owned(), vec![old]),
+            ("date:2019-05-06".to_owned(), vec![old]),
+            ("date:2019-05-07".to_owned(), vec![]),
+            ("date:2021".to_owned(), vec![]),
+            ("date:2018..2019".to_owned(), vec![old]),
+            ("date:2020..".to_owned(), vec![fresh]),
+            ("date:..2019-04".to_owned(), vec![]),
+            ("date:%3E2019".to_owned(), vec![fresh]),
+            ("date:%3E=2019".to_owned(), vec![fresh, old]),
+            ("date:%3C2020".to_owned(), vec![old]),
+            ("date:%3C=2018".to_owned(), vec![]),
+            ("date:%3E30d".to_owned(), vec![old]),
+            ("date:%3C1d".to_owned(), vec![fresh]),
+            ("date:7d".to_owned(), vec![fresh]),
+            (format!("date:{year}"), vec![fresh]),
+            ("-date:2019".to_owned(), vec![fresh]),
+            ("-date:%3E30d".to_owned(), vec![fresh]),
+            ("date:2019+-date:2019-05".to_owned(), vec![]),
+        ] {
+            assert_eq!(order_of(&app, &t, &q).await, expected, "{q}");
+        }
+        app.finish().await;
+    }
+
+    #[tokio::test]
+    async fn backfill_reads_file_dates() {
+        let Some(app) = testing::app().await else {
+            return;
+        };
+        let t = app.register("admin").await;
+        let photo =
+            testing::jpeg_with_exif(32, 32, 1, "2021:01:01 00:00:00", "2019:05:06 23:30:00");
+        let dated = upload_file(&app, &t, &photo).await["id"].as_i64().unwrap();
+        let plain = upload_file(&app, &t, &testing::png(32, 32, 2)).await["id"]
+            .as_i64()
+            .unwrap();
+        // Scanned already: left alone, even though the file has a date.
+        let done = testing::jpeg_with_exif(32, 32, 3, "2021:01:01 00:00:00", "2018:01:01 00:00:00");
+        let done = upload_file(&app, &t, &done).await["id"].as_i64().unwrap();
+        let binned =
+            testing::jpeg_with_exif(32, 32, 4, "2021:01:01 00:00:00", "2017:01:01 00:00:00");
+        let binned = upload_file(&app, &t, &binned).await["id"].as_i64().unwrap();
+        // The file of this one is gone.
+        let lost = upload_file(&app, &t, &testing::png(32, 32, 5)).await;
+        let lost_id = lost["id"].as_i64().unwrap();
+        let path = app
+            .state
+            .storage
+            .original_path(lost["sha256"].as_str().unwrap(), "png")
+            .unwrap();
+        std::fs::remove_file(path).unwrap();
+        sqlx::query(
+            "UPDATE posts SET file_date = NULL, file_date_scanned = false, \
+             updated_at = '2020-01-01T00:00:00Z' WHERE id = ANY($1)",
+        )
+        .bind(vec![dated, plain, binned, lost_id])
+        .execute(app.db())
+        .await
+        .unwrap();
+        sqlx::query("UPDATE posts SET deleted_at = now() WHERE id = $1")
+            .bind(binned)
+            .execute(app.db())
+            .await
+            .unwrap();
+        sqlx::query("UPDATE posts SET file_date = NULL WHERE id = $1")
+            .bind(done)
+            .execute(app.db())
+            .await
+            .unwrap();
+
+        super::backfill_file_dates(app.state.clone()).await;
+
+        type Row = (
+            Option<chrono::DateTime<chrono::Utc>>,
+            bool,
+            chrono::DateTime<chrono::Utc>,
+        );
+        let row = |id: i64| {
+            let db = app.db().clone();
+            async move {
+                sqlx::query_as::<_, Row>(
+                    "SELECT file_date, file_date_scanned, updated_at FROM posts WHERE id = $1",
+                )
+                .bind(id)
+                .fetch_one(&db)
+                .await
+                .unwrap()
+            }
+        };
+        let (date, scanned, updated) = row(dated).await;
+        assert_eq!(date, "2019-05-06T23:30:00Z".parse().ok());
+        assert!(scanned);
+        // It isn't an edit.
+        assert_eq!(
+            updated,
+            "2020-01-01T00:00:00Z"
+                .parse::<chrono::DateTime<chrono::Utc>>()
+                .unwrap()
+        );
+        assert_eq!(row(binned).await.0, "2017-01-01T00:00:00Z".parse().ok());
+        assert_eq!(row(done).await.0, None);
+        for id in [plain, lost_id] {
+            let (date, scanned, _) = row(id).await;
+            assert_eq!(date, None);
+            assert!(scanned);
+        }
+        assert_eq!(order_of(&app, &t, "date:2019").await, [dated]);
+        app.finish().await;
+    }
+
+    #[tokio::test]
+    async fn backfill_reads_video_dates_only_with_ffprobe() {
+        let Some(tools) = crate::probe::tests::tools() else {
+            return;
+        };
+        let Some(app) = testing::app().await else {
+            return;
+        };
+        let t = app.register("admin").await;
+        let src = tempfile::tempdir().unwrap();
+        let Some(clip) = crate::probe::tests::generate(
+            src.path(),
+            "clip.mp4",
+            "testsrc=duration=1:size=64x48:rate=10",
+            &[
+                "-pix_fmt",
+                "yuv420p",
+                "-metadata",
+                "creation_time=2021-05-06T07:08:09Z",
+            ],
+        ) else {
+            return app.finish().await;
+        };
+        // The test app has no ffmpeg, so the upload can't read the date.
+        let id = upload_file(&app, &t, &clip).await["id"].as_i64().unwrap();
+        sqlx::query("UPDATE posts SET file_date_scanned = false WHERE id = $1")
+            .bind(id)
+            .execute(app.db())
+            .await
+            .unwrap();
+        super::backfill_file_dates(app.state.clone()).await;
+        let scanned: bool = sqlx::query_scalar("SELECT file_date_scanned FROM posts WHERE id = $1")
+            .bind(id)
+            .fetch_one(app.db())
+            .await
+            .unwrap();
+        assert!(!scanned, "waits for a server with ffprobe");
+
+        let mut config = app.state.config.clone();
+        config.tools = Some(tools.clone());
+        let storage = crate::storage::Storage::open(&config.data_dir)
+            .await
+            .unwrap()
+            .with_tools(Some(tools));
+        let with_ffmpeg = crate::state::AppState::new(config, app.state.db.clone(), storage);
+        super::backfill_file_dates(with_ffmpeg).await;
+        let p = app.get(&format!("/api/v1/posts/{id}"), &t).await.json();
+        assert_eq!(p["file_date"], "2021-05-06T07:08:09Z");
+        app.finish().await;
     }
 
     #[tokio::test]

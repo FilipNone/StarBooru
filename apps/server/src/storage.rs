@@ -6,9 +6,10 @@
 //! <data>/sample/ab/cd/<sha256>.jpg
 //! ```
 
-use std::io::Cursor;
+use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 
+use chrono::{DateTime, Utc};
 use image::codecs::jpeg::JpegEncoder;
 use image::imageops::FilterType;
 use image::metadata::Orientation;
@@ -23,6 +24,9 @@ use crate::probe::Tools;
 use crate::similar::Fingerprint;
 
 pub const THUMB_SIZE: u32 = 512;
+/// How much of a stored image is read for its EXIF date, which sits near
+/// the start.
+const MAX_EXIF_READ: u64 = 64 << 20;
 const THUMB_EXT: &str = "jpg";
 const THUMB_QUALITY: u8 = 85;
 const SAMPLE_EXT: &str = "jpg";
@@ -79,6 +83,8 @@ pub struct Ingested {
     /// Whether a sample was made; `None` when samples are off, so they
     /// can be made later.
     pub has_sample: Option<bool>,
+    /// The date the file carries.
+    pub file_date: Option<DateTime<Utc>>,
 }
 
 /// What ffmpeg found in a file `image` can't decode.
@@ -90,6 +96,7 @@ pub struct Derived {
     pub has_audio: Option<bool>,
     pub has_thumb: bool,
     pub print: Option<Fingerprint>,
+    pub file_date: Option<DateTime<Utc>>,
 }
 
 /// Accepted formats: (mime, ext, kind, decodable by `image` for thumbnails).
@@ -107,6 +114,27 @@ const FORMATS: &[(&str, &str, MediaKind, bool)] = &[
     ("video/x-matroska", "mkv", MediaKind::Video, false),
     ("video/quicktime", "mov", MediaKind::Video, false),
 ];
+
+/// The date in a file's EXIF data: when it was taken or, failing that,
+/// digitised or last changed.
+fn exif_date(bytes: &[u8]) -> Option<DateTime<Utc>> {
+    let exif = exif::Reader::new()
+        .read_from_container(&mut Cursor::new(bytes))
+        .ok()?;
+    [
+        exif::Tag::DateTimeOriginal,
+        exif::Tag::DateTimeDigitized,
+        exif::Tag::DateTime,
+    ]
+    .into_iter()
+    .find_map(|tag| {
+        let field = exif.get_field(tag, exif::In::PRIMARY)?;
+        let exif::Value::Ascii(parts) = &field.value else {
+            return None;
+        };
+        starbooru_core::filter::exif_date(std::str::from_utf8(parts.first()?).ok()?)
+    })
+}
 
 pub struct Storage {
     root: PathBuf,
@@ -253,10 +281,16 @@ impl Storage {
             has_audio: None,
             has_thumb: thumb.is_some(),
             print: thumb.as_deref().and_then(fingerprint_jpeg),
+            file_date: None,
         };
         if !decodable {
             derived = self.derive(&sha_hex, ext, kind)?;
         }
+        let file_date = match kind {
+            MediaKind::Image => exif_date(bytes),
+            MediaKind::Video => derived.file_date,
+            MediaKind::Animation => None,
+        };
 
         Ok(Ingested {
             sha256,
@@ -270,6 +304,7 @@ impl Storage {
             has_thumb: derived.has_thumb,
             print: derived.print,
             has_sample,
+            file_date,
         })
     }
 
@@ -335,7 +370,42 @@ impl Storage {
             has_audio: probed.has_audio,
             has_thumb: thumb.is_some(),
             print: thumb.as_deref().and_then(fingerprint_jpeg),
+            file_date: probed.file_date,
         })
+    }
+
+    /// The date a stored original carries; `None` when it has none, is gone
+    /// or can't be read as media. Only disk errors fail. Videos need the
+    /// tools. Call from a blocking thread.
+    pub fn file_date(
+        &self,
+        sha_hex: &str,
+        ext: &str,
+        kind: MediaKind,
+    ) -> AppResult<Option<DateTime<Utc>>> {
+        let original = self
+            .original_path(sha_hex, ext)
+            .ok_or_else(|| AppError::internal("bad storage path"))?;
+        match kind {
+            MediaKind::Animation => Ok(None),
+            MediaKind::Video => Ok(self
+                .tools
+                .as_ref()
+                .and_then(|tools| tools.metadata(&original))
+                .and_then(|p| p.file_date)),
+            MediaKind::Image => {
+                let file = match std::fs::File::open(&original) {
+                    Ok(file) => file,
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+                    Err(e) => return Err(AppError::internal(e)),
+                };
+                let mut bytes = Vec::new();
+                file.take(MAX_EXIF_READ)
+                    .read_to_end(&mut bytes)
+                    .map_err(AppError::internal)?;
+                Ok(exif_date(&bytes))
+            }
+        }
     }
 
     /// Whether a stored original has an audio stream; `None` without the
@@ -737,6 +807,34 @@ mod tests {
         let mut png = png_bytes(4, 4);
         png.truncate(40);
         assert!(matches!(storage.ingest(&png), Err(AppError::BadRequest(_))));
+    }
+
+    #[test]
+    fn reads_exif_dates() {
+        let date = |s: &str| s.parse::<DateTime<Utc>>().ok();
+        let good = "2019:05:06 07:08:09";
+        let changed = "2020:01:02 03:04:05";
+        let both = crate::testing::jpeg_with_exif(16, 16, 1, changed, good);
+        assert_eq!(exif_date(&both), date("2019-05-06T07:08:09Z"));
+        // A camera with an unset clock: the next date in the file.
+        let blank = crate::testing::jpeg_with_exif(16, 16, 1, changed, "0000:00:00 00:00:00");
+        assert_eq!(exif_date(&blank), date("2020-01-02T03:04:05Z"));
+        let none =
+            crate::testing::jpeg_with_exif(16, 16, 1, "    :  :     :  :  ", "nonsense value here");
+        assert_eq!(exif_date(&none), None);
+        assert_eq!(exif_date(&crate::testing::png(16, 16, 1)), None);
+        assert_eq!(exif_date(b""), None);
+        assert_eq!(exif_date(b"not an image"), None);
+        // Cut off anywhere, the file is only missing its date.
+        for end in 0..both.len() {
+            let _ = exif_date(&both[..end]);
+        }
+        // Damaged anywhere in its EXIF block, too.
+        for at in 0..160.min(both.len()) {
+            let mut bad = both.clone();
+            bad[at] ^= 0xff;
+            let _ = exif_date(&bad);
+        }
     }
 
     #[test]

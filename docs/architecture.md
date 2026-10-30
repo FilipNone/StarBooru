@@ -64,7 +64,7 @@ PostgreSQL schema: `apps/server/migrations/`.
 | `post_translations` | Text drawn over an image, per post and language: blocks (box, original, translation) as JSONB, and the model that made them |
 | `sessions` | The SHA-256 of each bearer token (`sb_<64 hex>`) and its expiry, 90 days. The plain token is never stored. Also an `id` for the settings page, `last_used_at` (refreshed at most every 5 minutes) and `client`, a short description like "Firefox on Linux" (`starbooru_core::agent`); the raw User-Agent is not kept. Native apps send `StarBooru-app/<version> (<os>)`. |
 | `tags` | Normalised name, category (general / artist / character / copyright / meta), `parent_id` (the tag tree; loops are refused) and a `post_count` kept in step inside the same transaction as post edits. `server_settings.vocab_version` records which starter vocabulary (`starbooru_core::vocab`) was seeded at startup. |
-| `posts` | One per file: `sha256` (unique, so duplicates are refused), format, size, dimensions, rating, source, score, `tag_ids BIGINT[]`, `deleted_at` (soft delete), `phash`/`pcolor`, the duplicate finder's fingerprint of the thumbnail, and `meta_tagged_at`, when the automatic meta tags were added (NULL: not yet) |
+| `posts` | One per file: `sha256` (unique, so duplicates are refused), format, size, dimensions, rating, source, score, `tag_ids BIGINT[]`, `deleted_at` (soft delete), `phash`/`pcolor`, the duplicate finder's fingerprint of the thumbnail, `file_date`, the date in the file (`file_date_scanned` says it was looked at), `meta_tagged_at`, when the automatic meta tags were added (NULL: not yet), and `meta_version`, the version of their rules the post has had |
 | `figures` | The people in a post, in order (`position`), with a `kind`: girl, boy or other. Replaced as a whole by `PUT /posts/{id}/figures`. |
 | `figure_tags` | A figure's tags with their `slot` (0 character, 1 cosplay, 2–12 head to other). These tags are on `posts.tag_ids` too; this table answers "one figure has all of these" and the viewer. |
 | `duplicate_dismissals` | Pairs of posts (`post_a < post_b`) marked as not duplicates |
@@ -90,8 +90,23 @@ Like Danbooru, the server tags each post with facts it reads from the file, in t
 | `video` | videos |
 | `sound` | videos with an audio stream (ffprobe; unknown without it) |
 | `long_video` | videos of 30 s or more |
+| `hd` | long side ≥ 1280 and short side ≥ 480 |
+| `full_hd` | long side ≥ 1920 and short side ≥ 720 |
+| `4k` | long side ≥ 3840 and short side ≥ 1440 |
+| `8k` | long side ≥ 7680 and short side ≥ 2880 |
+| `horizontal_image` | wider than tall, by more than 1% |
+| `vertical_image` | taller than wide, by more than 1% |
+| `square_image` | the sides within 1% of each other |
 
-Every new post goes through `insert_post` (uploads, URL and booru imports, editor copies), which adds them in the same transaction as the post's own tags: a missing tag is made in `meta`, an existing one keeps its category, aliases and implications apply, `post_count` is kept in step. `posts.meta_tagged_at` is set then, so a post is tagged only once and a tag someone removes stays removed. At startup a backfill tags live posts with `meta_tagged_at IS NULL` (older posts, or ones uploaded while this was off), probing videos for audio. `STARBOORU_AUTO_TAGS` or the admin toggle turns both off.
+Every new post goes through `insert_post` (uploads, URL and booru imports, editor copies), which adds them in the same transaction as the post's own tags: a missing tag is made in `meta`, an existing one keeps its category, aliases and implications apply, `post_count` is kept in step. Only the highest of `hd`, `full_hd`, `4k` and `8k` applies. Their short sides are two thirds of the standard's, so cropped widescreen still counts. The names `landscape` and `portrait` are left alone, as Danbooru uses them for what a picture shows.
+
+`posts.meta_version` is set then, so a post gets each rule only once and a tag someone removes stays removed. A new rule raises `autotag::META_VERSION`, and `autotag::added_in` says which version each tag came with. At startup a backfill brings live posts behind the current version up to date (older posts, or ones uploaded while this was off): a post at version 1 gets only the newer tags, and only a post at version 0 is probed for audio. New rules reaching a post don't change its `updated_at`, so they don't reorder `order:updated`. `STARBOORU_AUTO_TAGS` or the admin toggle turns both off.
+
+### File dates
+
+`posts.file_date` is the date in the file: EXIF `DateTimeOriginal`, then `DateTimeDigitized`, then `DateTime` for images, and the container's `creation_time` from ffprobe for videos. GIFs have none. EXIF has no time zone, so its wall clock is stored as if it were UTC: `date:2024-03-15` matches the day the photo shows. Clocks that were never set don't count (a year before 1826 in EXIF, before 1990 in a video). An editor copy keeps the original's date, as editing drops the metadata.
+
+Uploads read the date at ingest. A startup backfill (`backfill_file_dates`) reads it once for older posts, recycle bin included, and doesn't change `updated_at`. Videos wait for a server with ffprobe. `date:` compares `COALESCE(file_date, created_at)`, which has its own partial index.
 
 ### Search
 

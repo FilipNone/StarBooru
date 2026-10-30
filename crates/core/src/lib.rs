@@ -9,6 +9,7 @@ pub mod ai;
 pub mod autotag;
 pub mod edit;
 pub mod figure;
+pub mod filter;
 pub mod keys;
 pub mod local_ai;
 pub mod model;
@@ -31,7 +32,7 @@ pub use ai::{
     TagSuggestions, TranslateRequest, Translation, clean_ai_settings, clean_language,
     clean_translation, parse_suggestions, translate_prompt,
 };
-pub use autotag::{META_TAGS, MediaFacts, meta_tags};
+pub use autotag::{META_TAGS, META_VERSION, MediaFacts, meta_tags, meta_tags_since};
 pub use edit::{Crop, EditError, EditKind, MediaEdit, Trim, edit_kind};
 pub use figure::{
     COSPLAY_TAG, Figure, FigureError, FigureKind, FiguresUpdate, MAX_FIGURE_TAGS, MAX_FIGURES,

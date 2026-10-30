@@ -102,6 +102,15 @@ pub async fn edit(
         &post.tags,
     )
     .await?;
+    // An edited image drops its metadata; it still dates from the original.
+    sqlx::query(
+        "UPDATE posts SET file_date = COALESCE(file_date, \
+         (SELECT o.file_date FROM posts o WHERE o.id = $2)) WHERE id = $1",
+    )
+    .bind(copy.id)
+    .bind(id)
+    .execute(&state.db)
+    .await?;
     let figures = super::figures::load(&state.db, id).await?;
     if !figures.is_empty() {
         let mut tx = state.db.begin().await?;
@@ -121,6 +130,30 @@ mod tests {
     use serde_json::json;
 
     use crate::testing;
+
+    #[tokio::test]
+    async fn an_edit_keeps_the_file_date() {
+        let Some(app) = testing::app().await else {
+            return;
+        };
+        let t = app.register("admin").await;
+        let photo =
+            testing::jpeg_with_exif(32, 32, 1, "2021:01:01 00:00:00", "2019:05:06 23:30:00");
+        let r = app.upload(&t, &photo, &[("tags", "cat")]).await.json();
+        let id = r["id"].as_i64().unwrap();
+        let r = app
+            .call(
+                Method::POST,
+                &format!("/api/v1/posts/{id}/edit"),
+                Some(&t),
+                Some(json!({ "rotate": 90 })),
+            )
+            .await;
+        assert_eq!(r.status, 200, "{:?}", r.json());
+        assert_ne!(r.json()["id"].as_i64(), Some(id));
+        assert_eq!(r.json()["file_date"], "2019-05-06T23:30:00Z");
+        app.finish().await;
+    }
 
     #[tokio::test]
     async fn edits_make_a_new_post() {

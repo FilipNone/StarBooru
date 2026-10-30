@@ -1,10 +1,11 @@
 //! Automatic metadata tags (`highres`, `video`, `sound`, ...; the rules are
-//! in `starbooru_core::autotag`). Each post is tagged once, at upload or by
-//! the startup backfill, and `posts.meta_tagged_at` remembers it, so a tag
-//! someone removes doesn't come back.
+//! in `starbooru_core::autotag`). Each post gets them once, at upload or by
+//! the startup backfill, and `posts.meta_version` remembers which rules it
+//! has had: new rules add only their new tags, so a tag someone removes
+//! doesn't come back.
 
 use sqlx::{Postgres, Transaction};
-use starbooru_core::{MediaFacts, MediaKind, TagCategory, meta_tags};
+use starbooru_core::{META_VERSION, MediaFacts, MediaKind, TagCategory, meta_tags_since};
 use tracing::warn;
 
 use crate::error::AppResult;
@@ -29,25 +30,29 @@ pub(super) fn facts(
     }
 }
 
-/// Adds the metadata tags for `facts` to a live post that hasn't had them
-/// yet, and marks it tagged. New tags are made in the `meta` category; a
-/// tag that exists keeps its category, aliases and implications apply.
+/// Adds the metadata tags for `facts` that a live post hasn't had yet, and
+/// marks it up to date. New tags are made in the `meta` category; a tag that
+/// exists keeps its category, aliases and implications apply. New rules
+/// reaching an older post aren't an edit, so `updated_at` stays.
 pub(super) async fn tag_post(
     tx: &mut Transaction<'_, Postgres>,
     post_id: i64,
     facts: &MediaFacts,
 ) -> AppResult<()> {
-    let row: Option<(Vec<i64>, bool)> = sqlx::query_as(
-        "SELECT tag_ids, meta_tagged_at IS NOT NULL FROM posts \
+    let row: Option<(Vec<i64>, i16)> = sqlx::query_as(
+        "SELECT tag_ids, meta_version FROM posts \
          WHERE id = $1 AND deleted_at IS NULL FOR UPDATE",
     )
     .bind(post_id)
     .fetch_optional(&mut **tx)
     .await?;
-    let Some((old_ids, false)) = row else {
+    let Some((old_ids, version)) = row.filter(|(_, version)| *version < META_VERSION) else {
         return Ok(());
     };
-    let names: Vec<String> = meta_tags(facts).into_iter().map(String::from).collect();
+    let names: Vec<String> = meta_tags_since(facts, version)
+        .into_iter()
+        .map(String::from)
+        .collect();
     let mut added = Vec::new();
     if !names.is_empty() {
         sqlx::query(
@@ -65,18 +70,19 @@ pub(super) async fn tag_post(
     let mut new_ids = old_ids;
     new_ids.extend_from_slice(&added);
     sqlx::query(
-        "UPDATE posts SET tag_ids = $2, meta_tagged_at = now(), \
+        "UPDATE posts SET tag_ids = $2, meta_tagged_at = now(), meta_version = $4, \
          updated_at = CASE WHEN $3 THEN now() ELSE updated_at END WHERE id = $1",
     )
     .bind(post_id)
     .bind(&new_ids)
-    .bind(!added.is_empty())
+    .bind(!added.is_empty() && version == 0)
+    .bind(META_VERSION)
     .execute(&mut **tx)
     .await?;
     super::posts::adjust_counts(tx, &added, 1).await
 }
 
-/// id, sha256, ext, kind, width, height, duration_ms.
+/// id, sha256, ext, kind, width, height, duration_ms, meta_version.
 type UntaggedRow = (
     i64,
     Vec<u8>,
@@ -85,10 +91,12 @@ type UntaggedRow = (
     Option<i32>,
     Option<i32>,
     Option<i64>,
+    i16,
 );
 
-/// At startup: metadata tags for live posts never tagged (uploaded before
-/// this existed, or while it was off). Does nothing while it is off.
+/// At startup: metadata tags for live posts behind the current rules
+/// (uploaded before they existed, or while this was off). Does nothing
+/// while it is off.
 pub async fn backfill_meta_tags(state: AppState) {
     match settings::current(&state).await {
         Ok(s) if s.auto_meta_tags => {}
@@ -102,10 +110,11 @@ pub async fn backfill_meta_tags(state: AppState) {
     let mut done = 0u64;
     loop {
         let batch: Result<Vec<UntaggedRow>, _> = sqlx::query_as(
-            "SELECT id, sha256, ext, kind, width, height, duration_ms FROM posts \
-             WHERE meta_tagged_at IS NULL AND deleted_at IS NULL AND id > $1 \
+            "SELECT id, sha256, ext, kind, width, height, duration_ms, meta_version FROM posts \
+             WHERE meta_version < $1 AND deleted_at IS NULL AND id > $2 \
              ORDER BY id LIMIT 100",
         )
+        .bind(META_VERSION)
         .bind(after)
         .fetch_all(&state.db)
         .await;
@@ -117,10 +126,11 @@ pub async fn backfill_meta_tags(state: AppState) {
                 return;
             }
         };
-        for (id, sha, ext, kind, width, height, duration_ms) in batch {
+        for (id, sha, ext, kind, width, height, duration_ms, version) in batch {
             after = id;
             let kind = MediaKind::from_db(kind).unwrap_or(MediaKind::Image);
-            let has_audio = if kind == MediaKind::Video {
+            // Only the first rules have a tag that needs the audio.
+            let has_audio = if kind == MediaKind::Video && version == 0 {
                 let st = state.clone();
                 let sha_hex = hex::encode(sha);
                 tokio::task::spawn_blocking(move || st.storage.has_audio(&sha_hex, &ext))
@@ -184,7 +194,7 @@ mod tests {
         let big = r.json()["id"].as_i64().unwrap();
         let mut tags = tags_of(&app, &t, big).await;
         tags.sort();
-        assert_eq!(tags, ["cat", "highres", "wide_image"]);
+        assert_eq!(tags, ["cat", "highres", "horizontal_image", "wide_image"]);
         assert_eq!(tag_row(&app, "highres").await, Some((0, 1)));
         assert_eq!(
             tag_row(&app, "wide_image").await,
@@ -194,7 +204,7 @@ mod tests {
         let small = app.upload_png(&t, 2, "dog").await;
         let mut tags = tags_of(&app, &t, small).await;
         tags.sort();
-        assert_eq!(tags, ["dog", "lowres"]);
+        assert_eq!(tags, ["dog", "horizontal_image", "lowres"]);
         assert_eq!(
             tag_row(&app, "lowres").await,
             Some((TagCategory::Meta.to_db(), 1))
@@ -215,7 +225,7 @@ mod tests {
         assert_eq!(tag_row(&app, "lowres").await.map(|r| r.1), Some(0));
 
         // A post from before this existed is tagged by the backfill, once.
-        sqlx::query("UPDATE posts SET meta_tagged_at = NULL WHERE id = $1")
+        sqlx::query("UPDATE posts SET meta_tagged_at = NULL, meta_version = 0 WHERE id = $1")
             .bind(small)
             .execute(app.db())
             .await
@@ -224,8 +234,66 @@ mod tests {
         backfill_meta_tags(app.state.clone()).await;
         let mut tags = tags_of(&app, &t, small).await;
         tags.sort();
-        assert_eq!(tags, ["dog", "lowres"]);
+        assert_eq!(tags, ["dog", "horizontal_image", "lowres"]);
         assert_eq!(tag_row(&app, "lowres").await.map(|r| r.1), Some(1));
+        app.finish().await;
+    }
+
+    #[tokio::test]
+    async fn new_rules_add_only_their_tags() {
+        let Some(app) = testing::app_with(|c| c.auto_meta_tags = true).await else {
+            return;
+        };
+        let t = app.register("admin").await;
+        let id = app.upload_png(&t, 2, "dog").await;
+        // Tagged by the first rules, and someone removed `lowres` since.
+        let r = app
+            .call(
+                Method::PATCH,
+                &format!("/api/v1/posts/{id}"),
+                Some(&t),
+                Some(json!({ "tags": ["dog"] })),
+            )
+            .await;
+        assert_eq!(r.status, 200, "{:?}", r.json());
+        sqlx::query(
+            "UPDATE posts SET meta_version = 1, updated_at = '2020-01-01T00:00:00Z' WHERE id = $1",
+        )
+        .bind(id)
+        .execute(app.db())
+        .await
+        .unwrap();
+
+        backfill_meta_tags(app.state.clone()).await;
+        let mut tags = tags_of(&app, &t, id).await;
+        tags.sort();
+        assert_eq!(tags, ["dog", "horizontal_image"]);
+        assert_eq!(tag_row(&app, "lowres").await.map(|r| r.1), Some(0));
+        assert_eq!(
+            tag_row(&app, "horizontal_image").await.map(|r| r.1),
+            Some(1)
+        );
+        // It wasn't an edit.
+        let updated: chrono::DateTime<chrono::Utc> =
+            sqlx::query_scalar("SELECT updated_at FROM posts WHERE id = $1")
+                .bind(id)
+                .fetch_one(app.db())
+                .await
+                .unwrap();
+        assert_eq!(updated.format("%Y").to_string(), "2020");
+
+        // Removed in turn, the new tag stays removed too.
+        let r = app
+            .call(
+                Method::PATCH,
+                &format!("/api/v1/posts/{id}"),
+                Some(&t),
+                Some(json!({ "tags": ["dog"] })),
+            )
+            .await;
+        assert_eq!(r.status, 200, "{:?}", r.json());
+        backfill_meta_tags(app.state.clone()).await;
+        assert_eq!(tags_of(&app, &t, id).await, ["dog"]);
         app.finish().await;
     }
 
@@ -293,7 +361,7 @@ mod tests {
         let id = app.upload_png(&t, 4, "").await;
         let mut tags = tags_of(&app, &t, id).await;
         tags.sort();
-        assert_eq!(tags, ["small_image", "tiny"]);
+        assert_eq!(tags, ["horizontal_image", "small_image", "tiny"]);
         assert_eq!(tag_row(&app, "lowres").await, None);
         assert_eq!(tag_row(&app, "tiny").await.map(|r| r.1), Some(1));
         app.finish().await;

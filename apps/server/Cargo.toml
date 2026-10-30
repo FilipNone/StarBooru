@@ -33,6 +33,7 @@ url = { version = "2", features = ["serde"] }
 percent-encoding = "2"
 base64 = "0.22"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp", "tiff", "rayon"] }
+kamadak-exif = "0.6.1"
 
 [dev-dependencies]
 tempfile = "3"

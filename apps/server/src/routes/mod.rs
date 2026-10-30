@@ -21,7 +21,7 @@ mod trash;
 
 pub use autotag::backfill_meta_tags;
 pub use imports::run_imports;
-pub use posts::{backfill_hashes, backfill_media, backfill_samples};
+pub use posts::{backfill_file_dates, backfill_hashes, backfill_media, backfill_samples};
 pub use tags::seed_vocab;
 pub use trash::auto_purge;
 

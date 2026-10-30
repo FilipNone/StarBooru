@@ -146,7 +146,7 @@ A `Backup`'s `url` is a signed path relative to the server, valid for an hour. F
 | PUT | `/posts/{id}/figures` | `FiguresUpdate {figures: [Figure]}` | `Post`: replaces the post's people and updates its tags to match. See [People](#people-in-a-post). 400 for more than 20 people, more than 64 tags on one, more tags than a post can hold (512) or an invalid tag; 404 for a missing post; 409 `deleted` for a post in the recycle bin. |
 | PUT | `/posts/{id}/vote` | `{value: -1 \| 0 \| 1}` | `Post` with the new `score` and `my_vote` |
 
-A `Post` carries `file_url`, `thumb_url` and `sample_url`. These are signed paths relative to the server, valid for at least 6 hours. Fetch them without the bearer token. `thumb_url` is null when no thumbnail exists. `sample_url` is a smaller JPEG copy of a big image, meant for viewing; it is null for most posts, and `file_url` stays the original to download. `duration_ms` is the length of a video, or null. `GET /posts/{id}` (and `POST /posts/{id}/ocr`) also carry `ocr_text`, the text found in a still image by OCR, lines separated by `\n`; it is left out when there is none, when the image is not read yet, and in lists.
+A `Post` carries `file_url`, `thumb_url` and `sample_url`. These are signed paths relative to the server, valid for at least 6 hours. Fetch them without the bearer token. `thumb_url` is null when no thumbnail exists. `sample_url` is a smaller JPEG copy of a big image, meant for viewing; it is null for most posts, and `file_url` stays the original to download. `duration_ms` is the length of a video, or null. `file_date` is the date in the file, or null: EXIF for images (its wall clock, marked UTC, because EXIF has no time zone) and the creation time for videos. `GET /posts/{id}` (and `POST /posts/{id}/ocr`) also carry `ocr_text`, the text found in a still image by OCR, lines separated by `\n`; it is left out when there is none, when the image is not read yet, and in lists.
 
 ### People in a post
 
@@ -175,7 +175,15 @@ Terms are separated by spaces, with at most 40 terms.
 | `artist:name` | the tag `name`; the prefix (`artist:`, `character:`/`char:`, `copyright:`/`copy:`/`series:`, `meta:`, `general:`/`gen:`) is dropped |
 | `rating:g` / `-rating:e` | rating is (not) general, sensitive, questionable or explicit (`g s q e`); repeat to allow several, e.g. `rating:g rating:s` |
 | `type:image` / `type:animation` / `type:video` | media kind |
-| `order:newest` (default), `order:oldest`, `order:score`, `order:size`, `order:pixels`, `order:tags`, `order:updated`, `order:random` | sort (`sort:` works too). Add `_asc` or `_desc` to set the direction, e.g. `order:size_asc` for the smallest files first. `pixels` is width × height; `tags` is the tag count; `updated` is the last edit. |
+| `date:2024`, `date:2024-03`, `date:2024-03-15` | the post's date is in that period. The date is `file_date` (from the file), or the upload date when there is none. Dates are compared in UTC. |
+| `date:2023..2024`, `date:2023-06..`, `date:..2024` | from the start of the first period to the end of the last; either end can be left open |
+| `date:>2023-06`, `date:>=2023-06`, `date:<2024`, `date:<=2024` | after or before a period, without or with it |
+| `date:>30d`, `date:<7d`, `date:7d` | more than 30 days old; less than 7 days old (a bare age means the same). Units are `h`, `d`, `w`, `mo` and `y`, up to 1000 years. |
+| `width:1920`, `height:>1080`, `width:1000..2000` | size in pixels: a value, a comparison (`>`, `>=`, `<`, `<=`) or a range |
+| `mpixels:>8`, `mpixels:2..4`, `mpixels:8` | width × height in megapixels, in the same forms. A bare value means about that, to the digits given: `8` is 7.5–8.5 and `8.3` is 8.25–8.35. |
+| `ratio:16:9`, `ratio:1.78`, `ratio:>1` | width over height, in the same forms. A bare value has a margin of 0.01, so `ratio:1` is square. |
+| `-date:…`, `-width:…` and so on | excludes. A post of unknown size stays in. A bad value is a 400, not a tag search. |
+| `order:newest` (default), `order:oldest`, `order:score`, `order:size`, `order:pixels`, `order:longside`, `order:tags`, `order:updated`, `order:random` | sort (`sort:` works too). Add `_asc` or `_desc` to set the direction, e.g. `order:size_asc` for the smallest files first. `pixels` (or `mpixels`) is width × height; `longside` is the longer of the two; posts of unknown size sort last in both. `tags` is the tag count; `updated` is the last edit. |
 | `status:deleted` | browse the recycle bin |
 | `text:hello` / `text:"no parking"` / `-text:sale` | the text OCR read in the image has (or doesn't have) all these words, in any case. Quotes keep several words in one term; several `text:` terms all apply. Matches whole words (`simple` full-text search), at most 200 characters per term. |
 

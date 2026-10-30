@@ -3,6 +3,7 @@
 //! viewer's keyboard shortcuts.
 
 use dioxus::prelude::*;
+use starbooru_core::filter::SizeField;
 use starbooru_core::{FigureTerm, MediaKind, Order, Rating, SearchQuery, SortKey, parse_query};
 
 use super::people::kind_label;
@@ -34,6 +35,14 @@ fn sections() -> [(String, Vec<(&'static str, String)>); 5] {
                 ("-rating:e", t!("help-rating-not")),
                 ("type:image", t!("help-type")),
                 ("status:deleted", t!("help-deleted")),
+                ("date:2024-03", t!("help-date")),
+                ("date:2023..2024", t!("help-date-range")),
+                ("date:>2023-06", t!("help-date-compare")),
+                ("date:>30d", t!("help-date-age")),
+                ("width:>1920", t!("help-size")),
+                ("mpixels:>8", t!("help-mpixels")),
+                ("ratio:16:9", t!("help-ratio")),
+                ("-height:<1000", t!("help-size-not")),
             ],
         ),
         (
@@ -51,6 +60,7 @@ fn sections() -> [(String, Vec<(&'static str, String)>); 5] {
                 ("order:score", t!("help-order-score")),
                 ("order:size", t!("help-order-size")),
                 ("order:pixels", t!("help-order-pixels")),
+                ("order:longside", t!("help-order-longside")),
                 ("order:tags", t!("help-order-tags")),
                 ("order:updated", t!("help-order-updated")),
                 ("order:size_asc", t!("help-order-direction")),
@@ -200,6 +210,26 @@ pub fn explain(text: &str) -> Result<Vec<String>, String> {
     for term in &q.exclude_figures {
         lines.push(figure_line(term, true));
     }
+    for date in &q.dates {
+        lines.push(t!("explain-date", value = date.raw.as_str()));
+    }
+    for date in &q.exclude_dates {
+        lines.push(t!("explain-not-date", value = date.raw.as_str()));
+    }
+    for size in &q.sizes {
+        lines.push(t!(
+            "explain-size",
+            field = size_label(size.field),
+            value = size.raw.as_str()
+        ));
+    }
+    for size in &q.exclude_sizes {
+        lines.push(t!(
+            "explain-not-size",
+            field = size_label(size.field),
+            value = size.raw.as_str()
+        ));
+    }
     for text in &q.text {
         lines.push(t!("explain-text", text = text.as_str()));
     }
@@ -218,6 +248,15 @@ pub fn explain(text: &str) -> Result<Vec<String>, String> {
     }
     lines.push(order_phrase(q.order));
     Ok(lines)
+}
+
+fn size_label(field: SizeField) -> String {
+    match field {
+        SizeField::Width => t!("explain-size-width"),
+        SizeField::Height => t!("explain-size-height"),
+        SizeField::Pixels => t!("explain-size-mpixels"),
+        SizeField::Ratio => t!("explain-size-ratio"),
+    }
 }
 
 /// One `{...}` term in words.
@@ -257,6 +296,8 @@ fn order_phrase(order: Order) -> String {
         SortKey::Size => t!("explain-order-size-asc"),
         SortKey::Pixels if d => t!("explain-order-pixels-desc"),
         SortKey::Pixels => t!("explain-order-pixels-asc"),
+        SortKey::LongSide if d => t!("explain-order-longside-desc"),
+        SortKey::LongSide => t!("explain-order-longside-asc"),
         SortKey::TagCount if d => t!("explain-order-tags-desc"),
         SortKey::TagCount => t!("explain-order-tags-asc"),
         SortKey::Updated if d => t!("explain-order-updated-desc"),
@@ -311,6 +352,21 @@ mod tests {
                 "Newest first"
             ]
         );
+        assert_eq!(
+            explain("date:2024-03 -date:>30d width:>1920 -ratio:16:9 mpixels:8 height:1080 order:longside_asc")
+                .unwrap(),
+            [
+                "Dated 2024-03",
+                "Not dated >30d",
+                "Width >1920",
+                "Megapixels 8",
+                "Height 1080",
+                "Aspect ratio not 16:9",
+                "By longest side, shortest first",
+            ]
+        );
+        assert!(explain("date:soon").unwrap_err().contains("date:soon"));
+        assert!(explain("width:wide").unwrap_err().contains("width:wide"));
         let ratings3 = explain("rating:g rating:s rating:q").unwrap();
         assert_eq!(ratings3[0], "Rated general, sensitive or questionable");
         assert!(explain("rating:z").unwrap_err().contains("unknown rating"));

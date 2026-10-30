@@ -12,6 +12,7 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
+use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use tracing::warn;
 
@@ -45,6 +46,8 @@ pub struct Probed {
     pub duration_ms: Option<i64>,
     /// Whether the file has an audio stream; `None` when it wasn't probed.
     pub has_audio: Option<bool>,
+    /// The container's creation time, when it has a believable one.
+    pub file_date: Option<DateTime<Utc>>,
     /// A PNG still, at most `FRAME_SIZE` px on its longest side.
     pub frame: Option<Vec<u8>>,
 }
@@ -80,6 +83,13 @@ struct StreamTags {
 #[derive(Deserialize)]
 struct ProbeFormat {
     duration: Option<String>,
+    #[serde(default)]
+    tags: Option<FormatTags>,
+}
+
+#[derive(Deserialize)]
+struct FormatTags {
+    creation_time: Option<String>,
 }
 
 impl Tools {
@@ -106,7 +116,7 @@ impl Tools {
             "file",
             "-show_entries",
             "stream=codec_type,width,height:stream_side_data=rotation:\
-             stream_tags=rotate:format=duration",
+             stream_tags=rotate:format=duration:format_tags=creation_time",
             "-of",
             "json",
         ])
@@ -282,6 +292,11 @@ fn parse_probe(json: &[u8]) -> Option<Probed> {
     {
         std::mem::swap(&mut width, &mut height);
     }
+    let file_date = parsed
+        .format
+        .as_ref()
+        .and_then(|f| f.tags.as_ref()?.creation_time.as_deref())
+        .and_then(starbooru_core::filter::video_date);
     let duration_ms = parsed
         .format
         .and_then(|f| f.duration)
@@ -293,6 +308,7 @@ fn parse_probe(json: &[u8]) -> Option<Probed> {
         height,
         duration_ms,
         has_audio: Some(has_audio),
+        file_date,
         frame: None,
     })
 }
@@ -419,6 +435,18 @@ pub mod tests {
             }
         );
         assert!(parse_probe(b"not json").is_none());
+        let date = |tags: &str| {
+            let json = format!(r#"{{"format":{{"tags":{tags}}}}}"#);
+            parse_probe(json.as_bytes()).unwrap().file_date
+        };
+        assert_eq!(
+            date(r#"{"creation_time":"2021-05-06T07:08:09.000000Z"}"#),
+            "2021-05-06T07:08:09Z".parse().ok()
+        );
+        // An unset clock, nonsense, and none at all.
+        assert_eq!(date(r#"{"creation_time":"1904-01-01T00:00:00Z"}"#), None);
+        assert_eq!(date(r#"{"creation_time":"soon"}"#), None);
+        assert_eq!(date("{}"), None);
         assert_eq!(parse_probe(b"{}").unwrap().has_audio, Some(false));
         // Audio first, then video: the video stream gives the size.
         let p = parse_probe(
@@ -454,12 +482,18 @@ pub mod tests {
             dir.path(),
             "clip.mp4",
             "testsrc=duration=2:size=160x90:rate=10",
-            &["-pix_fmt", "yuv420p"],
+            &[
+                "-pix_fmt",
+                "yuv420p",
+                "-metadata",
+                "creation_time=2021-05-06T07:08:09Z",
+            ],
         ) else {
             return;
         };
         let p = tools.probe(&dir.path().join("clip.mp4"), true);
         assert_eq!((p.width, p.height), (Some(160), Some(90)));
+        assert_eq!(p.file_date, "2021-05-06T07:08:09Z".parse().ok());
         assert_eq!(p.duration_ms, Some(2_000));
         assert_eq!(p.has_audio, Some(false));
         let frame = image::load_from_memory(&p.frame.unwrap()).unwrap();

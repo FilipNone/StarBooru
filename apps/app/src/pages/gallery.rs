@@ -19,8 +19,9 @@ use crate::util::{escape_attr, format_duration, rating_label, split_tag_edit};
 const PAGE_SIZE: u32 = 60;
 
 /// Sort menu entries: `order:` values.
-const SORTS: [&str; 10] = [
-    "new", "old", "score", "updated", "size", "size_asc", "pixels", "tags", "tags_asc", "random",
+const SORTS: [&str; 11] = [
+    "new", "old", "score", "updated", "size", "size_asc", "pixels", "longside", "tags", "tags_asc",
+    "random",
 ];
 
 fn sort_label(order: &str) -> String {
@@ -32,6 +33,7 @@ fn sort_label(order: &str) -> String {
         "size" => t!("sort-size"),
         "size_asc" => t!("sort-size-asc"),
         "pixels" => t!("sort-pixels"),
+        "longside" => t!("sort-longside"),
         "tags" => t!("sort-tags"),
         "tags_asc" => t!("sort-tags-asc"),
         "random" => t!("sort-random"),

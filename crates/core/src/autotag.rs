@@ -13,9 +13,22 @@
 //! | `video` | videos |
 //! | `sound` | videos with an audio stream |
 //! | `long_video` | videos of 30 s or more |
+//! | `hd` | long side ≥ 1280 and short side ≥ 480 |
+//! | `full_hd` | long side ≥ 1920 and short side ≥ 720 |
+//! | `4k` | long side ≥ 3840 and short side ≥ 1440 |
+//! | `8k` | long side ≥ 7680 and short side ≥ 2880 |
+//! | `horizontal_image` | wider than tall, by more than 1% |
+//! | `vertical_image` | taller than wide, by more than 1% |
+//! | `square_image` | the sides within 1% of each other |
+//!
+//! Only the highest of `hd`, `full_hd`, `4k` and `8k` applies. Their short
+//! sides are two thirds of the standard's, so cropped widescreen still counts.
 //!
 //! A fact that isn't known (no dimensions, no duration, audio not probed)
 //! adds nothing.
+//!
+//! Each post is tagged once per [`META_VERSION`]: a later version adds only
+//! the tags new in it, so a tag someone removed doesn't come back.
 
 use crate::MediaKind;
 
@@ -36,6 +49,30 @@ pub const EXTREME_RATIO: u64 = 4;
 /// `long_video`: at least this long.
 pub const LONG_VIDEO_MS: i64 = 30_000;
 
+/// The resolution tags, highest first: (tag, long side, short side).
+const RESOLUTIONS: [(&str, u32, u32); 4] = [
+    ("8k", 7680, 2880),
+    ("4k", 3840, 1440),
+    ("full_hd", 1920, 720),
+    ("hd", 1280, 480),
+];
+/// `square_image`: the long side is at most this percent of the short one.
+const SQUARE_PERCENT: u64 = 101;
+
+/// The current set of rules. Raise it when adding tags, and list them in
+/// [`added_in`].
+pub const META_VERSION: i16 = 2;
+
+/// The [`META_VERSION`] that brought a tag.
+pub fn added_in(tag: &str) -> i16 {
+    match tag {
+        "hd" | "full_hd" | "4k" | "8k" | "horizontal_image" | "vertical_image" | "square_image" => {
+            2
+        }
+        _ => 1,
+    }
+}
+
 /// Every tag [`meta_tags`] can return.
 pub const META_TAGS: &[&str] = &[
     "lowres",
@@ -48,6 +85,13 @@ pub const META_TAGS: &[&str] = &[
     "video",
     "sound",
     "long_video",
+    "hd",
+    "full_hd",
+    "4k",
+    "8k",
+    "horizontal_image",
+    "vertical_image",
+    "square_image",
 ];
 
 /// What is known about a file.
@@ -101,6 +145,33 @@ pub fn meta_tags(facts: &MediaFacts) -> Vec<&'static str> {
             tags.push("long_video");
         }
     }
+    if let Some((w, h)) = size {
+        let (long, short) = (w.max(h), w.min(h));
+        if let Some((tag, ..)) = RESOLUTIONS
+            .iter()
+            .find(|(_, l, s)| long >= *l && short >= *s)
+        {
+            tags.push(*tag);
+        }
+        tags.push(
+            if u64::from(long).saturating_mul(100)
+                <= u64::from(short).saturating_mul(SQUARE_PERCENT)
+            {
+                "square_image"
+            } else if w > h {
+                "horizontal_image"
+            } else {
+                "vertical_image"
+            },
+        );
+    }
+    tags
+}
+
+/// The tags in [`meta_tags`] that a post tagged at `version` hasn't had yet.
+pub fn meta_tags_since(facts: &MediaFacts, version: i16) -> Vec<&'static str> {
+    let mut tags = meta_tags(facts);
+    tags.retain(|tag| added_in(tag) > version);
     tags
 }
 
@@ -108,7 +179,7 @@ pub fn meta_tags(facts: &MediaFacts) -> Vec<&'static str> {
 mod tests {
     use super::*;
 
-    fn image(w: u32, h: u32) -> Vec<&'static str> {
+    fn all_for_image(w: u32, h: u32) -> Vec<&'static str> {
         meta_tags(&MediaFacts {
             kind: MediaKind::Image,
             width: Some(w),
@@ -118,14 +189,38 @@ mod tests {
         })
     }
 
+    /// The first version's tags, which these tests cover.
+    fn first_only(mut tags: Vec<&'static str>) -> Vec<&'static str> {
+        tags.retain(|tag| added_in(tag) == 1);
+        tags
+    }
+
+    fn image(w: u32, h: u32) -> Vec<&'static str> {
+        first_only(all_for_image(w, h))
+    }
+
     fn video(duration_ms: Option<i64>, has_audio: Option<bool>) -> Vec<&'static str> {
-        meta_tags(&MediaFacts {
+        first_only(meta_tags(&MediaFacts {
             kind: MediaKind::Video,
             width: Some(1280),
             height: Some(720),
             duration_ms,
             has_audio,
-        })
+        }))
+    }
+
+    /// What the second version's rules add.
+    fn second(w: u32, h: u32) -> Vec<&'static str> {
+        meta_tags_since(
+            &MediaFacts {
+                kind: MediaKind::Image,
+                width: Some(w),
+                height: Some(h),
+                duration_ms: None,
+                has_audio: None,
+            },
+            1,
+        )
     }
 
     #[test]
@@ -199,7 +294,7 @@ mod tests {
             has_audio: Some(true),
         };
         // Only videos get `video`, `sound` and `long_video`.
-        assert_eq!(meta_tags(&gif), ["lowres", "animated"]);
+        assert_eq!(first_only(meta_tags(&gif)), ["lowres", "animated"]);
     }
 
     #[test]
@@ -217,18 +312,65 @@ mod tests {
     }
 
     #[test]
+    fn one_resolution_class_applies() {
+        assert_eq!(second(1279, 720), ["horizontal_image"]);
+        assert_eq!(second(1280, 479), ["horizontal_image"]);
+        assert_eq!(second(1280, 720), ["hd", "horizontal_image"]);
+        assert_eq!(second(1920, 1080), ["full_hd", "horizontal_image"]);
+        // cropped widescreen, and a phone's portrait
+        assert_eq!(second(1920, 800), ["full_hd", "horizontal_image"]);
+        assert_eq!(second(1080, 1920), ["full_hd", "vertical_image"]);
+        assert_eq!(second(2560, 1440), ["full_hd", "horizontal_image"]);
+        assert_eq!(second(3840, 2160), ["4k", "horizontal_image"]);
+        assert_eq!(second(7680, 4320), ["8k", "horizontal_image"]);
+        assert_eq!(second(8000, 8000), ["8k", "square_image"]);
+    }
+
+    #[test]
+    fn orientation_has_a_margin_for_square() {
+        assert_eq!(second(100, 100), ["square_image"]);
+        assert_eq!(second(101, 100), ["square_image"]);
+        assert_eq!(second(100, 101), ["square_image"]);
+        assert_eq!(second(102, 100), ["horizontal_image"]);
+        assert_eq!(second(100, 102), ["vertical_image"]);
+        assert_eq!(second(u32::MAX, u32::MAX), ["8k", "square_image"]);
+        assert!(second(0, 100).is_empty());
+    }
+
+    #[test]
+    fn a_new_version_adds_only_its_tags() {
+        let facts = MediaFacts {
+            kind: MediaKind::Image,
+            width: Some(400),
+            height: Some(400),
+            duration_ms: None,
+            has_audio: None,
+        };
+        assert_eq!(meta_tags_since(&facts, 0), ["lowres", "square_image"]);
+        assert_eq!(meta_tags_since(&facts, 1), ["square_image"]);
+        assert!(meta_tags_since(&facts, META_VERSION).is_empty());
+    }
+
+    #[test]
     fn every_tag_is_listed_and_valid() {
         for tag in META_TAGS {
             assert_eq!(crate::normalize_tag(tag).as_deref(), Ok(*tag));
         }
         let all = [
-            image(1, 1),
-            image(20_000, 10),
-            image(10, 20_000),
+            all_for_image(1, 1),
+            all_for_image(20_000, 10),
+            all_for_image(10, 20_000),
+            all_for_image(1280, 720),
+            all_for_image(1920, 1080),
+            all_for_image(3840, 2160),
+            all_for_image(7680, 4320),
             video(Some(60_000), Some(true)),
         ];
         for tag in all.iter().flatten() {
             assert!(META_TAGS.contains(tag), "{tag}");
+        }
+        for tag in META_TAGS {
+            assert!((1..=META_VERSION).contains(&added_in(tag)), "{tag}");
         }
     }
 }

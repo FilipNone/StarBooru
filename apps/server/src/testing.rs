@@ -255,6 +255,45 @@ pub fn png(w: u32, h: u32, seed: u32) -> Vec<u8> {
     out.into_inner()
 }
 
+/// A generated JPEG with EXIF dates (`YYYY:MM:DD HH:MM:SS`, 19 characters):
+/// `changed` in the main block and `taken` in the Exif one.
+pub fn jpeg_with_exif(w: u32, h: u32, seed: u32, changed: &str, taken: &str) -> Vec<u8> {
+    let img = image::load_from_memory(&png(w, h, seed)).unwrap().to_rgb8();
+    let mut jpeg = Cursor::new(Vec::new());
+    img.write_to(&mut jpeg, image::ImageFormat::Jpeg).unwrap();
+    let jpeg = jpeg.into_inner();
+
+    let mut tiff = Vec::new();
+    tiff.extend_from_slice(b"II*\0");
+    tiff.extend_from_slice(&8u32.to_le_bytes());
+    let entry = |tiff: &mut Vec<u8>, tag: u16, kind: u16, count: u32, value: u32| {
+        tiff.extend_from_slice(&tag.to_le_bytes());
+        tiff.extend_from_slice(&kind.to_le_bytes());
+        tiff.extend_from_slice(&count.to_le_bytes());
+        tiff.extend_from_slice(&value.to_le_bytes());
+    };
+    // The main block at 8, its text at 38, the Exif block at 58, its text at 76.
+    tiff.extend_from_slice(&2u16.to_le_bytes());
+    entry(&mut tiff, 0x0132, 2, 20, 38);
+    entry(&mut tiff, 0x8769, 4, 1, 58);
+    tiff.extend_from_slice(&0u32.to_le_bytes());
+    tiff.extend_from_slice(changed.as_bytes());
+    tiff.push(0);
+    tiff.extend_from_slice(&1u16.to_le_bytes());
+    entry(&mut tiff, 0x9003, 2, 20, 76);
+    tiff.extend_from_slice(&0u32.to_le_bytes());
+    tiff.extend_from_slice(taken.as_bytes());
+    tiff.push(0);
+
+    let mut out = vec![0xff, 0xd8, 0xff, 0xe1];
+    let length = u16::try_from(tiff.len() + 8).unwrap();
+    out.extend_from_slice(&length.to_be_bytes());
+    out.extend_from_slice(b"Exif\0\0");
+    out.extend_from_slice(&tiff);
+    out.extend_from_slice(&jpeg[2..]);
+    out
+}
+
 /// Generated noise, which compresses badly: a PNG this size is big enough
 /// to get a sample.
 pub fn noise_png(w: u32, h: u32, seed: u32) -> Vec<u8> {

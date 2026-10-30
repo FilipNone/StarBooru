@@ -108,6 +108,9 @@ Results at 1,000,000 posts (Ryzen 9 5900X, PostgreSQL 17 in Docker, default sett
 | `/posts`, `/posts?page=50`, every `order:` but random | 2.5–2.8 ms |
 | `/posts?page=1000` | 5.4 ms |
 | `/posts?q=tag_1`, `tag_1 tag_2 tag_3`, `tag_2 -tag_1`, `rating:e type:video` | 3.2–4.0 ms |
+| `order:longside`, `width:>3900`, `mpixels:>12`, `-width:>1000`, `date:<7d` | 2.4–2.7 ms |
+| `ratio:16:9`, `tag_1 width:>1920`, `date:>30d`, `date:2026-10` | 3.8–19 ms |
+| `tag_300 date:>30d` | 30 ms |
 | `/posts?q=tag_4000` (a rare tag) | 18.8 ms |
 | `/posts?q=order:random` | 141 ms |
 | `/posts/{id}`, `/posts/{id}/neighbors`, tag search | under 1.2 ms |

@@ -4,11 +4,14 @@
 //!
 //! * `tag`: post must have the tag; `-tag`: post must not have it.
 //! * `rating:<g|s|q|e>`, `-rating:<..>`, `type:<image|animation|video>`.
-//! * `order:<new|old|score|size|pixels|tags|updated|random>`, with an
+//! * `order:<new|old|score|size|pixels|longside|tags|updated|random>`, with an
 //!   optional `_asc` or `_desc` suffix.
 //! * `status:deleted`: search the recycle bin instead of live posts.
 //! * `text:word` or `text:"several words"`: the text OCR found in the image
 //!   has those words; `-text:` excludes. Several `text:` terms all apply.
+//! * `date:2024-03`, `date:2023..2024`, `date:>30d`: the file's date, or the
+//!   upload date when it has none. `width:>1920`, `height:`, `mpixels:>8`,
+//!   `ratio:16:9`: its size. The forms are in `crate::filter`; `-` excludes.
 //! * `{girl blonde_hair boots}`: one person in the picture has all of
 //!   these tags (and is a girl; `boy` and `other` work too). `-{...}`: no
 //!   one does.
@@ -19,6 +22,7 @@
 use thiserror::Error;
 
 use crate::figure::FigureKind;
+use crate::filter::{DateTerm, SizeField, SizeTerm, parse_date_term, parse_size_term};
 use crate::model::{MediaKind, Rating};
 use crate::tag::{TagError, normalize_tag};
 
@@ -37,6 +41,8 @@ pub enum SortKey {
     Size,
     /// Width × height; posts without dimensions sort last.
     Pixels,
+    /// The longer of width and height; posts without dimensions sort last.
+    LongSide,
     TagCount,
     /// Last edit of tags, rating or source.
     Updated,
@@ -74,7 +80,10 @@ impl Order {
             "id" | "old" | "oldest" => (SortKey::Id, false),
             "score" | "top" => (SortKey::Score, true),
             "size" | "filesize" => (SortKey::Size, true),
-            "pixels" | "resolution" | "dimensions" => (SortKey::Pixels, true),
+            "pixels" | "resolution" | "dimensions" | "mpixels" | "megapixels" => {
+                (SortKey::Pixels, true)
+            }
+            "longside" | "long_side" => (SortKey::LongSide, true),
             "tags" | "tagcount" => (SortKey::TagCount, true),
             "updated" | "edited" => (SortKey::Updated, true),
             "random" if direction.is_none() => (SortKey::Random, true),
@@ -97,6 +106,8 @@ impl Order {
             (SortKey::Size, false) => "size_asc",
             (SortKey::Pixels, true) => "pixels",
             (SortKey::Pixels, false) => "pixels_asc",
+            (SortKey::LongSide, true) => "longside",
+            (SortKey::LongSide, false) => "longside_asc",
             (SortKey::TagCount, true) => "tags",
             (SortKey::TagCount, false) => "tags_asc",
             (SortKey::Updated, true) => "updated",
@@ -148,6 +159,14 @@ pub struct SearchQuery {
     pub figures: Vec<FigureTerm>,
     /// `-{...}` terms: no figure may match.
     pub exclude_figures: Vec<FigureTerm>,
+    /// `date:` terms: the post's date must be in each.
+    pub dates: Vec<DateTerm>,
+    /// `-date:` terms: it must be in none.
+    pub exclude_dates: Vec<DateTerm>,
+    /// `width:`, `height:`, `mpixels:` and `ratio:` terms.
+    pub sizes: Vec<SizeTerm>,
+    /// The same with `-`. A post of unknown size passes these.
+    pub exclude_sizes: Vec<SizeTerm>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -161,7 +180,7 @@ pub enum QueryError {
     #[error("unknown status `{0}` (use active or deleted)")]
     BadStatus(String),
     #[error(
-        "unknown order `{0}` (use new, old, score, size, pixels, tags, updated or random; add _asc to reverse)"
+        "unknown order `{0}` (use new, old, score, size, pixels, longside, tags, updated or random; add _asc to reverse)"
     )]
     BadOrder(String),
     #[error("`text:` needs some words, e.g. text:hello or text:\"two words\"")]
@@ -172,6 +191,10 @@ pub enum QueryError {
     EmptyFigure,
     #[error("`{{...}}` names two kinds (use one of girl, boy or other)")]
     TwoKinds,
+    #[error("`date:{0}` isn't a date (try date:2024-03, date:2023..2024 or date:>30d)")]
+    BadDate(String),
+    #[error("`{0}:{1}` isn't a size (try width:>1920, mpixels:>8 or ratio:16:9)")]
+    BadSize(String, String),
     #[error(transparent)]
     Tag(#[from] TagError),
 }
@@ -313,6 +336,38 @@ pub fn parse_query(input: &str) -> Result<SearchQuery, QueryError> {
                     );
                     continue;
                 }
+                "date" => {
+                    let date = parse_date_term(value)
+                        .ok_or_else(|| QueryError::BadDate(value.to_owned()))?;
+                    push_unique(
+                        if negated {
+                            &mut q.exclude_dates
+                        } else {
+                            &mut q.dates
+                        },
+                        date,
+                    );
+                    continue;
+                }
+                name @ ("width" | "height" | "mpixels" | "ratio") => {
+                    let field = match name {
+                        "width" => SizeField::Width,
+                        "height" => SizeField::Height,
+                        "mpixels" => SizeField::Pixels,
+                        _ => SizeField::Ratio,
+                    };
+                    let size = parse_size_term(field, value)
+                        .ok_or_else(|| QueryError::BadSize(name.to_owned(), value.to_owned()))?;
+                    push_unique(
+                        if negated {
+                            &mut q.exclude_sizes
+                        } else {
+                            &mut q.sizes
+                        },
+                        size,
+                    );
+                    continue;
+                }
                 _ => {}
             }
         }
@@ -380,6 +435,10 @@ mod tests {
         assert_eq!(o("size_asc"), Some((SortKey::Size, false)));
         assert_eq!(o("resolution"), Some((SortKey::Pixels, true)));
         assert_eq!(o("tagcount_asc"), Some((SortKey::TagCount, false)));
+        assert_eq!(o("mpixels"), Some((SortKey::Pixels, true)));
+        assert_eq!(o("megapixels_asc"), Some((SortKey::Pixels, false)));
+        assert_eq!(o("longside"), Some((SortKey::LongSide, true)));
+        assert_eq!(o("long_side_asc"), Some((SortKey::LongSide, false)));
         assert_eq!(o("random"), Some((SortKey::Random, true)));
         assert_eq!(o("random_asc"), None);
         assert_eq!(o("_asc"), None);
@@ -389,6 +448,7 @@ mod tests {
             SortKey::Score,
             SortKey::Size,
             SortKey::Pixels,
+            SortKey::LongSide,
             SortKey::TagCount,
             SortKey::Updated,
         ] {
@@ -473,6 +533,46 @@ mod tests {
         assert_eq!(parse_query("{ }"), Err(QueryError::EmptyFigure));
         assert_eq!(parse_query("{girl boy}"), Err(QueryError::TwoKinds));
         assert!(parse_query("{girl -x}").is_err());
+    }
+
+    #[test]
+    fn parses_date_and_size_terms() {
+        let q = parse_query(
+            "cat date:2024-03 -DATE:>30d width:>1920 -height:<100 mpixels:8 ratio:16:9 date:2024-03",
+        )
+        .unwrap();
+        assert_eq!(q.include, vec!["cat"]);
+        assert_eq!(q.dates, vec![parse_date_term("2024-03").unwrap()]);
+        assert_eq!(q.exclude_dates, vec![parse_date_term(">30d").unwrap()]);
+        assert_eq!(
+            q.sizes,
+            vec![
+                parse_size_term(SizeField::Width, ">1920").unwrap(),
+                parse_size_term(SizeField::Pixels, "8").unwrap(),
+                parse_size_term(SizeField::Ratio, "16:9").unwrap(),
+            ]
+        );
+        assert_eq!(
+            q.exclude_sizes,
+            vec![parse_size_term(SizeField::Height, "<100").unwrap()]
+        );
+    }
+
+    #[test]
+    fn bad_date_and_size_terms() {
+        assert_eq!(
+            parse_query("date:soon"),
+            Err(QueryError::BadDate("soon".into()))
+        );
+        assert_eq!(parse_query("date:"), Err(QueryError::BadDate("".into())));
+        assert_eq!(
+            parse_query("width:wide"),
+            Err(QueryError::BadSize("width".into(), "wide".into()))
+        );
+        assert_eq!(
+            parse_query("-ratio:1:0"),
+            Err(QueryError::BadSize("ratio".into(), "1:0".into()))
+        );
     }
 
     #[test]
