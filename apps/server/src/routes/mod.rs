@@ -147,6 +147,7 @@ pub fn router(state: AppState) -> Router {
         .route("/duplicates/resolve", post(duplicates::resolve))
         .route("/duplicates/dismiss", post(duplicates::dismiss))
         .route("/tags", get(tags::list))
+        .route("/tag-corrections", get(tags::tag_corrections))
         .route("/tags/{name}", get(tags::detail).patch(tags::update))
         .route("/tags/{name}/aliases", post(tags::add_alias))
         .route(

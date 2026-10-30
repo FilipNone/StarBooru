@@ -326,6 +326,16 @@ pub struct PostPage {
     pub page: u32,
     pub limit: u32,
     pub has_more: bool,
+    /// Unknown tags the search corrected.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub corrected: Vec<TagCorrection>,
+}
+
+/// An unknown tag, and the existing tag it probably meant.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TagCorrection {
+    pub from: String,
+    pub to: String,
 }
 
 /// `POST /posts/import`: the server downloads `url` and adds it like an upload.
@@ -490,6 +500,9 @@ pub struct Explore {
     /// Added on today's date (UTC) in earlier years, newest first.
     pub on_this_day: Vec<Post>,
     pub random: Vec<Post>,
+    /// Unknown tags the search corrected.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub corrected: Vec<TagCorrection>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

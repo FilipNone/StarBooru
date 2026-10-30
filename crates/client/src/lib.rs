@@ -17,7 +17,7 @@ use starbooru_core::{
     PasswordChange, PasswordReset, Post, PostPage, PostUpdate, PurgeResult, Rating, RelatedPosts,
     RemotePage, RemoteSearch, ResolveDuplicates, RevokeResult, SaveSearchRequest, SavedSearch,
     ServerInfo, ServerSettings, ServerStats, SessionInfo, Share, SharedView, SignInMethods, Tag,
-    TagDetail, TagOrder, TagUpdate, Usage, User, UserUpdate, VoteRequest,
+    TagCorrection, TagDetail, TagOrder, TagUpdate, Usage, User, UserUpdate, VoteRequest,
 };
 use starbooru_core::{
     AiSettings, AiSettingsUpdate, AiStatus, LocalAiStatus, LocalTestResult, PanelTranslation,
@@ -680,6 +680,14 @@ impl Client {
         let req = self
             .request(Method::GET, "/tags")?
             .query(&[("q", prefix.to_owned()), ("limit", limit.to_string())]);
+        Self::send(req).await
+    }
+
+    /// "Did you mean" for the unknown names in a whitespace-separated list.
+    pub async fn tag_corrections(&self, names: &str) -> Result<Vec<TagCorrection>> {
+        let req = self
+            .request(Method::GET, "/tag-corrections")?
+            .query(&[("q", names.to_owned())]);
         Self::send(req).await
     }
 

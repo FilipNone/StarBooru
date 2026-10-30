@@ -5,7 +5,7 @@ use dioxus::prelude::*;
 use starbooru_client::{Client, ClientError};
 use starbooru_core::{
     AiStatus, EditKind, MediaKind, Neighbors, PanelTranslation, Post, PostUpdate, Rating,
-    SAMPLE_SIZE, TagSuggestion, TagSuggestions, TextBlock, edit_kind,
+    SAMPLE_SIZE, TagCorrection, TagSuggestion, TagSuggestions, TextBlock, edit_kind, normalize_tag,
 };
 
 use super::editor::EditorSheet;
@@ -77,6 +77,8 @@ pub fn PostView(id: i64, q: String) -> Element {
     let mut sharing = use_signal(|| false);
     let mut media_editing = use_signal(|| false);
     let mut tag_text = use_signal(String::new);
+    // The tag text as of the last finished word, for "did you mean".
+    let mut tag_check = use_signal(String::new);
     let mut rating = use_signal(Rating::default);
 
     let mut handle = move |result: Result<Post, ClientError>| match result {
@@ -412,10 +414,18 @@ pub fn PostView(id: i64, q: String) -> Element {
                                 rows: "5",
                                 spellcheck: "false",
                                 value: "{tag_text}",
-                                oninput: move |e| tag_text.set(e.value()),
+                                oninput: move |e| {
+                                    let text = e.value();
+                                    if text.ends_with(char::is_whitespace) {
+                                        tag_check.set(text.clone());
+                                    }
+                                    tag_text.set(text);
+                                },
+                                onblur: move |_| tag_check.set(tag_text()),
                             }
                         }
                         p { class: "muted hint", {t!("post-tags-hint")} }
+                        DidYouMean { tag_text, tag_check, saved: p.tags.clone() }
                         TagSuggester { id, tag_text, rating }
                         RatingPicker { value: rating() , onchange: move |r| rating.set(r) }
                         div { class: "row-end",
@@ -626,6 +636,80 @@ fn with_tag(text: &str, name: &str) -> String {
     }
     out.push_str(name);
     out
+}
+
+/// Whether a word of the tag text is the tag `name`.
+fn is_tag(word: &str, name: &str) -> bool {
+    normalize_tag(word).is_ok_and(|w| w == name)
+}
+
+/// Replaces the tag `from` in a whitespace-separated tag text, without
+/// repeating `to` if it is already there.
+fn replace_tag(text: &str, from: &str, to: &str) -> String {
+    let mut out: Vec<&str> = Vec::new();
+    for word in text.split_whitespace() {
+        let word = if is_tag(word, from) { to } else { word };
+        if !out.contains(&word) {
+            out.push(word);
+        }
+    }
+    out.join(" ")
+}
+
+/// The words of a tag text that aren't on the post yet.
+fn new_words(text: &str, saved: &[String]) -> String {
+    text.split_whitespace()
+        .filter(|word| !saved.iter().any(|s| s == word))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// "Did you mean" in the tag editor: a chip per unknown tag with a likely
+/// spelling, which replaces it. It's only a hint, so a failed request shows nothing.
+#[component]
+fn DidYouMean(tag_text: Signal<String>, tag_check: Signal<String>, saved: Vec<String>) -> Element {
+    let fixes = use_resource(move || {
+        let saved = saved.clone();
+        async move {
+            let words = new_words(&tag_check(), &saved);
+            let Some(client) = store::client().filter(|_| !words.is_empty()) else {
+                return Vec::new();
+            };
+            client.tag_corrections(&words).await.unwrap_or_default()
+        }
+    });
+    let current = tag_text();
+    let shown: Vec<TagCorrection> = fixes
+        .read()
+        .iter()
+        .flatten()
+        .filter(|fix| current.split_whitespace().any(|w| is_tag(w, &fix.from)))
+        .cloned()
+        .collect();
+    if shown.is_empty() {
+        return rsx! {};
+    }
+    rsx! {
+        div { class: "did-you-mean",
+            span { class: "muted", {t!("post-did-you-mean")} }
+            div { class: "chips",
+                for fix in shown {
+                    button {
+                        key: "{fix.from}",
+                        r#type: "button",
+                        class: "chip",
+                        title: t!("post-replace-tag", from = fix.from.as_str(), to = fix.to.as_str()),
+                        onclick: move |_| {
+                            let next = replace_tag(&tag_text.peek(), &fix.from, &fix.to);
+                            tag_text.set(next.clone());
+                            tag_check.set(next);
+                        },
+                        "{fix.from} → {fix.to}"
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// "Suggest tags" in the tag editor, shown only when the server has an AI
@@ -1302,6 +1386,16 @@ mod tests {
 
     #[test]
     fn adds_suggested_tags_once() {
+        assert_eq!(replace_tag("blnde cat", "blnde", "blonde"), "blonde cat");
+        assert_eq!(replace_tag("Blnde  cat ", "blnde", "blonde"), "blonde cat");
+        assert_eq!(
+            replace_tag("blnde blonde cat", "blnde", "blonde"),
+            "blonde cat"
+        );
+        assert_eq!(replace_tag("cat", "blnde", "blonde"), "cat");
+        let saved = ["cat".to_owned(), "sky".to_owned()];
+        assert_eq!(new_words("cat  blnde sky dgo ", &saved), "blnde dgo");
+        assert_eq!(new_words("cat sky", &saved), "");
         assert_eq!(with_tag("", "sky"), "sky");
         assert_eq!(with_tag("cat  ", "sky"), "cat sky");
         assert_eq!(with_tag("cat sky", "sky"), "cat sky");

@@ -3,10 +3,10 @@
 
 use chrono::Datelike;
 use dioxus::prelude::*;
-use starbooru_core::{DEFAULT_EXPLORE_DAYS, Order, Post, with_order};
+use starbooru_core::{DEFAULT_EXPLORE_DAYS, Order, Post, with_exact, with_order};
 
 use super::gallery::Thumb;
-use super::{ErrorBanner, Spinner};
+use super::{CorrectionBanner, ErrorBanner, Spinner};
 use crate::Route;
 use crate::icons::{Ico, Icon};
 use crate::store;
@@ -82,10 +82,15 @@ pub fn Explore(q: String) -> Element {
         },
         Some(Ok(found)) => {
             let random = shuffled().unwrap_or_else(|| found.random.clone());
+            let corrected = found.corrected.clone();
+            let exact = Route::Explore { q: with_exact(&q) };
             if random.is_empty() {
                 return rsx! {
                     div { class: "page explore",
                         h1 { class: "page-title", {t!("nav-explore")} }
+                        if !corrected.is_empty() {
+                            CorrectionBanner { corrected, exact }
+                        }
                         div { class: "card empty",
                             Ico { icon: Icon::Explore, size: 48 }
                             if q.trim().is_empty() {
@@ -105,6 +110,9 @@ pub fn Explore(q: String) -> Element {
             let tags = found.tags.clone();
             let on_this_day = found.on_this_day.clone();
             rsx! {
+                if !corrected.is_empty() {
+                    CorrectionBanner { corrected, exact }
+                }
                 section { class: "explore-section", aria_labelledby: "trending",
                     div { class: "section-head",
                         Ico { icon: Icon::TrendingUp }

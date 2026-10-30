@@ -4,13 +4,13 @@ use dioxus::prelude::*;
 use starbooru_core::color::{NAMED_COLORS, to_hex, wheel_color};
 use starbooru_core::saved::MAX_SEARCH_NAME_CHARS;
 use starbooru_core::{
-    BulkEdit, MAX_BULK_POSTS, MediaKind, Order, Post, Rating, SavedSearch, parse_query, with_color,
-    with_order,
+    BulkEdit, MAX_BULK_POSTS, MediaKind, Order, Post, Rating, SavedSearch, TagCorrection,
+    parse_query, with_color, with_exact, with_order,
 };
 
 use super::post::OPENING;
 use super::share::ShareSheet;
-use super::{Choice, ErrorBanner, Select, Spinner};
+use super::{Choice, CorrectionBanner, ErrorBanner, Select, Spinner};
 use crate::Route;
 use crate::cache;
 use crate::icons::{Ico, Icon};
@@ -55,6 +55,8 @@ pub fn Gallery(q: String) -> Element {
     // Bumped on every new search so late responses for an old query are dropped.
     let mut generation = use_signal(|| 0u64);
     let mut query = use_signal(|| q.clone());
+    // Unknown tags the search corrected.
+    let mut corrected = use_signal(Vec::<TagCorrection>::new);
 
     let mut load_more = move || {
         if *loading.peek() || !*has_more.peek() {
@@ -77,6 +79,7 @@ pub fn Gallery(q: String) -> Element {
                 Ok(found) => {
                     posts.write().extend(found.posts);
                     has_more.set(found.has_more);
+                    corrected.set(found.corrected);
                     next_page.set(page.saturating_add(1));
                 }
                 Err(e) if e.is_unauthorized() => store::forget_session(),
@@ -92,6 +95,7 @@ pub fn Gallery(q: String) -> Element {
         generation += 1;
         query.set(q);
         posts.write().clear();
+        corrected.write().clear();
         next_page.set(1);
         has_more.set(true);
         loading.set(false);
@@ -205,6 +209,12 @@ pub fn Gallery(q: String) -> Element {
             }
             if let Some(message) = notice() {
                 div { class: "banner info", role: "status", "{message}" }
+            }
+            if !corrected.read().is_empty() {
+                CorrectionBanner {
+                    corrected: corrected(),
+                    exact: Route::Gallery { q: with_exact(&q) },
+                }
             }
             if q.trim().is_empty() {
                 SavedList { saved }

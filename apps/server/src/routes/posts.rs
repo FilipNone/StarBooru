@@ -15,8 +15,8 @@ use starbooru_core::tag::normalize_tags;
 use starbooru_core::{
     BulkEdit, BulkResult, DEFAULT_PAGE_LIMIT, DEFAULT_RELATED_LIMIT, ImportRequest, MAX_BULK_POSTS,
     MAX_PAGE_LIMIT, MAX_RELATED_LIMIT, MediaKind, Neighbors, Post, PostPage, PostUpdate, Rating,
-    RelatedPosts, VoteRequest, is_count_tag, parse_query, parse_tag_list, required_tags,
-    split_category,
+    RelatedPosts, TagCorrection, VoteRequest, is_count_tag, parse_query, parse_tag_list,
+    required_tags, split_category,
 };
 use tracing::warn;
 
@@ -225,6 +225,38 @@ async fn figure_filter(state: &AppState, term: &FigureTerm) -> AppResult<Option<
             .map(|id| trees.remove(id).unwrap_or_else(|| vec![*id]))
             .collect(),
     }))
+}
+
+/// Corrects a search's unknown tags to the closest tags in use, unless it says
+/// `exact:true`, and says which it changed.
+pub(super) async fn correct_typos(
+    state: &AppState,
+    mut query: SearchQuery,
+) -> AppResult<(SearchQuery, Vec<TagCorrection>)> {
+    if query.exact {
+        return Ok((query, Vec::new()));
+    }
+    let names: Vec<String> = query
+        .include
+        .iter()
+        .chain(&query.exclude)
+        .chain(query.figures.iter().flat_map(|f| &f.tags))
+        .chain(query.exclude_figures.iter().flat_map(|f| &f.tags))
+        .cloned()
+        .collect();
+    let corrected = super::tags::corrections(&state.db, &names, true).await?;
+    if !corrected.is_empty() {
+        let lists = [&mut query.include, &mut query.exclude]
+            .into_iter()
+            .chain(query.figures.iter_mut().map(|f| &mut f.tags))
+            .chain(query.exclude_figures.iter_mut().map(|f| &mut f.tags));
+        for name in lists.flatten() {
+            if let Some(fix) = corrected.iter().find(|c| c.from == *name) {
+                name.clone_from(&fix.to);
+            }
+        }
+    }
+    Ok((query, corrected))
 }
 
 /// Resolves a search's tags; `None` when a searched tag doesn't exist, so
@@ -460,18 +492,17 @@ pub async fn search(
         .limit
         .unwrap_or(DEFAULT_PAGE_LIMIT)
         .clamp(1, MAX_PAGE_LIMIT);
-    let query = parse_query(&params.q)?;
-    let empty = || {
-        Json(PostPage {
+    let (query, corrected) = correct_typos(&state, parse_query(&params.q)?).await?;
+
+    let Some(tags) = tag_filter(&state, &query).await? else {
+        // a required tag does not exist
+        return Ok(Json(PostPage {
             posts: Vec::new(),
             page,
             limit,
             has_more: false,
-        })
-    };
-
-    let Some(tags) = tag_filter(&state, &query).await? else {
-        return Ok(empty()); // a required tag does not exist
+            corrected,
+        }));
     };
 
     let mut qb = select_page(user.id);
@@ -509,6 +540,7 @@ pub async fn search(
         page,
         limit,
         has_more,
+        corrected,
     }))
 }
 
@@ -550,6 +582,7 @@ pub async fn neighbors(
     if query.order.key == SortKey::Random {
         return Ok(Json(none));
     }
+    let (query, _) = correct_typos(&state, query).await?;
     let Some(tags) = tag_filter(&state, &query).await? else {
         return Ok(Json(none));
     };
@@ -1729,6 +1762,7 @@ pub async fn purge_posts(state: &AppState, which: Purge) -> AppResult<u64> {
 #[cfg(test)]
 mod tests {
     use axum::http::{Method, StatusCode};
+    use serde_json::json;
 
     use super::tag_weight;
 
@@ -1831,6 +1865,124 @@ mod tests {
         assert_eq!(found(&app, &t, "color:red+dull").await, vec![dull]);
         // Excluding isn't widened by what is stored.
         assert_eq!(found(&app, &t, "-color:red").await, vec![dull]);
+    }
+
+    fn corrected(body: &serde_json::Value) -> Vec<(String, String)> {
+        body["corrected"]
+            .as_array()
+            .map(|list| {
+                list.iter()
+                    .map(|c| {
+                        (
+                            c["from"].as_str().unwrap().to_owned(),
+                            c["to"].as_str().unwrap().to_owned(),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    #[tokio::test]
+    async fn an_unknown_tag_is_corrected_with_a_way_back() {
+        let Some(app) = testing::app().await else {
+            return;
+        };
+        let t = app.register("admin").await;
+        let blonde = upload_color(&app, &t, [10, 10, 10], "blonde_hair").await;
+        let cat = upload_color(&app, &t, [240, 240, 240], "cat").await;
+        let fix = |from: &str, to: &str| (from.to_owned(), to.to_owned());
+
+        assert_eq!(found(&app, &t, "blnde_hair").await, vec![blonde]);
+        let page = app.get("/api/v1/posts?q=blnde_hair", &t).await.json();
+        assert_eq!(corrected(&page), [fix("blnde_hair", "blonde_hair")]);
+
+        // short words too, where trigrams barely overlap
+        assert_eq!(found(&app, &t, "cta").await, vec![cat]);
+
+        // an excluded tag: without the fix it would exclude nothing
+        assert_eq!(found(&app, &t, "-blnde_hair").await, vec![cat]);
+        let page = app.get("/api/v1/posts?q=-blnde_hair", &t).await.json();
+        assert_eq!(corrected(&page), [fix("blnde_hair", "blonde_hair")]);
+
+        // inside a figure term, reported even when nothing matches
+        let page = app.get("/api/v1/posts?q=%7Bblnde_hair%7D", &t).await.json();
+        assert_eq!(corrected(&page), [fix("blnde_hair", "blonde_hair")]);
+
+        // one fixed and one hopeless: nothing matches, and it says what it did
+        let page = app
+            .get("/api/v1/posts?q=blnde_hair+qqqqqqqq", &t)
+            .await
+            .json();
+        assert_eq!(page["posts"], json!([]));
+        assert_eq!(corrected(&page), [fix("blnde_hair", "blonde_hair")]);
+
+        // the way back
+        let page = app
+            .get("/api/v1/posts?q=exact:true+blnde_hair", &t)
+            .await
+            .json();
+        assert_eq!(page["posts"], json!([]));
+        assert!(page.get("corrected").is_none(), "{page}");
+
+        // the same search in the viewer and on Explore
+        let r = app
+            .get(&format!("/api/v1/posts/{cat}/neighbors?q=blnde_hair"), &t)
+            .await
+            .json();
+        assert_eq!(r["next"], blonde);
+        let r = app
+            .get(
+                &format!("/api/v1/posts/{cat}/neighbors?q=exact:true+blnde_hair"),
+                &t,
+            )
+            .await
+            .json();
+        assert_eq!(r["next"], json!(null));
+        let r = app.get("/api/v1/explore?q=blnde_hair", &t).await.json();
+        assert_eq!(r["random"].as_array().unwrap().len(), 1);
+        assert_eq!(corrected(&r), [fix("blnde_hair", "blonde_hair")]);
+        app.finish().await;
+    }
+
+    #[tokio::test]
+    async fn only_unknown_tags_are_corrected_and_only_to_tags_in_use() {
+        let Some(app) = testing::app().await else {
+            return;
+        };
+        let t = app.register("admin").await;
+        upload_color(&app, &t, [10, 10, 10], "red_hat 4k tag_1").await;
+
+        // a tag that exists is meant, even with no posts
+        let r = app
+            .call(
+                axum::http::Method::PATCH,
+                "/api/v1/tags/red_hair",
+                Some(&t),
+                Some(json!({"category": "general"})),
+            )
+            .await;
+        assert_eq!(r.status, 200);
+        let page = app.get("/api/v1/posts?q=red_hair", &t).await.json();
+        assert_eq!(page["posts"], json!([]));
+        assert!(page.get("corrected").is_none(), "{page}");
+
+        // an unused tag isn't a correction: it would find nothing
+        let page = app.get("/api/v1/posts?q=red_hiar", &t).await.json();
+        assert_eq!(
+            corrected(&page),
+            [("red_hiar".to_owned(), "red_hat".to_owned())]
+        );
+        let page = app.get("/api/v1/posts?q=rde_hair", &t).await.json();
+        assert!(page.get("corrected").is_none(), "{page}");
+
+        // numbers stay
+        for q in ["8k", "tag_2", "qqqqqqqq"] {
+            let page = app.get(&format!("/api/v1/posts?q={q}"), &t).await.json();
+            assert_eq!(page["posts"], json!([]), "{q}");
+            assert!(page.get("corrected").is_none(), "{q}: {page}");
+        }
+        app.finish().await;
     }
 
     #[tokio::test]

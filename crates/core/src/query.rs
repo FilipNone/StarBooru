@@ -12,6 +12,7 @@
 //! * `date:2024-03`, `date:2023..2024`, `date:>30d`: the file's date, or the
 //!   upload date when it has none. `width:>1920`, `height:`, `mpixels:>8`,
 //!   `ratio:16:9`: its size. The forms are in `crate::filter`; `-` excludes.
+//! * `exact:true`: tags are taken as typed, without correcting unknown ones.
 //! * `color:red`, `color:2060e0`: the picture has that colour, or the nearest
 //!   one stored. `-color:` excludes. The forms are in `crate::color`.
 //! * `{girl blonde_hair boots}`: one person in the picture has all of
@@ -154,6 +155,15 @@ pub fn with_color(query: &str, value: Option<&str>) -> String {
     terms.join(" ")
 }
 
+/// Turns off correcting unknown tags for a query string, keeping every term
+/// as typed. It goes first, as an unclosed `{` runs to the end of the query.
+pub fn with_exact(query: &str) -> String {
+    if parse_query(query).is_ok_and(|q| q.exact) {
+        return query.to_owned();
+    }
+    format!("exact:true {}", query.trim())
+}
+
 /// A `{...}` term: one figure of the post has every tag, and the kind when given.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct FigureTerm {
@@ -191,6 +201,8 @@ pub struct SearchQuery {
     pub colors: Vec<ColorTerm>,
     /// `-color:` terms: it must have none.
     pub exclude_colors: Vec<ColorTerm>,
+    /// `exact:true`: don't correct unknown tags.
+    pub exact: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -375,6 +387,10 @@ pub fn parse_query(input: &str) -> Result<SearchQuery, QueryError> {
                     );
                     continue;
                 }
+                "exact" if !negated && value.eq_ignore_ascii_case("true") => {
+                    q.exact = true;
+                    continue;
+                }
                 "color" | "colour" => {
                     let color =
                         parse_color(value).ok_or_else(|| QueryError::BadColor(value.to_owned()))?;
@@ -437,6 +453,35 @@ fn push_unique<T: PartialEq>(v: &mut Vec<T>, item: T) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exact_is_only_a_term_when_true() {
+        let q = parse_query("exact:true cat").unwrap();
+        assert!(q.exact);
+        assert_eq!(q.include, ["cat"]);
+        assert!(parse_query("EXACT:True").unwrap().exact);
+        // anything else is a tag with a colon in it, like any unknown prefix
+        for term in ["exact:false", "exact:", "exact"] {
+            let q = parse_query(term).unwrap();
+            assert!(!q.exact, "{term}");
+            assert_eq!(q.include.len(), 1, "{term}");
+        }
+        let q = parse_query("-exact:true").unwrap();
+        assert!(!q.exact);
+        assert_eq!(q.exclude, ["exact:true"]);
+    }
+
+    #[test]
+    fn with_exact_adds_the_term_once() {
+        assert_eq!(with_exact("cat"), "exact:true cat");
+        assert_eq!(with_exact("  cat  dog "), "exact:true cat  dog");
+        assert_eq!(with_exact("exact:true cat"), "exact:true cat");
+        assert_eq!(with_exact("cat EXACT:TRUE"), "cat EXACT:TRUE");
+        // an unclosed brace can't swallow it
+        let q = parse_query(&with_exact("{girl cat")).unwrap();
+        assert!(q.exact);
+        assert_eq!(q.figures.first().unwrap().tags, ["cat"]);
+    }
 
     #[test]
     fn parses_colors() {

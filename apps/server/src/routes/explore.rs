@@ -11,7 +11,9 @@ use starbooru_core::{
     DEFAULT_EXPLORE_DAYS, Explore, MAX_EXPLORE_DAYS, Post, TagTrend, parse_query,
 };
 
-use super::posts::{PostRow, end_page, push_filters, select_page, tag_filter, to_post};
+use super::posts::{
+    PostRow, correct_typos, end_page, push_filters, select_page, tag_filter, to_post,
+};
 use super::tags::{TagRow, to_tag};
 use crate::auth::AuthUser;
 use crate::error::AppResult;
@@ -43,6 +45,7 @@ pub async fn explore(
         .clamp(1, MAX_EXPLORE_DAYS);
     let mut query = parse_query(&params.q)?;
     query.deleted = false;
+    let (query, corrected) = correct_typos(&state, query).await?;
     let now = Utc::now();
     let since = now - Duration::days(i64::from(days));
 
@@ -50,6 +53,7 @@ pub async fn explore(
         // A required tag does not exist, so nothing matches.
         return Ok(Json(Explore {
             days,
+            corrected,
             ..Explore::default()
         }));
     };
@@ -149,6 +153,7 @@ pub async fn explore(
         tags,
         on_this_day,
         random,
+        corrected,
     }))
 }
 

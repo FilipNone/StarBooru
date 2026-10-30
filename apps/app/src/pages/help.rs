@@ -46,6 +46,7 @@ fn sections() -> [(String, Vec<(&'static str, String)>); 5] {
                 ("color:red", t!("help-color")),
                 ("color:2060e0", t!("help-color-hex")),
                 ("-color:white", t!("help-color-not")),
+                ("exact:true", t!("help-exact")),
             ],
         ),
         (
@@ -255,6 +256,9 @@ pub fn explain(text: &str) -> Result<Vec<String>, String> {
     if lines.is_empty() || (lines.len() == 1 && q.deleted) {
         lines.push(t!("explain-every"));
     }
+    if q.exact {
+        lines.push(t!("explain-exact"));
+    }
     lines.push(order_phrase(q.order));
     Ok(lines)
 }
@@ -317,6 +321,22 @@ fn order_phrase(order: Order) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explains_exact() {
+        let exact = "Tags are taken exactly as typed".to_owned();
+        assert!(explain("exact:true cat").unwrap().contains(&exact));
+        assert!(!explain("cat").unwrap().contains(&exact));
+        // with nothing else, it still searches everything
+        assert_eq!(
+            explain("exact:true").unwrap(),
+            [
+                explain("").unwrap()[0].clone(),
+                exact,
+                "Newest first".to_owned()
+            ]
+        );
+    }
 
     #[test]
     fn explains_colors() {

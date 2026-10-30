@@ -115,7 +115,10 @@ Results at 1,000,000 posts (Ryzen 9 5900X, PostgreSQL 17 in Docker, default sett
 | `/posts?q=tag_4000` (a rare tag) | 18.8 ms |
 | `color:white`, `color:red`, `color:teal`, `color:000080`, `-color:white`, `tag_1 color:blue`, `color:red color:blue`, `color:red order:score` | 3.1–4.1 ms |
 | `color:ff00ff` (nothing stored nearby, so it widens the search) | 6.6 ms |
-| `tag_300 color:teal` (a rare tag and a rare colour) | 190 ms |
+| `tag_300 color:teal` (a rare tag and a rare colour; it varies between runs) | 13–190 ms |
+| `tgag_300` (corrected to `tag_300`) | 9.3 ms |
+| `qqqqqqqq` (nothing close) | 1.1 ms |
+| `/tag-corrections` with three names, two of them unknown | 4.5 ms |
 | `/posts?q=order:random` | 141 ms |
 | `/posts/{id}`, `/posts/{id}/neighbors`, tag search | under 1.2 ms |
 | `/posts/{id}/related` (a random hash, and a blank one shared by 10,000 posts) | 24–37 ms |

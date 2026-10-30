@@ -38,6 +38,8 @@ pub use tags::{TagPage, Tags};
 pub use trash::Trash;
 pub use upload::Upload;
 
+use starbooru_core::TagCorrection;
+
 use crate::Route;
 
 #[component]
@@ -50,6 +52,23 @@ pub fn NotFound(segments: Vec<String>) -> Element {
                 p { class: "muted", {t!("notfound-body", path = format!("/{path}"))} }
                 Link { class: "btn", to: Route::Gallery { q: String::new() }, {t!("notfound-back")} }
             }
+        }
+    }
+}
+
+/// Says which unknown tags a search corrected, with a link to the same search
+/// as typed (`exact`).
+#[component]
+pub fn CorrectionBanner(corrected: Vec<TagCorrection>, exact: Route) -> Element {
+    let tags = corrected
+        .iter()
+        .map(|c| format!("{} → {}", c.from, c.to))
+        .collect::<Vec<_>>()
+        .join(", ");
+    rsx! {
+        div { class: "banner info", role: "status",
+            span { {t!("search-corrected", tags = tags)} }
+            Link { class: "btn text", to: exact, {t!("search-exact")} }
         }
     }
 }

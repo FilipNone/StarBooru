@@ -125,7 +125,7 @@ A `Backup`'s `url` is a signed path relative to the server, valid for an hour. F
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
-| GET | `/posts?q=&page=&limit=` | | `PostPage {posts, page, limit, has_more}`. `page` starts at 1 (at most 10000); `limit` is at most 200, default 60. |
+| GET | `/posts?q=&page=&limit=` | | `PostPage {posts, page, limit, has_more, corrected?}`. `page` starts at 1 (at most 10000); `limit` is at most 200, default 60. `corrected` lists `TagCorrection {from, to}` for the unknown tags the search corrected; it is left out when there are none. |
 | POST | `/posts` | multipart: `file` (required), `tags` (space-separated), `rating` (`g`/`s`/`q`/`e`), `source` | `Post`, or 409 `duplicate` if the same file exists |
 | POST | `/posts/import` | `ImportRequest {url, tags?, rating?, source?}`. `tags` is a list; `source` defaults to `url`. | `Post`, like an upload. 400 for a non-http(s) address, credentials in the URL, a private-network address (unless the server allows them) or import turned off; 413 over the upload limit; 409 `duplicate`; 502 `fetch_failed` when the remote server errors, times out or redirects more than 5 times. |
 | GET | `/posts/{id}` | | `Post`, with `ocr_text` and `tag_details: [PostTag {name, category, section}]`. `section` is the top of the tag's parent chain (`clothing` for `boots`), the tag itself when it heads a tree, or null for a tag on its own; the viewer groups general tags by it. Also `figures`, the people in the picture (see [People](#people-in-a-post)), left out when there are none. The answers of `PATCH /posts/{id}`, the vote, restore and OCR rescan carry the same fields; lists leave them out. |
@@ -186,9 +186,12 @@ Terms are separated by spaces, with at most 40 terms.
 | `-date:…`, `-width:…`, `-color:…` and so on | excludes. A post of unknown size stays in. A bad value is a 400, not a tag search. |
 | `order:newest` (default), `order:oldest`, `order:score`, `order:size`, `order:pixels`, `order:longside`, `order:tags`, `order:updated`, `order:random` | sort (`sort:` works too). Add `_asc` or `_desc` to set the direction, e.g. `order:size_asc` for the smallest files first. `pixels` (or `mpixels`) is width × height; `longside` is the longer of the two; posts of unknown size sort last in both. `tags` is the tag count; `updated` is the last edit. |
 | `status:deleted` | browse the recycle bin |
+| `exact:true` | take tags as typed, without correcting unknown ones. Any other value is an ordinary tag name. |
 | `text:hello` / `text:"no parking"` / `-text:sale` | the text OCR read in the image has (or doesn't have) all these words, in any case. Quotes keep several words in one term; several `text:` terms all apply. Matches whole words (`simple` full-text search), at most 200 characters per term. |
 
 Tags are normalised: trimmed, lower-cased, spaces and underscores folded to one `_`, and at most 128 characters.
+
+A tag that is neither a tag nor an alias is corrected to the closest tag on at least one post, in included, excluded and `{...}` terms alike. It may be off by one edit up to 5 characters, two up to 11 and three beyond that, where a swap of neighbouring letters is one edit. Names under 3 characters are left alone, and digits must match exactly, so `4k` never becomes `8k`. At most 8 unknown names per query are looked up. A search and the viewer's neighbours and Explore all correct alike.
 
 ## Recycle bin
 
@@ -215,6 +218,7 @@ Fingerprints for posts uploaded before this feature are computed in the backgrou
 | Method | Path | Body | Returns |
 |---|---|---|---|
 | GET | `/tags?q=&order=&page=&limit=` | | `Tag[]`. `order` is `count` (most used first, the default) or `name`. Without `q`, only tags in use are listed. With `q` it is the autocomplete list: tags whose name or alias starts with `q`. `limit` is 1–100 (default 20). |
+| GET | `/tag-corrections?q=a+b` | | `TagCorrection[]`: "did you mean" for a whitespace-separated list being typed. The same rules as a search, except that tags on no post can be suggested. Names that are known, have a category prefix (`artist:x`) or aren't valid are skipped. |
 | GET | `/tags/{name}` | | `TagDetail {tag, aliases, implies, implied_by, ancestors, children}`. `ancestors` is the parent chain, top first; `children` the tags directly under it. An alias resolves to its tag. 404 if neither exists. |
 | PATCH | `/tags/{name}` | `TagUpdate {category?, parent?}` | `Tag`. Categories: `general`, `artist`, `character`, `copyright`, `meta`. `parent` names the tag to put it under (created if needed); `""` moves it to the top. Missing fields stay as they are, and a missing `{name}` is created. 409 `parent_cycle` if the parent is already under it; 400 for itself. Any signed-in user. |
 | POST | `/tags/{name}/aliases` | `{alias}` | `TagDetail`. Admin only. If a tag called `alias` exists, it is merged in: its posts, aliases, implications and child tags move to `{name}`, which also takes its parent if it has none, and it is deleted. 400 if `alias` is the tag itself. |
@@ -230,7 +234,7 @@ Tags are resolved the same way everywhere: an alias in a post's tags or in a sea
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
-| GET | `/explore?days=&q=` | | `Explore {days, trending, tags, on_this_day, random}`. `days` is the window, 1 to 365 (default 7). `trending`: up to 24 posts with the most net upvotes cast or changed in the window (only those above zero). `tags`: up to 20 `TagTrend {tag, recent}`, the tags most used on posts added in the window, without the tags `q` requires. `on_this_day`: up to 12 posts added on today's month and day (UTC) in earlier years, newest first. `random`: 12 random posts. `q` uses the search syntax and narrows every section; its `order:` and `status:` are ignored. 400 for a bad query. |
+| GET | `/explore?days=&q=` | | `Explore {days, trending, tags, on_this_day, random, corrected?}`. `days` is the window, 1 to 365 (default 7). `trending`: up to 24 posts with the most net upvotes cast or changed in the window (only those above zero). `tags`: up to 20 `TagTrend {tag, recent}`, the tags most used on posts added in the window, without the tags `q` requires. `on_this_day`: up to 12 posts added on today's month and day (UTC) in earlier years, newest first. `random`: 12 random posts. `q` uses the search syntax and narrows every section; its `order:` and `status:` are ignored, and `corrected` is as in `/posts`. 400 for a bad query. |
 
 ## Other boorus
 

@@ -8,8 +8,9 @@ use axum::extract::{Path, Query, State};
 use serde::Deserialize;
 use sqlx::{PgExecutor, PgPool, Postgres, Transaction};
 use starbooru_core::{
-    AliasRequest, ImplicationRequest, PostTag, SECTIONS, Tag, TagCategory, TagDetail, TagOrder,
-    TagUpdate, VOCAB, VOCAB_VERSION, normalize_tag, split_category,
+    AliasRequest, ImplicationRequest, PostTag, SECTIONS, Tag, TagCategory, TagCorrection,
+    TagDetail, TagOrder, TagUpdate, VARIANTS, VOCAB, VOCAB_VERSION, closest_tag, normalize_tag,
+    split_category,
 };
 
 use crate::auth::AuthUser;
@@ -22,6 +23,10 @@ const MAX_TAG_PAGE: u32 = 10_000;
 const TAG_GRAPH_LOCK: i64 = 7276;
 /// Parent chains are followed this far at most.
 const MAX_DEPTH: i32 = 32;
+/// Unknown names looked up for a correction in one request.
+const MAX_CORRECTIONS: usize = 8;
+/// Names checked in one `GET /tag-corrections`.
+const MAX_CHECKED_NAMES: usize = 200;
 
 #[derive(Deserialize)]
 pub struct TagQuery {
@@ -98,6 +103,84 @@ pub async fn list(
         .push_bind(offset);
     let rows: Vec<TagRow> = qb.build_query_as().fetch_all(&state.db).await?;
     Ok(Json(rows.into_iter().map(to_tag).collect()))
+}
+
+/// Tags spelled like `name` with at least `min_posts` posts, and their counts:
+/// those `pg_trgm` finds similar, plus names as long with the same first letter,
+/// as short words share few trigrams (`cta` and `cat`).
+async fn spelled_like(db: &PgPool, name: &str, min_posts: i32) -> AppResult<Vec<(String, i32)>> {
+    let first: String = name.chars().take(1).collect();
+    let length = i32::try_from(name.chars().count()).unwrap_or(i32::MAX);
+    Ok(sqlx::query_as(
+        "(SELECT name, post_count FROM tags WHERE name % $1 AND post_count >= $2 \
+           ORDER BY similarity(name, $1) DESC, post_count DESC LIMIT 20) \
+         UNION \
+         (SELECT name, post_count FROM tags WHERE name LIKE $3 ESCAPE '\\' \
+           AND char_length(name) BETWEEN $4 AND $5 AND post_count >= $2 \
+           ORDER BY post_count DESC LIMIT 200)",
+    )
+    .bind(name)
+    .bind(min_posts)
+    .bind(like_prefix(&first))
+    .bind(length.saturating_sub(1))
+    .bind(length.saturating_add(1))
+    .fetch_all(db)
+    .await?)
+}
+
+/// For each of `names` that no tag or alias has, the tag it probably meant, if
+/// any. `used_only` leaves out tags on no post, where a search would find nothing.
+pub(super) async fn corrections(
+    db: &PgPool,
+    names: &[String],
+    used_only: bool,
+) -> AppResult<Vec<TagCorrection>> {
+    if names.is_empty() {
+        return Ok(Vec::new());
+    }
+    let unknown: Vec<String> = sqlx::query_scalar(
+        "SELECT n.name FROM unnest($1::text[]) WITH ORDINALITY AS n(name, ord) \
+         WHERE NOT EXISTS (SELECT 1 FROM tags t WHERE t.name = n.name) \
+           AND NOT EXISTS (SELECT 1 FROM tag_aliases a WHERE a.alias = n.name) \
+         ORDER BY n.ord",
+    )
+    .bind(names)
+    .fetch_all(db)
+    .await?;
+    let mut out: Vec<TagCorrection> = Vec::new();
+    for name in unknown.into_iter().take(MAX_CORRECTIONS) {
+        if out.iter().any(|c| c.from == name) {
+            continue;
+        }
+        let candidates = spelled_like(db, &name, i32::from(used_only)).await?;
+        let closest = closest_tag(&name, candidates.iter().map(|(n, c)| (n.as_str(), *c)));
+        if let Some(to) = closest.map(str::to_owned) {
+            out.push(TagCorrection { from: name, to });
+        }
+    }
+    Ok(out)
+}
+
+#[derive(Deserialize)]
+pub struct CorrectionQuery {
+    #[serde(default)]
+    q: String,
+}
+
+/// `GET /tag-corrections?q=a+b`: "did you mean" for the unknown names in a
+/// list being typed. A name with a category prefix is a new tag on purpose.
+pub async fn tag_corrections(
+    State(state): State<AppState>,
+    _user: AuthUser,
+    Query(q): Query<CorrectionQuery>,
+) -> AppResult<Json<Vec<TagCorrection>>> {
+    let names: Vec<String> =
+        q.q.split_whitespace()
+            .take(MAX_CHECKED_NAMES)
+            .filter_map(|name| normalize_tag(name).ok())
+            .filter(|name| split_category(name).0.is_none())
+            .collect();
+    Ok(Json(corrections(&state.db, &names, false).await?))
 }
 
 /// Drops category prefixes (`artist:`), replaces aliases with their tag and removes duplicates,
@@ -477,6 +560,21 @@ pub async fn seed_vocab(db: &PgPool) -> AppResult<bool> {
     .bind(&links)
     .execute(&mut *tx)
     .await?;
+    for (alias, tag) in VARIANTS {
+        let taken: bool =
+            sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM tag_aliases WHERE alias = $1)")
+                .bind(*alias)
+                .fetch_one(&mut *tx)
+                .await?;
+        if taken {
+            continue;
+        }
+        let target = find_or_create(&mut tx, tag).await?;
+        // The other way round already: someone made the tag an alias of this name.
+        if target.1 != *alias {
+            alias_into(&mut tx, &target, alias).await?;
+        }
+    }
     sqlx::query(
         "INSERT INTO server_settings (id, vocab_version) VALUES (true, $1) \
          ON CONFLICT (id) DO UPDATE SET vocab_version = EXCLUDED.vocab_version",
@@ -551,16 +649,28 @@ pub async fn add_alias(
     let mut tx = state.db.begin().await?;
     lock_tag_graph(&mut tx).await?;
     let target = find_or_create(&mut tx, &name).await?;
-    let target_id = target.0;
     if alias == target.1 {
         return Err(AppError::BadRequest(
             "a tag can't be an alias of itself".into(),
         ));
     }
+    alias_into(&mut tx, &target, &alias).await?;
+    tx.commit().await?;
+    let tag = find(&state.db, &target.1).await?;
+    Ok(Json(detail_of(&state.db, tag).await?))
+}
 
+/// Makes `alias` another name for `target`. A tag with that name is merged in:
+/// its posts, aliases and implications move over.
+async fn alias_into(
+    tx: &mut Transaction<'_, Postgres>,
+    target: &TagRow,
+    alias: &str,
+) -> AppResult<()> {
+    let target_id = target.0;
     let old: Option<i64> = sqlx::query_scalar("SELECT id FROM tags WHERE name = $1")
-        .bind(&alias)
-        .fetch_optional(&mut *tx)
+        .bind(alias)
+        .fetch_optional(&mut **tx)
         .await?;
     if let Some(old_id) = old {
         sqlx::query(
@@ -570,36 +680,36 @@ pub async fn add_alias(
         )
         .bind(old_id)
         .bind(target_id)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
         sqlx::query("UPDATE tag_aliases SET tag_id = $2 WHERE tag_id = $1")
             .bind(old_id)
             .bind(target_id)
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await?;
         // Its children move under the target, which takes its place in the
         // tree when it has none of its own.
         sqlx::query("UPDATE tags SET parent_id = $2 WHERE parent_id = $1 AND id <> $2")
             .bind(old_id)
             .bind(target_id)
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await?;
         let old_parent: Option<TagRow> = sqlx::query_as(
             "SELECT p.id, p.name, p.category, p.post_count FROM tags o \
              JOIN tags p ON p.id = o.parent_id WHERE o.id = $1",
         )
         .bind(old_id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&mut **tx)
         .await?;
         let target_parent: Option<i64> =
             sqlx::query_scalar("SELECT parent_id FROM tags WHERE id = $1")
                 .bind(target_id)
-                .fetch_one(&mut *tx)
+                .fetch_one(&mut **tx)
                 .await?;
         if let Some(parent) = old_parent.filter(|p| p.0 != target_id)
             && target_parent.is_none_or(|p| p == old_id)
         {
-            match set_parent(&mut tx, &target, Some(&parent)).await {
+            match set_parent(tx, target, Some(&parent)).await {
                 Err(AppError::Conflict { .. }) => {} // it would loop: stays at the top
                 other => other?,
             }
@@ -612,7 +722,7 @@ pub async fn add_alias(
         )
         .bind(old_id)
         .bind(target_id)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
         sqlx::query(
             "INSERT INTO figure_tags (figure_id, tag_id, slot, position) \
@@ -621,26 +731,24 @@ pub async fn add_alias(
         )
         .bind(old_id)
         .bind(target_id)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
         sqlx::query("DELETE FROM tags WHERE id = $1")
             .bind(old_id)
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await?;
-        apply_implications(&mut tx, target_id).await?;
+        apply_implications(tx, target_id).await?;
+        recount(tx, &[target_id]).await?;
     }
     sqlx::query(
         "INSERT INTO tag_aliases (alias, tag_id) VALUES ($1, $2) \
          ON CONFLICT (alias) DO UPDATE SET tag_id = EXCLUDED.tag_id",
     )
-    .bind(&alias)
+    .bind(alias)
     .bind(target_id)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
-    recount(&mut tx, &[target_id]).await?;
-    tx.commit().await?;
-    let tag = find(&state.db, &target.1).await?;
-    Ok(Json(detail_of(&state.db, tag).await?))
+    Ok(())
 }
 
 /// `DELETE /tags/{name}/aliases/{alias}` (admin).
@@ -1077,6 +1185,106 @@ mod tests {
         assert_eq!(r.status, StatusCode::OK, "{:?}", r.json());
         assert_eq!(r.json()["ancestors"][0]["name"], "hair_color");
         assert_eq!(r.json()["children"][0]["name"], "platinum_blond_hair");
+        app.finish().await;
+    }
+
+    #[tokio::test]
+    async fn spelling_variants_become_aliases() {
+        let Some(app) = testing::app().await else {
+            return;
+        };
+        let admin = app.register("admin").await;
+        let name = |d: &serde_json::Value| d["tag"]["name"].as_str().unwrap().to_owned();
+        let add_alias = |tag: &'static str, alias: &'static str| {
+            let (app, admin) = (&app, &admin);
+            async move {
+                let r = app
+                    .call(
+                        Method::POST,
+                        &format!("/api/v1/tags/{tag}/aliases"),
+                        Some(admin),
+                        Some(json!({"alias": alias})),
+                    )
+                    .await;
+                assert_eq!(r.status, StatusCode::OK);
+            }
+        };
+        // Posts under a variant spelling, and with both spellings.
+        let gray = app.upload_png(&admin, 1, "gray_hair").await;
+        let both = app.upload_png(&admin, 2, "gray_hair grey_hair").await;
+        // Someone's own choices win: an alias elsewhere, and a tag the other way round.
+        add_alias("my_blonde", "blond_hair").await;
+        add_alias("two_boys", "2boys").await;
+        assert!(seed_vocab(app.db()).await.unwrap());
+
+        // Merged: the posts move over, and the old name now leads to the tag.
+        assert_eq!(tags_of(&app, &admin, gray).await, json!(["grey_hair"]));
+        assert_eq!(tags_of(&app, &admin, both).await, json!(["grey_hair"]));
+        let d = app.get("/api/v1/tags/gray_hair", &admin).await.json();
+        assert_eq!(name(&d), "grey_hair");
+        assert_eq!(d["tag"]["post_count"], 2);
+        // Not on any post yet: still an alias, for the next upload and search.
+        let one_girl = app.upload_png(&admin, 3, "one_girl").await;
+        assert_eq!(tags_of(&app, &admin, one_girl).await, json!(["1girl"]));
+        let found = app.get("/api/v1/posts?q=one_girl", &admin).await.json();
+        assert_eq!(found["posts"][0]["id"], one_girl);
+        assert!(found.get("corrected").is_none(), "{found}");
+
+        let d = app.get("/api/v1/tags/blond_hair", &admin).await.json();
+        assert_eq!(name(&d), "my_blonde");
+        let d = app.get("/api/v1/tags/2boys", &admin).await.json();
+        assert_eq!(name(&d), "two_boys");
+        app.finish().await;
+    }
+
+    #[tokio::test]
+    async fn the_editor_asks_what_a_new_tag_meant() {
+        let Some(app) = testing::app().await else {
+            return;
+        };
+        let t = app.register("admin").await;
+        app.upload_png(&t, 1, "red_hat cat").await;
+        let r = app
+            .call(
+                Method::POST,
+                "/api/v1/tags/cat/aliases",
+                Some(&t),
+                Some(json!({"alias": "kitty"})),
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::OK);
+        // In the vocabulary but on no post: fine to suggest for tagging.
+        patch(&app, &t, "red_hair", json!({"category": "general"})).await;
+
+        let ask = |q: &'static str| {
+            let (app, t) = (&app, &t);
+            async move {
+                let r = app.get(&format!("/api/v1/tag-corrections?q={q}"), t).await;
+                assert_eq!(r.status, StatusCode::OK);
+                r.json()
+            }
+        };
+        assert_eq!(
+            ask("rde_hair+cta").await,
+            json!([
+                {"from": "rde_hair", "to": "red_hair"},
+                {"from": "cta", "to": "cat"},
+            ])
+        );
+        // Known names, aliases, new tags with a category, far-off and empty names.
+        for q in [
+            "cat+kitty+red_hat",
+            "artist:cta",
+            "character:rde_hair",
+            "qqqqqqqq",
+            "",
+        ] {
+            assert_eq!(ask(q).await, json!([]), "{q}");
+        }
+        // Spelled as typed, it still gets normalised.
+        assert_eq!(ask("CTA").await, json!([{"from": "cta", "to": "cat"}]));
+        let r = app.get("/api/v1/tag-corrections?q=cta", "bad-token").await;
+        assert_eq!(r.status, StatusCode::UNAUTHORIZED);
         app.finish().await;
     }
 

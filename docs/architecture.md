@@ -18,7 +18,7 @@ The desktop and Android apps are the same Dioxus code as the web app. Each one a
 
 | Crate | Role |
 |---|---|
-| `crates/core` (`starbooru-core`) | API models (`Post`, `Tag`, `User`, …), tag normalisation, the starter tag tree and category prefixes (`vocab.rs`), the search query parser, the other-booru request and its checks (`remote.rs`). Pure Rust, no I/O. |
+| `crates/core` (`starbooru-core`) | API models (`Post`, `Tag`, `User`, …), tag normalisation, the starter tag tree, spelling variants and category prefixes (`vocab.rs`), which tag a typo meant (`typo.rs`), the search query parser, the other-booru request and its checks (`remote.rs`). Pure Rust, no I/O. |
 | `crates/client` (`starbooru-client`) | `Client`: one async method per endpoint, with a bearer token. Maps HTTP errors to `ClientError`. On Android it trusts the system's CA folder (`roots.rs`), because reqwest's platform verifier needs JNI setup and a Java helper in the APK. A `429` is retried twice after the `Retry-After` wait (at most 30 s) before it surfaces as `RateLimited { retry_after }`. Runs on wasm and native. |
 | `apps/server` (`starbooru-server`) | axum router, auth, posts, tags, storage, thumbnails, signed media. |
 | `apps/app` (`starbooru-app`) | Dioxus 0.7 UI. Feature `web`, `desktop` or `mobile` selects the renderer. |
@@ -63,7 +63,7 @@ PostgreSQL schema: `apps/server/migrations/`.
 | `server_settings` | One row of admin overrides (name, open registration, recycle-bin days, automatic meta tags, backup schedule); NULL follows the environment variable |
 | `post_translations` | Text drawn over an image, per post and language: blocks (box, original, translation) as JSONB, and the model that made them |
 | `sessions` | The SHA-256 of each bearer token (`sb_<64 hex>`) and its expiry, 90 days. The plain token is never stored. Also an `id` for the settings page, `last_used_at` (refreshed at most every 5 minutes) and `client`, a short description like "Firefox on Linux" (`starbooru_core::agent`); the raw User-Agent is not kept. Native apps send `StarBooru-app/<version> (<os>)`. |
-| `tags` | Normalised name, category (general / artist / character / copyright / meta), `parent_id` (the tag tree; loops are refused) and a `post_count` kept in step inside the same transaction as post edits. `server_settings.vocab_version` records which starter vocabulary (`starbooru_core::vocab`) was seeded at startup. |
+| `tags` | Normalised name, category (general / artist / character / copyright / meta), `parent_id` (the tag tree; loops are refused) and a `post_count` kept in step inside the same transaction as post edits. `server_settings.vocab_version` records which starter vocabulary (`starbooru_core::vocab`) was seeded at startup, including its spelling variants as aliases. A GIN `pg_trgm` index on the name finds tags spelled alike. |
 | `posts` | One per file: `sha256` (unique, so duplicates are refused), format, size, dimensions, rating, source, score, `tag_ids BIGINT[]`, `deleted_at` (soft delete), `phash`/`pcolor`, the duplicate finder's fingerprint of the thumbnail, `file_date`, the date in the file (`file_date_scanned` says it was looked at), `meta_tagged_at`, when the automatic meta tags were added (NULL: not yet), and `meta_version`, the version of their rules the post has had |
 | `figures` | The people in a post, in order (`position`), with a `kind`: girl, boy or other. Replaced as a whole by `PUT /posts/{id}/figures`. |
 | `figure_tags` | A figure's tags with their `slot` (0 character, 1 cosplay, 2–12 head to other). These tags are on `posts.tag_ids` too; this table answers "one figure has all of these" and the viewer. |
@@ -120,11 +120,12 @@ Uploads work these out at ingest. A startup backfill (`backfill_colors`) reads t
 
 Tags are stored on each post as a `BIGINT[]` with a GIN index. A query like `blue_sky night -cloud rating:g order:score` becomes:
 
-1. The tag names are resolved to ids, following aliases, and each is expanded to the tags below it in the tree (a recursive CTE on `parent_id`, at most 32 levels). If an included tag doesn't exist, the result is empty, with no scan.
-2. The SQL is `tag_ids @> {leaf tags} AND tag_ids && {each parent's tree} AND NOT tag_ids && {excluded trees} AND rating = ANY(...)`.
+1. Unknown tags are corrected, unless the query says `exact:true` (`correct_typos` in `routes/posts.rs`). One query finds the names that are neither a tag nor an alias. For each, `tags::spelled_like` fetches candidates in use: the top 20 by `pg_trgm` similarity, plus up to 200 of about the same length with the same first letter, as short words share few trigrams. `starbooru_core::closest_tag` then picks one by edit distance. The corrected query is what the rest of the search uses, so the corrections are the same in the gallery, the viewer's neighbours and Explore, and known names cost only that one query.
+2. The tag names are resolved to ids, following aliases, and each is expanded to the tags below it in the tree (a recursive CTE on `parent_id`, at most 32 levels). If an included tag doesn't exist, the result is empty, with no scan.
+3. The SQL is `tag_ids @> {leaf tags} AND tag_ids && {each parent's tree} AND NOT tag_ids && {excluded trees} AND rating = ANY(...)`.
    A `{girl blonde_hair boots}` term adds `EXISTS` over `figures` and `figure_tags`. A figure's tags are on the post too, so each of its tags also goes into the `tag_ids &&` filter and the GIN index narrows the search first.
-3. Rows are ordered by id, score or random, and paginated by limit and offset (at most 200 per page).
-4. The ordered, paginated query selects only post ids. The full rows, with tag names and the caller's vote, are built for the ids on the page (`select_page` in `routes/posts.rs`). So rows an `OFFSET` skips cost nothing extra.
+4. Rows are ordered by id, score or random, and paginated by limit and offset (at most 200 per page).
+5. The ordered, paginated query selects only post ids. The full rows, with tag names and the caller's vote, are built for the ids on the page (`select_page` in `routes/posts.rs`). So rows an `OFFSET` skips cost nothing extra.
 
 Partial indexes cover live posts, so the recycle bin doesn't slow normal browsing. Explore runs its four sections in parallel. Its random picks come from a sample of the table's pages (`TABLESAMPLE SYSTEM`) once the collection has more than 20,000 posts. When the sample has too few matches for a rare search, all the matches are sorted instead. Timings at a million posts are in `development.md` › *Speed at scale*. The query syntax is in `api.md`.
 

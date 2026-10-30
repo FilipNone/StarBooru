@@ -1,15 +1,61 @@
 //! The starter tag hierarchy: sections (the top-level tags), the groups
 //! inside them and common Danbooru-style tags under those, with parent
 //! links. The server seeds it once per [`VOCAB_VERSION`]; after that the
-//! tags are ordinary tags people can move, rename or delete.
+//! tags are ordinary tags people can move, rename or delete. [`VARIANTS`]
+//! are other spellings of them, seeded as aliases.
 //!
 //! Searching a tag finds posts with any tag below it, so `footwear` finds
 //! `boots`, and the viewer shows a post's general tags under their section.
 
 use crate::model::TagCategory;
 
-/// Bump when [`VOCAB`] gains entries, so servers seed the new ones.
-pub const VOCAB_VERSION: i32 = 2;
+/// Bump when [`VOCAB`] or [`VARIANTS`] gains entries, so servers seed the new ones.
+pub const VOCAB_VERSION: i32 = 3;
+
+/// Other spellings of the vocabulary's tags (alias, tag). A tag already called
+/// that is merged into the tag; an alias someone already has stays as it is.
+pub const VARIANTS: &[(&str, &str)] = &[
+    ("one_girl", "1girl"),
+    ("two_girls", "2girls"),
+    ("three_girls", "3girls"),
+    ("four_girls", "4girls"),
+    ("five_girls", "5girls"),
+    ("one_boy", "1boy"),
+    ("two_boys", "2boys"),
+    ("three_boys", "3boys"),
+    ("four_boys", "4boys"),
+    ("five_boys", "5boys"),
+    ("blond_hair", "blonde_hair"),
+    ("gray_hair", "grey_hair"),
+    ("gray_eyes", "grey_eyes"),
+    ("grayscale", "greyscale"),
+    ("hair_colour", "hair_color"),
+    ("eye_colour", "eye_color"),
+    ("multicoloured_hair", "multicolored_hair"),
+    ("coloured_skin", "colored_skin"),
+    ("watercolor", "watercolor_(medium)"),
+    ("watercolour", "watercolor_(medium)"),
+    ("pony_tail", "ponytail"),
+    ("twin_tails", "twintails"),
+    ("hair_band", "hairband"),
+    ("hair_clip", "hairclip"),
+    ("tan_lines", "tanlines"),
+    ("close_up", "close-up"),
+    ("closeup", "close-up"),
+    ("t_shirt", "t-shirt"),
+    ("tshirt", "t-shirt"),
+    ("swim_suit", "swimsuit"),
+    ("one_piece_swimsuit", "one-piece_swimsuit"),
+    ("thigh_highs", "thighhighs"),
+    ("knee_highs", "kneehighs"),
+    ("panty_hose", "pantyhose"),
+    ("bare_foot", "barefoot"),
+    ("bow_tie", "bowtie"),
+    ("sun_glasses", "sunglasses"),
+    ("head_phones", "headphones"),
+    ("line_art", "lineart"),
+    ("pixelart", "pixel_art"),
+];
 
 /// The sections, in the order the viewer shows them.
 pub const SECTIONS: &[&str] = &[
@@ -353,6 +399,25 @@ pub fn split_category(tag: &str) -> (Option<TagCategory>, &str) {
 mod tests {
     use super::*;
     use crate::tag::normalize_tag;
+
+    #[test]
+    fn every_variant_points_at_a_vocabulary_tag() {
+        let known = |name: &str| SECTIONS.contains(&name) || VOCAB.iter().any(|(t, _)| *t == name);
+        for (i, (alias, tag)) in VARIANTS.iter().enumerate() {
+            assert_eq!(normalize_tag(alias).as_deref(), Ok(*alias), "{alias}");
+            assert!(known(tag), "{alias}: {tag} isn't in the vocabulary");
+            assert!(!known(alias), "{alias} is a vocabulary tag itself");
+            assert_eq!(
+                split_category(alias),
+                (None, *alias),
+                "{alias} looks like a prefix"
+            );
+            assert!(
+                !VARIANTS.iter().skip(i + 1).any(|(other, _)| other == alias),
+                "{alias} appears twice"
+            );
+        }
+    }
 
     #[test]
     fn every_entry_is_a_valid_tag_with_a_known_parent() {

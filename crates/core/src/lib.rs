@@ -21,6 +21,7 @@ pub mod remote;
 pub mod saved;
 pub mod share;
 pub mod tag;
+pub mod typo;
 pub mod vocab;
 
 pub use admin::{
@@ -47,14 +48,17 @@ pub use local_ai::{
 pub use model::*;
 pub use oidc::{Identity, OidcBegin, OidcError, OidcFinish, OidcStart, SignInMethods};
 pub use panels::{PanelTranslation, TextBlock, panel_prompt, parse_panel_blocks};
-pub use query::{FigureTerm, Order, SearchQuery, SortKey, parse_query, with_color, with_order};
+pub use query::{
+    FigureTerm, Order, SearchQuery, SortKey, parse_query, with_color, with_exact, with_order,
+};
 pub use remote::{
     BooruApi, BooruSite, RemoteError, RemotePage, RemotePost, RemoteSearch, SITES, remote_tags,
 };
 pub use saved::clean_saved_search;
 pub use share::{NewShare, Share, ShareError, SharedPost, SharedView};
 pub use tag::{normalize_tag, parse_tag_list};
-pub use vocab::{SECTIONS, VOCAB, VOCAB_VERSION, split_category};
+pub use typo::closest_tag;
+pub use vocab::{SECTIONS, VARIANTS, VOCAB, VOCAB_VERSION, split_category};
 
 /// Path prefix of the versioned JSON API.
 pub const API_PREFIX: &str = "/api/v1";
