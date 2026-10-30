@@ -5,3 +5,4 @@
 /apps/app/dist
 .DS_Store
 *.vsix
+/docs/media to test around
