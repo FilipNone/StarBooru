@@ -21,7 +21,7 @@ use crate::icons::{Ico, Icon};
 use crate::power;
 use crate::store;
 use crate::util::{format_duration, human_size, rating_label};
-use crate::zoom::{STEP, Zoom};
+use crate::zoom::{STEP, Zoom, wheel_factor};
 
 /// Keys the viewer handles, sent from a page-wide listener. Typing in a
 /// field never triggers them.
@@ -1219,12 +1219,10 @@ fn Stage(
                     return;
                 }
                 e.prevent_default();
-                let dy = e.delta().strip_units().y;
+                let factor = wheel_factor(e.delta());
                 let at = e.client_coordinates();
                 spawn(async move {
                     let r = measure().await;
-                    // About 10% per notch of a mouse wheel.
-                    let factor = (-dy / 1000.0).exp();
                     zoom.set(zoom().zoom_at(factor, from_centre(at, r), size_of(r)));
                 });
             },
