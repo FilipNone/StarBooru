@@ -44,6 +44,8 @@ dx bundle --web --release -p starbooru-app --out-dir dist
 STARBOORU_WEB_DIR=$PWD/dist/public cargo run -p starbooru-server
 ```
 
+Local AI needs the worker: `cargo build -p starbooru-ai-worker` (`target/debug/` is next to the server; the VS Code runner does this for you). The server downloads the pinned ONNX Runtime into `<data>/ai/runtime/` by itself on Linux x86-64 and ARM64. Elsewhere, point `STARBOORU_ORT_LIB` at a `libonnxruntime` 1.31.
+
 ## Run the clients
 
 ```sh
@@ -76,6 +78,8 @@ Server integration tests run the real router against PostgreSQL. Each test creat
 ```sh
 export STARBOORU_TEST_DATABASE_URL=postgres://starbooru:devpass@127.0.0.1:55432/starbooru
 ```
+
+The AI worker's tests in `apps/ai-worker/tests/worker.rs` also run models when `STARBOORU_ORT_LIB` and `STARBOORU_AI_MODELS` are set.
 
 The harness is `apps/server/src/testing.rs`. Tests for video, AVIF and JPEG XL thumbnails need `ffmpeg` on `PATH` and are skipped without it.
 

@@ -1,9 +1,14 @@
-# Gives the local AI runtime the GPU, through Vulkan: integrated Intel and
-# AMD graphics and AMD Radeon cards. Use it with the local-ai profile:
-#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml --profile local-ai up -d
-# NVIDIA cards need the NVIDIA Container Toolkit and a `deploy` block
-# instead; see docs/deployment.md.
+# Local AI on AMD and Intel graphics, or NVIDIA's Vulkan driver:
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+# Where /dev/dri/renderD128 isn't open to everyone, set STARBOORU_RENDER_GID to
+# its group: stat -c %g /dev/dri/renderD128
 services:
-  ollama:
+  starbooru:
+    build:
+      context: .
+      args:
+        AI_GPU: vulkan
     devices:
       - /dev/dri:/dev/dri
+    group_add:
+      - "${STARBOORU_RENDER_GID:-44}"

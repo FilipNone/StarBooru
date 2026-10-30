@@ -161,7 +161,7 @@ class Runner {
     switch (id) {
       case 'server':
         return {
-          command: 'cargo run -p starbooru-server',
+          command: 'cargo build -p starbooru-ai-worker && cargo run -p starbooru-server',
           env: {
             DATABASE_URL: `postgres://starbooru:${DB_PASSWORD}@127.0.0.1:${s.databasePort}/starbooru`,
             STARBOORU_SECRET: DEV_SECRET,

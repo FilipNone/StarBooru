@@ -90,15 +90,15 @@ Admins can change the name, open registration, the recycle-bin days and the back
 | `STARBOORU_OCR` | `true` | Read text in still images with tesseract (installed in the image), for `text:` search and the viewer's *Text in image*. Runs on the server only; no image leaves it. `off` turns it off; a path picks another tesseract. Without tesseract it is quietly off (logged once at start). Older posts are read in the background at each start. |
 | `STARBOORU_OCR_LANGS` | `eng` (`eng+jpn+jpn_vert` in `docker-compose.yml`) | tesseract languages, joined with `+`, e.g. `eng+ita`. The image has English and Japanese (`jpn` across, `jpn_vert` down, for manga); fewer languages read faster. For another language add its package (`tesseract-ocr-ita`) in the `Dockerfile` first. |
 | `STARBOORU_URL_IMPORT` | `on` | Import from URL: `on` (public addresses only), `private` (also private-network addresses, e.g. a NAS; anyone with an account can then make the server fetch from your LAN), `off` |
-| `STARBOORU_AI_URL` | unset | Base URL of a hosted OpenAI-compatible API, such as `https://openrouter.ai/api/v1`, `https://api.openai.com/v1` or `https://generativelanguage.googleapis.com/v1beta/openai`. Unset turns the hosted provider off. Thumbnails of posts, and the text of images being translated, are sent to it. Admins can change every AI setting in Administration › Server. |
-| `STARBOORU_AI_MODEL` | unset | A vision model, such as `google/gemini-2.5-flash-lite` or `gpt-4o-mini` |
-| `STARBOORU_AI_KEY` | unset | API key, sent as a bearer token. Never shown to clients or logged. |
+| `STARBOORU_AI_URL` | unset | Base URL of an OpenAI-compatible API, such as `https://openrouter.ai/api/v1`, `https://api.openai.com/v1`, `https://generativelanguage.googleapis.com/v1beta/openai` or a local server's own (`http://192.168.1.5:11434/v1`). What a new install's tools start with; each tool can have its own in Administration › Server › AI. Thumbnails of posts, and the text of images being translated, are sent to it. |
+| `STARBOORU_AI_MODEL` | unset | The API's model, such as `google/gemini-2.5-flash-lite` or `gpt-4o-mini` |
+| `STARBOORU_AI_KEY` | unset | API key, sent as a bearer token and only to this address. Never shown to clients or logged. |
 | `STARBOORU_AI_AUTOTAG` | `false` | Add suggested tags to every new upload in the background (two at a time) |
-| `STARBOORU_LOCAL_AI` | `false` | Run AI on this server's hardware through Ollama (see *Local AI* below) |
-| `STARBOORU_LOCAL_AI_URL` | `http://127.0.0.1:11434` (`http://ollama:11434` in `docker-compose.yml`) | Ollama's address |
-| `STARBOORU_LOCAL_AI_MODEL` | unset | Ollama model; unset picks the preset that suits the hardware |
-| `STARBOORU_AI_TAGGING` | see meaning | Where tag suggestions run: `off`, `hosted` or `local`. Unset: hosted when `STARBOORU_AI_URL` is set, else local when it is on, else off. |
-| `STARBOORU_AI_TRANSLATION` | see meaning | Where translations run, the same way |
+| `STARBOORU_LOCAL_AI` | `false` | Start the tools on StarBooru's own models unless an API is set (see *Local AI* below) |
+| `STARBOORU_AI_TAGGING` | see meaning | Where tag suggestions start: `off`, `local` or `api`. Unset: `api` when `STARBOORU_AI_URL` is set, else `local` when `STARBOORU_LOCAL_AI` is on, else `off`. |
+| `STARBOORU_AI_TRANSLATION` | see meaning | Where translations start, the same way |
+| `STARBOORU_AI_COMICS` | see meaning | Where comic translation starts, the same way |
+| `STARBOORU_AI_WORKER` | next to the server | A specific AI worker binary, instead of `starbooru-ai-worker-gpu` then `starbooru-ai-worker` |
 | `STARBOORU_AI_TRANSLATE_TO` | unset | Translate new uploads in which OCR finds text into this language (`en`, `it`, `pt-BR`), drawn over the image (see *Comics and manga* below). Unset: only when someone asks in the viewer. |
 | `STARBOORU_TRUST_PROXY` | `false` (`true` in `docker-compose.yml`) | Take the client address from the last `X-Forwarded-For` entry, for the sign-in limits. Turn it on only behind a reverse proxy that sets the header (Traefik does); otherwise clients could pick their own address. |
 | `STARBOORU_BIND` | `0.0.0.0:8080` | Listen address |
@@ -108,38 +108,57 @@ Admins can change the name, open registration, the recycle-bin days and the back
 
 ## Local AI
 
-Tag suggestions and translation can run on the server's own hardware instead of a hosted provider, through [Ollama](https://ollama.com). Nothing leaves the server and there is no per-image cost. Each tool runs where the admin picks (Administration › Server › AI): off, hosted or local, so tagging can stay local while translation uses a hosted model, for example.
+Tag suggestions, translation and comic translation can run inside StarBooru, on models made for each job. Nothing leaves the server and there is no per-image cost. In Administration › Server › AI each tool is **Off**, **Local** or **API**.
 
-1. Start Ollama next to StarBooru with the `local-ai` profile, and set `STARBOORU_LOCAL_AI=true`:
+**Local** needs nothing else: choose a speed and the server downloads the model, resumes after a failure, checks every file's SHA-256, restarts the worker if it dies, downloads again any file that gets damaged, and frees the memory after 10 idle minutes. Models live in `STARBOORU_DATA_DIR/ai/models`, so they survive updates (and are in volume backups of `/data`; leave that folder out to save space).
 
-   ```sh
-   docker compose --profile local-ai up -d                                   # processor only
-   docker compose -f docker-compose.yml -f docker-compose.gpu.yml --profile local-ai up -d   # with a GPU
-   ```
+| Speed | Answers within | Runs |
+|---|---|---|
+| Fast | 1 s | The most accurate model that meets the limit on this machine |
+| Balanced | 5 s | The same |
+| Accurate | 30 s | The same |
 
-   `docker-compose.gpu.yml` passes `/dev/dri` through, so Ollama uses the GPU through Vulkan: integrated Intel and AMD graphics and AMD Radeon cards. For an NVIDIA card, install the NVIDIA Container Toolkit and give the `ollama` service a `deploy.resources.reservations.devices` entry with `driver: nvidia` and `capabilities: [gpu]` instead. On Dokploy, add the same service to the compose file.
+A speed no model can meet, in time or memory, is greyed out. The first runs time each model on this machine and replace the estimate; a model whose time is still estimated shows `≈`. Longer text takes longer than the limit, which is for a typical answer.
 
-2. In Administration › Server › AI, turn *Use local AI* on. The card shows the server's processor, memory and graphics, and for each preset whether it **runs well**, **runs slowly**, is **too slow** or **won't fit**, and on what (graphics card, integrated graphics or processor). The preset that suits the machine is marked *Recommended*.
-3. Download the model from the card, save, and use *Test the speed*: it tags a small generated image and reports the time and how much of the model sits in GPU memory. The first run also loads the model.
+| Tool | Model | Download | Time on 2 cores | Memory | License |
+|---|---|---|---|---|---|
+| Tags | ML-Danbooru TResNet | 236 MB | 0.2–0.3 s | 0.5 GB | MIT |
+| Tags | WD SwinV2 Tagger v3 | 470 MB | 0.8 s | 1 GB | Apache-2.0 |
+| Tags | WD EVA02 Large Tagger v3 | 1.3 GB | 3.7 s | 2.1 GB | Apache-2.0 |
+| Translation | Opus-MT | 354 MB, plus about 120 MB per extra language | 0.5 s | 0.8 GB | Apache-2.0 |
+| Translation | M2M-100 418M | 640 MB | 1.3 s | 2.2 GB | MIT |
+| Translation | TranslateGemma 4B | 3.1 GB | 17 s | 2.7 GB | Gemma Terms |
+| Comics | Comic detector S, Manga OCR, Opus-MT | see above | 4 s | 1.1 GB | Apache-2.0 |
+| Comics | Comic detector S, Manga OCR, M2M-100 | see above | 5.3 s | 2.7 GB | Apache-2.0, MIT |
+| Comics | Comic detector, Manga OCR, TranslateGemma | see above | 64 s | 3 GB | Apache-2.0, Gemma Terms |
 
-| Preset | Model | Download | For |
-|---|---|---|---|
-| Small | `qwen3-vl:2b-instruct` | 1.9 GB | Raspberry Pi 5 (8 GB) and other small boards; about a minute per image on the processor |
-| Medium | `qwen3-vl:4b-instruct` | 3.3 GB | Laptops and mini PCs with integrated graphics and 8 GB or more |
-| Large | `qwen3-vl:8b-instruct` | 6.2 GB | Desktops with a graphics card of 8 GB or more |
+Times are for one picture, one sentence or one page, measured on two cores of a Ryzen 5900X. A slower server reads longer; a Raspberry Pi hasn't been measured. On a Radeon RX 9060 XT through Vulkan the taggers take 0.03–0.4 s, TranslateGemma 1.6 s and its comics set 10 s, so those become the automatic choices; Opus-MT and M2M-100 stay on the processor, which is faster for them. Any model can be picked by hand under *Models* unless it doesn't fit in memory; picking a speed goes back to the automatic choice.
 
-Any other Ollama model that reads images works too (*Another model*). The check reads the hardware where StarBooru runs; when Ollama runs on another machine, point `STARBOORU_LOCAL_AI_URL` at it and trust the speed test instead. Local answers may take up to five minutes before they time out.
+**API** sends the same work to any OpenAI-compatible address, hosted or on your network, such as Ollama (`http://host:11434/v1`), LM Studio or llama.cpp. Each tool has its own address, model and key. Tagging and comics need a model that reads images.
 
-The *Recommended* preset, which is also the one used when no model is picked, counts all of the graphics card's memory, so it doesn't change with what else is running. The fit shown for each preset counts only the memory free right now: on a desktop that also drives a screen, the largest preset may show *slowly, partly on the graphics card* while a game or browser holds video memory.
+### Graphics cards
+
+The default image runs on the processor (x86-64 and ARM64). A card needs a build that includes its driver layer. When the card can't be used, StarBooru falls back to the processor.
+
+```sh
+# NVIDIA (CUDA): needs the NVIDIA Container Toolkit; adds about 3 GB
+docker compose -f docker-compose.yml -f docker-compose.nvidia.yml up -d --build
+# AMD, Intel, or NVIDIA through Vulkan
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+```
+
+If `/dev/dri/renderD128` isn't open to everyone on the host, set `STARBOORU_RENDER_GID` to its group (`stat -c %g /dev/dri/renderD128`). With several cards the NVIDIA build uses NVIDIA; the Vulkan build uses the one the driver layer ranks first. On Dokploy add the same keys to the compose file. Both builds are x86-64 only.
+
+Upgrading from the Ollama setup: the `ollama` service is gone, and its volume is no longer used (`docker volume rm <project>_ollama` frees the space). `STARBOORU_LOCAL_AI_URL` and `STARBOORU_LOCAL_AI_MODEL` are ignored. A custom Ollama saved in the panel becomes an API with the same address and model; one set only through those variables needs `STARBOORU_AI_URL` and `STARBOORU_AI_MODEL` instead (with `/v1` on the address).
 
 ## Comics and manga
 
-OCR is what finds text in images, for `text:` search and the viewer's *Text in image*. For comic and manga pages, translation goes further: a vision model reads the page and its translation is drawn over each balloon, caption and sound effect.
+OCR is what finds text in images, for `text:` search and the viewer's *Text in image*. For comic and manga pages, translation goes further: each balloon, caption and sound effect is found and read, and its translation is drawn over it.
 
 - In the viewer, the translate button on the image (bottom left) translates the page into the app's language and shows it over the picture; it then toggles the translation on and off. Hovering a balloon shows the original text. Translations are kept per post and language, so each page is translated once.
-- To translate new uploads automatically, set *Translate new images automatically into* (Administration › Server › AI) or `STARBOORU_AI_TRANSLATE_TO`. A new image is translated after OCR finds text in it, one at a time, so OCR has to be on. Older posts aren't translated in bulk.
-- The image goes to the translation model (fit in 1536 px), unlike the text-only *Translate* under *Text in image*. With local AI it stays on the server; with a hosted provider, the provider sees the page.
-- Quality depends on the model. On a generated test page, `google/gemini-2.5-flash` (hosted) and `qwen3-vl:8b-instruct` (local, about 13 s on an 8 GB AMD graphics card) both read every balloon; smaller models miss more text and place boxes less exactly. Very dense pages may need a longer Ollama context (`OLLAMA_CONTEXT_LENGTH=8192` on the `ollama` service), at the cost of more memory.
+- To translate new uploads automatically, set *Translate new comics to* (Administration › Server › AI) or `STARBOORU_AI_TRANSLATE_TO`. A new image is translated after OCR finds text in it, one at a time, so OCR has to be on. Older posts aren't translated in bulk.
+- **Local:** a detector finds the text, Manga OCR reads Japanese and tesseract reads the rest, and the translator writes it. Nothing leaves the server. Korean and Chinese depend on the tesseract languages installed.
+- **API:** the page goes to the model (fit in 1536 px), so it must read images and the provider sees the page.
 
 ## Plain Docker Compose
 

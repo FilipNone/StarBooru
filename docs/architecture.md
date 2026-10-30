@@ -21,6 +21,7 @@ The desktop and Android apps are the same Dioxus code as the web app. Each one a
 | `crates/core` (`starbooru-core`) | API models (`Post`, `Tag`, `User`, …), tag normalisation, the starter tag tree, spelling variants and category prefixes (`vocab.rs`), which tag a typo meant (`typo.rs`), the search query parser, the other-booru request and its checks (`remote.rs`). Pure Rust, no I/O. |
 | `crates/client` (`starbooru-client`) | `Client`: one async method per endpoint, with a bearer token. Maps HTTP errors to `ClientError`. On Android it trusts the system's CA folder (`roots.rs`), because reqwest's platform verifier needs JNI setup and a Java helper in the APK. A `429` is retried twice after the `Retry-After` wait (at most 30 s) before it surfaces as `RateLimited { retry_after }`. Runs on wasm and native. |
 | `apps/server` (`starbooru-server`) | axum router, auth, posts, tags, storage, thumbnails, signed media. |
+| `apps/ai-worker` (`starbooru-ai-worker`) | Runs AI models in a process of its own, on ONNX Runtime. Depends only on `core`. |
 | `apps/app` (`starbooru-app`) | Dioxus 0.7 UI. Feature `web`, `desktop` or `mobile` selects the renderer. |
 | `vendor/tao` | tao 0.34.8 with upstream's Wayland title bar fix, put in place of the crates.io one by `[patch.crates-io]` until Dioxus moves to tao 0.36. Not a workspace member. |
 
@@ -37,13 +38,13 @@ The desktop and Android apps are the same Dioxus code as the web app. Each one a
 | `throttle.rs` | Sign-in limits: failed attempts per account and per client address (IPv6 by /64) in fixed windows, in memory and capped at 10,000 keys each. The address is the socket peer, or the last `X-Forwarded-For` entry with `STARBOORU_TRUST_PROXY`. |
 | `storage.rs` | Format sniffing, content-addressed storage, thumbnails |
 | `similar.rs` | A picture's colours for `color:`, and the duplicate finder fingerprints: a 64-bit difference hash (9×8 brightness grid) plus the average colour, and grouping by Hamming distance through a 4×16-bit multi-index, so it never compares every pair. Fine high-frequency patterns blur to flat at 9×8 and can match when their colours do. |
-| `ai.rs` | AI provider client: `chat(provider, prompt, image)` posts to an OpenAI-compatible `/chat/completions` (no proxies, 60 s timeout or 5 min for local AI, 1 MiB answer cap, any address since the admin sets it). `AiSetup` routes each tool (tagging, translation) to the hosted provider, the local runtime or nowhere. Tag suggestions from a post's thumbnail, translation of a post's OCR text (text only; `routes/ai.rs`), and background auto-tagging of uploads (two at a time). The key is never logged or returned; the answer parser is `starbooru_core::ai`. |
-| `local_ai.rs` | Local AI through Ollama: reads the hardware (`/proc/meminfo`, `/proc/cpuinfo`, `/sys/class/drm`, `nvidia-smi`), lists the runtime's models, downloads one at a time with progress in `AppState`, and times a test request. The presets and the fit check (`assess`) are pure functions in `starbooru_core::local_ai`. |
+| `ai.rs` | AI provider client: `chat(provider, prompt, image)` posts to an OpenAI-compatible `/chat/completions` (no proxies, 5 min timeout, 1 MiB answer cap, any address since the admin sets it). `AiSetup` routes each tool (tagging, translation, comics) to its API, the local models or nowhere. Tag suggestions from a post's thumbnail, translation of a post's OCR text (text only; `routes/ai.rs`), and background auto-tagging of uploads (two at a time). The key is never logged or returned; the answer parser is `starbooru_core::ai`. |
+| `local_ai/` | Local AI: `hardware.rs` reads the machine (`/proc`, `/sys/class/drm`, `nvidia-smi`, cgroup limits), `worker.rs` runs the worker process, `install.rs` downloads and verifies model files, `mod.rs` keeps it all working (see *Local AI*). |
 | `fetch.rs` | URL import download: http(s) only, public addresses only (checked for literal IPs, on every redirect and in a filtering DNS resolver), no proxies, streaming size cap, timeouts |
 | `routes/imports.rs` | Background URL imports: `import_jobs` rows claimed oldest first with `FOR UPDATE SKIP LOCKED` by two worker tasks, woken by a `Notify` when a batch is queued (or every minute), each run through the same path as `POST /posts/import`. At startup rows left `running` go back to `queued`; finished rows are deleted after 7 days. |
 | `remote.rs` | Other boorus: the search URL for each API (Danbooru, Gelbooru 0.2, Moebooru, e621, Blombooru), with the user's account in the query as that site names it, and the answer turned into `RemotePost`s (absolute http(s) links, valid tags only, each site's rating scale). `routes/remote.rs` fetches it through `fetch.rs`, so the same address rules apply, and never puts the URL (which may carry a key) in an error or log. |
 | `ocr.rs` | Text in images: runs `tesseract <file> stdout -l <langs>` as a child process (time-limited, local files only, capped output) on a still image's sample or original, cleans the text (whitespace, noise lines, 10,000 characters at most) into `posts.ocr_text`; after each upload in the background and for unscanned posts at start. The text is never logged |
-| `panels.rs` | Comic and manga translation: fits a still image in 1536 px, asks the translation route's vision model for each piece of text with its box and translation (`starbooru_core::panels` builds the prompt and parses the answer), keeps it in `post_translations`; one page at a time, and after OCR finds text in a new upload when automatic translation is on. |
+| `panels.rs` | Comic and manga translation, kept in `post_translations`: with an API, fits a still image in 1536 px and asks a vision model for each piece of text with its box and translation (`starbooru_core::panels` builds the prompt and parses the answer); with local models, `local_ai::comics`. One page at a time, and after OCR finds text in a new upload when automatic translation is on. |
 | `probe.rs` | Size, length and a still frame through `ffprobe`/`ffmpeg` child processes (time-limited, local files only, capped output); video trims (stream copy, re-encoded when the copy would start too early) |
 | `edit.rs` | Image edits for `POST /posts/{id}/edit`: turn, flip and crop, written back in the original format. `routes/edit.rs` makes the result a new post through the normal upload path. |
 | `media.rs` | HMAC-signed media URLs and the file handler (supports Range for video seeking) |
@@ -172,6 +173,21 @@ Media URLs look like `/media/thumb/<sha>.jpg?exp=…&sig=…`:
 - The signature is an HMAC-SHA256 keyed by `STARBOORU_SECRET`.
 - The expiry is rounded to 6-hour buckets, so URLs stay stable and browsers cache them.
 - `<img>` and `<video>` tags work without sending the bearer token.
+
+## Local AI
+
+Local models run in `starbooru-ai-worker`, a child process that speaks one JSON object per line over stdin and stdout (`starbooru_core::ai_worker`). When memory runs out or native code fails, it dies and the server starts another; its raised `oom_score_adj` makes the kernel pick it before the server or the database. It holds no state worth keeping and exits after 10 idle minutes unless a tool is on Fast.
+
+`starbooru_core::ai_catalog` lists the models. Each has a time and a memory footprint measured on two Zen 3 cores, and its files are pinned to a commit and a SHA-256 in `ai_files.rs` (generated by `tools/ai-catalog/pin.py`). Models were chosen for their job: Danbooru-trained taggers instead of general vision models, dedicated translators, and a comic-text detector with Manga OCR.
+
+Which model runs:
+
+- `Machine` scales the reference times by a calibration: two tiny models embedded in the worker, one float and one quantized, timed for at least a second, so a container's CPU limit shows, and stored with a hardware fingerprint in `server_settings.ai_calibration`. The fingerprint includes the limit.
+- Once a model is installed, `measure_next` times it for real, in a worker with nothing else loaded; that replaces the estimate. Graphics card timings count only when the card gave the same results as the processor and was faster. A measured time over the preset's budget moves the tool to the next model by itself.
+- A preset is a time budget: the most accurate model that meets it and fits in memory, keeping 1.5 GB free. None means the preset is unavailable and greyed out.
+- `sweep` runs at startup, every 5 minutes and whenever a setting changes. It prepares the runtime, downloads what enabled tools need (one at a time, resumable) and measures. The tool stays usable on what it has and retries failures by itself.
+
+Packaging: the default build loads Microsoft's `libonnxruntime.so` from next to the worker. `AI_GPU=vulkan` adds a statically linked WebGPU worker (`libwebgpu_dawn.so`, Mesa); `AI_GPU=nvidia` adds a CUDA worker and NVIDIA's libraries. The GPU worker is named `starbooru-ai-worker-gpu` and is used only when a card really runs a small model through it; otherwise the processor's takes over.
 
 ## Clients
 

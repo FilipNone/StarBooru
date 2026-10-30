@@ -29,13 +29,15 @@ crates/
   client    typed async HTTP client for the API (reqwest; wasm + native)
 apps/
   server    starbooru-server: axum API, media storage, thumbnails, serves the web app
+  ai-worker starbooru-ai-worker: runs local AI models in a process of its own (ONNX Runtime)
   app       starbooru-app: Dioxus UI for web, desktop and Android (features web/desktop/mobile)
 tools/
+  ai-catalog         pins each AI model file to a commit and a SHA-256 (writes crates/core/src/ai_files.rs)
   vscode-starbooru   VS Code "play button" runner (plain JS: VS Code extensions run on Node; keep it dependency-free)
   nested-kwin.sh     throwaway headless KWin with a private D-Bus session, for UI tests that need a compositor
 ```
 
-Dependency direction: `core` ← `client` ← `app`, and `core` ← `server`. The server never depends on
+Dependency direction: `core` ← `client` ← `app`, and `core` ← `server`, `core` ← `ai-worker`. The server never depends on
 `client` or `app`; `core` and `client` must keep compiling for `wasm32-unknown-unknown`.
 
 ## 3. Golden rules
