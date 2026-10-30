@@ -1,20 +1,23 @@
 //! Translated text over images: comic and manga panels.
 //!
-//! The image (fit in `PAGE_SIZE`², JPEG) goes to the translation route's
-//! vision model, which answers with each piece of text, its box and its
-//! translation. Unlike text translation, the image itself is sent, so a
-//! hosted provider sees it; local AI keeps it on the server. The result is
-//! kept per post and language in `post_translations`. Never log images,
-//! text or translations.
+//! The image (fit in `PAGE_SIZE`², JPEG) goes to the comics tool: either a
+//! vision model behind an API, which answers with each piece of text, its box
+//! and its translation, or the built-in models, which find the text, read it
+//! and translate it one step at a time. An API sees the image; the built-in
+//! models keep it on the server. The result is kept per post and language in
+//! `post_translations`. Never log images, text or translations.
 
 use std::io::Cursor;
 
-use starbooru_core::{PanelTranslation, TextBlock, panel_prompt, parse_panel_blocks};
+use starbooru_core::{
+    AiMode, AiTool, PanelTranslation, TextBlock, panel_prompt, parse_panel_blocks,
+};
 use tokio::sync::Semaphore;
 use tracing::warn;
 
-use crate::ai::{self, Provider};
+use crate::ai::{self, Route};
 use crate::error::{AppError, AppResult};
+use crate::local_ai;
 use crate::state::AppState;
 use crate::storage::{self, FilterKind};
 
@@ -64,7 +67,7 @@ async fn page_jpeg(state: &AppState, post_id: i64) -> AppResult<(Vec<u8>, u32, u
 /// text is returned but not kept.
 pub async fn translate(
     state: &AppState,
-    provider: &Provider,
+    route: &Route,
     post_id: i64,
     lang: &str,
 ) -> AppResult<PanelTranslation> {
@@ -73,11 +76,25 @@ pub async fn translate(
         .await
         .map_err(|_| AppError::Internal("translation is shutting down".into()))?;
     let (jpeg, w, h) = page_jpeg(state, post_id).await?;
-    let answer = ai::chat(provider, &panel_prompt(lang), Some(&jpeg)).await?;
-    let blocks = parse_panel_blocks(&answer, w, h).ok_or_else(|| {
-        AppError::Upstream("the AI's answer has no text blocks in it; try again".into())
-    })?;
-    let model = provider.model.clone();
+    let (blocks, model) = match route {
+        Route::Api(provider) => {
+            let answer = ai::chat(provider, &panel_prompt(lang), Some(&jpeg)).await?;
+            let blocks = parse_panel_blocks(&answer, w, h).ok_or_else(|| {
+                AppError::Upstream("the AI's answer has no text blocks in it; try again".into())
+            })?;
+            (blocks, provider.model.clone())
+        }
+        Route::Local(active) => {
+            let text: Option<Option<String>> =
+                sqlx::query_scalar("SELECT ocr_text FROM posts WHERE id = $1")
+                    .bind(post_id)
+                    .fetch_optional(&state.db)
+                    .await?;
+            let text = text.flatten().unwrap_or_default();
+            let blocks = local_ai::comics(state, active, jpeg, (w, h), &text, lang).await?;
+            (blocks, active.model.id.to_owned())
+        }
+    };
     if blocks.is_empty() {
         // Nothing to draw. Not kept, so a flaky answer can't replace a
         // good translation.
@@ -153,9 +170,11 @@ pub(crate) async fn auto_translate(state: &AppState, post_id: i64) -> AppResult<
     if setup.auto_translate.is_empty() {
         return Ok(());
     }
-    let Some(provider) = setup.translation() else {
+    let tool = setup.tool(AiTool::Comics);
+    if tool.mode == AiMode::Off {
         return Ok(());
-    };
-    translate(state, &provider, post_id, &setup.auto_translate).await?;
+    }
+    let route = ai::route(state, &tool).await?;
+    translate(state, &route, post_id, &setup.auto_translate).await?;
     Ok(())
 }

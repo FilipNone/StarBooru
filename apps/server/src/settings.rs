@@ -2,8 +2,11 @@
 //! environment variable until it is changed, and again once it is set back
 //! to the same value.
 
-use starbooru_core::{AiRoute, AiSettingsUpdate, BackupSchedule, ServerSettings};
+use starbooru_core::{
+    AiGeneralUpdate, AiMode, AiPreset, AiTool, AiToolUpdate, BackupSchedule, ServerSettings,
+};
 
+use crate::ai::{AiSetup, Provider, ToolSetup};
 use crate::error::AppResult;
 use crate::state::AppState;
 
@@ -87,97 +90,117 @@ pub async fn save_backup_schedule(state: &AppState, schedule: BackupSchedule) ->
     Ok(())
 }
 
-/// The AI setup in force: admin overrides over `STARBOORU_AI_*` and
-/// `STARBOORU_LOCAL_AI_*`.
-pub async fn ai(state: &AppState) -> AppResult<crate::ai::AiSetup> {
-    #[derive(sqlx::FromRow, Default)]
+/// The AI setup in force: what the admin saved over `STARBOORU_AI_*`.
+pub async fn ai(state: &AppState) -> AppResult<AiSetup> {
+    #[derive(sqlx::FromRow)]
     struct Row {
-        ai_url: Option<String>,
-        ai_key: Option<String>,
-        ai_model: Option<String>,
-        ai_autotag: Option<bool>,
-        ai_local_enabled: Option<bool>,
-        ai_local_url: Option<String>,
-        ai_local_model: Option<String>,
-        ai_tagging: Option<String>,
-        ai_translation: Option<String>,
-        ai_auto_translate: Option<String>,
+        tool: String,
+        mode: String,
+        preset: String,
+        model: String,
+        api_url: String,
+        api_key: String,
+        api_model: String,
     }
-    let row: Option<Row> = sqlx::query_as(
-        "SELECT ai_url, ai_key, ai_model, ai_autotag, ai_local_enabled, ai_local_url, \
-         ai_local_model, ai_tagging, ai_translation, ai_auto_translate FROM server_settings",
+    let rows: Vec<Row> = sqlx::query_as(
+        "SELECT tool, mode, preset, model, api_url, api_key, api_model FROM ai_tools",
     )
-    .fetch_optional(&state.db)
+    .fetch_all(&state.db)
     .await?;
-    let row = row.unwrap_or_default();
+    let general: Option<(Option<bool>, Option<String>)> =
+        sqlx::query_as("SELECT ai_autotag, ai_auto_translate FROM server_settings")
+            .fetch_optional(&state.db)
+            .await?;
+    let (autotag, auto_translate) = general.unwrap_or_default();
     let env = &state.config.ai;
-    let mut setup = crate::ai::AiSetup {
-        hosted: crate::ai::Provider::hosted(
-            row.ai_url.unwrap_or_else(|| env.url.clone()),
-            row.ai_key.unwrap_or_else(|| env.key.clone()),
-            row.ai_model.unwrap_or_else(|| env.model.clone()),
-        ),
-        autotag: row.ai_autotag.unwrap_or(env.autotag),
-        local_enabled: row.ai_local_enabled.unwrap_or(env.local_enabled),
-        local_url: row.ai_local_url.unwrap_or_else(|| env.local_url.clone()),
-        local_model: row
-            .ai_local_model
-            .unwrap_or_else(|| env.local_model.clone()),
-        tagging: AiRoute::Off,
-        translation: AiRoute::Off,
-        auto_translate: row
-            .ai_auto_translate
-            .unwrap_or_else(|| env.translate_to.clone()),
-    };
-    // Defaults follow what is set up after the overrides.
-    let default = if !setup.hosted.url.is_empty() {
-        AiRoute::Hosted
-    } else if setup.local_enabled {
-        AiRoute::Local
-    } else {
-        AiRoute::Off
-    };
-    let pick = |stored: Option<String>, env: Option<AiRoute>| {
-        stored
-            .as_deref()
-            .and_then(AiRoute::parse)
-            .or(env)
-            .unwrap_or(default)
-    };
-    setup.tagging = pick(row.ai_tagging, env.tagging);
-    setup.translation = pick(row.ai_translation, env.translation);
-    Ok(setup)
+    let tools = AiTool::ALL
+        .into_iter()
+        .map(|tool| {
+            let env_mode = match tool {
+                AiTool::Tagging => env.tagging,
+                AiTool::Translation => env.translation,
+                AiTool::Comics => env.comics,
+            };
+            let default_mode = env_mode.unwrap_or(if !env.url.is_empty() {
+                AiMode::Api
+            } else if env.local_default {
+                AiMode::Local
+            } else {
+                AiMode::Off
+            });
+            let Some(row) = rows.iter().find(|r| r.tool == tool.as_str()) else {
+                return ToolSetup {
+                    tool,
+                    mode: default_mode,
+                    preset: AiPreset::default(),
+                    model: String::new(),
+                    api: Provider::new(env.url.clone(), env.key.clone(), env.model.clone()),
+                };
+            };
+            let follows_env = row.api_url.is_empty() || row.api_url == env.url;
+            ToolSetup {
+                tool,
+                mode: AiMode::parse(&row.mode).unwrap_or(default_mode),
+                preset: AiPreset::parse(&row.preset).unwrap_or_default(),
+                model: row.model.clone(),
+                api: Provider::new(
+                    if row.api_url.is_empty() {
+                        env.url.clone()
+                    } else {
+                        row.api_url.clone()
+                    },
+                    // The environment's key never goes to another address.
+                    if row.api_key.is_empty() && follows_env {
+                        env.key.clone()
+                    } else {
+                        row.api_key.clone()
+                    },
+                    if row.api_model.is_empty() {
+                        env.model.clone()
+                    } else {
+                        row.api_model.clone()
+                    },
+                ),
+            }
+        })
+        .collect();
+    Ok(AiSetup {
+        tools,
+        autotag: autotag.unwrap_or(env.autotag),
+        auto_translate: auto_translate.unwrap_or_else(|| env.translate_to.clone()),
+    })
 }
 
-/// Saves the AI settings (already cleaned). `key`: `None` keeps the stored
-/// one. Values equal to the environment's are stored as unset, like [`save`].
-pub async fn save_ai(state: &AppState, update: &AiSettingsUpdate) -> AppResult<()> {
-    let env = &state.config.ai;
-    let current = ai(state).await?;
-    let key = update
-        .key
-        .as_deref()
-        .map_or(current.hosted.key.as_str(), str::trim);
-    let local = &update.local;
+/// Saves one tool's setup (already cleaned). `api_key`: `None` keeps the
+/// stored one.
+pub async fn save_ai_tool(state: &AppState, tool: AiTool, update: &AiToolUpdate) -> AppResult<()> {
     sqlx::query(
-        "INSERT INTO server_settings (id, ai_url, ai_model, ai_key, ai_autotag, \
-         ai_local_enabled, ai_local_url, ai_local_model, ai_tagging, ai_translation, \
-         ai_auto_translate) \
-         VALUES (true, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10) \
-         ON CONFLICT (id) DO UPDATE SET ai_url = $1, ai_model = $2, ai_key = $3, \
-         ai_autotag = $4, ai_local_enabled = $5, ai_local_url = $6, ai_local_model = $7, \
-         ai_tagging = $8, ai_translation = $9, ai_auto_translate = $10, updated_at = now()",
+        "INSERT INTO ai_tools (tool, mode, preset, model, api_url, api_model, api_key) \
+         VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, '')) \
+         ON CONFLICT (tool) DO UPDATE SET mode = $2, preset = $3, model = $4, api_url = $5, \
+         api_model = $6, api_key = COALESCE($7, ai_tools.api_key)",
     )
-    .bind((update.url != env.url).then_some(&update.url))
-    .bind((update.model != env.model).then_some(&update.model))
-    .bind((key != env.key).then_some(key))
+    .bind(tool.as_str())
+    .bind(update.mode.as_str())
+    .bind(update.preset.as_str())
+    .bind(&update.model)
+    .bind(&update.api_url)
+    .bind(&update.api_model)
+    .bind(&update.api_key)
+    .execute(&state.db)
+    .await?;
+    Ok(())
+}
+
+/// Saves the settings all AI tools share (already cleaned), like [`save`].
+pub async fn save_ai_general(state: &AppState, update: &AiGeneralUpdate) -> AppResult<()> {
+    let env = &state.config.ai;
+    sqlx::query(
+        "INSERT INTO server_settings (id, ai_autotag, ai_auto_translate) VALUES (true, $1, $2) \
+         ON CONFLICT (id) DO UPDATE SET ai_autotag = $1, ai_auto_translate = $2, \
+         updated_at = now()",
+    )
     .bind((update.autotag != env.autotag).then_some(update.autotag))
-    .bind((local.enabled != env.local_enabled).then_some(local.enabled))
-    .bind((local.url != env.local_url).then_some(&local.url))
-    .bind((local.model != env.local_model).then_some(&local.model))
-    // Routes are always stored: their default depends on the other settings.
-    .bind(update.tagging.as_str())
-    .bind(update.translation.as_str())
     .bind((update.auto_translate != env.translate_to).then_some(&update.auto_translate))
     .execute(&state.db)
     .await?;

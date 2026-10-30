@@ -20,8 +20,8 @@ use starbooru_core::{
     TagCorrection, TagDetail, TagOrder, TagUpdate, Usage, User, UserUpdate, VoteRequest,
 };
 use starbooru_core::{
-    AiSettings, AiSettingsUpdate, AiStatus, LocalAiStatus, LocalTestResult, PanelTranslation,
-    PullRequest, TagSuggestions, TranslateRequest, Translation,
+    AiAdminStatus, AiGeneralUpdate, AiStatus, AiTestResult, AiTool, AiToolUpdate, PanelTranslation,
+    TagSuggestions, TranslateRequest, Translation,
 };
 use std::time::Duration;
 use thiserror::Error;
@@ -420,32 +420,38 @@ impl Client {
             .await
     }
 
-    pub async fn admin_ai(&self) -> Result<AiSettings> {
+    /// Every AI tool, this machine and what can run on it.
+    pub async fn admin_ai(&self) -> Result<AiAdminStatus> {
         Self::send(self.request(Method::GET, "/admin/ai")?).await
     }
 
-    pub async fn set_admin_ai(&self, update: &AiSettingsUpdate) -> Result<AiSettings> {
+    /// The settings all AI tools share.
+    pub async fn set_ai_general(&self, update: &AiGeneralUpdate) -> Result<AiAdminStatus> {
         self.json(Method::PUT, "/admin/ai", update).await
     }
 
-    /// The server's hardware, how each local preset would run on it, and
-    /// the local runtime's models and download.
-    pub async fn local_ai(&self) -> Result<LocalAiStatus> {
-        Self::send(self.request(Method::GET, "/admin/ai/local")?).await
+    /// How one AI tool runs. A model it needs starts downloading.
+    pub async fn set_ai_tool(&self, tool: AiTool, update: &AiToolUpdate) -> Result<AiAdminStatus> {
+        let path = format!("/admin/ai/tools/{}", tool.as_str());
+        self.json(Method::PUT, &path, update).await
     }
 
-    /// Starts downloading a model into the local runtime.
-    pub async fn pull_local_model(&self, model: &str) -> Result<LocalAiStatus> {
-        let req = PullRequest {
-            model: model.to_owned(),
-        };
-        self.json(Method::POST, "/admin/ai/local/pull", &req).await
+    /// Whether a tool's API answers.
+    pub async fn test_ai_tool(&self, tool: AiTool) -> Result<AiTestResult> {
+        let path = format!("/admin/ai/tools/{}/test", tool.as_str());
+        Self::send(self.request(Method::POST, &path)?).await
     }
 
-    /// Times one tagging request on the local model. Can take minutes on
-    /// slow hardware.
-    pub async fn test_local_ai(&self) -> Result<LocalTestResult> {
-        Self::send(self.request(Method::POST, "/admin/ai/local/test")?).await
+    /// Starts downloading a built-in model.
+    pub async fn install_ai_model(&self, id: &str) -> Result<AiAdminStatus> {
+        let path = format!("/admin/ai/models/{id}/install");
+        Self::send(self.request(Method::POST, &path)?).await
+    }
+
+    /// Removes a built-in model.
+    pub async fn uninstall_ai_model(&self, id: &str) -> Result<AiAdminStatus> {
+        let path = format!("/admin/ai/models/{id}");
+        Self::send(self.request(Method::DELETE, &path)?).await
     }
 
     pub async fn admin_users(&self) -> Result<Vec<AdminUser>> {

@@ -1070,7 +1070,7 @@ fn pick_translation(
 /// it in the app's language.
 #[component]
 fn PanelOverlay(id: i64, size: (i32, i32), transform: String) -> Element {
-    let can_make = use_ai_status().translation;
+    let can_make = use_ai_status().comics;
     let kept = use_resource(move || async move {
         let client = store::client()?;
         client.panel_translations(id).await.ok()

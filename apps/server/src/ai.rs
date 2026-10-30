@@ -1,14 +1,12 @@
-//! A small client for an OpenAI-compatible chat API (OpenAI, OpenRouter,
-//! Gemini's OpenAI endpoint, or a local Ollama / LM Studio / vLLM), and the
-//! AI features built on it: tag suggestions and auto-tagging of uploads.
-//! Each tool runs on the hosted provider, the local runtime
-//! (`crate::local_ai`) or nowhere, as the admin picks.
+//! AI features: tag suggestions and auto-tagging of uploads. Each tool runs
+//! on StarBooru's own models (`crate::local_ai`), on an OpenAI-compatible API
+//! (OpenAI, OpenRouter, Gemini's OpenAI endpoint, or a local Ollama / LM Studio
+//! / vLLM) or nowhere, as the admin picks.
 //!
-//! The provider is set by the admin and may sit on the LAN, so unlike URL
-//! import any address is allowed. Proxies from the environment are ignored,
-//! the answer is capped while it streams, and slow providers time out. The
-//! API key is never logged or returned to clients; neither are images or
-//! answers.
+//! The API is set by the admin and may sit on the LAN, so unlike URL import
+//! any address is allowed. Proxies from the environment are ignored, the
+//! answer is capped while it streams, and slow providers time out. The API key
+//! is never logged or returned to clients; neither are images or answers.
 
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -16,21 +14,19 @@ use std::time::Duration;
 use base64::Engine as _;
 use serde_json::{Value, json};
 use starbooru_core::ai::{ParsedSuggestions, TAG_PROMPT};
-use starbooru_core::local_ai::machine_tier;
 use starbooru_core::tag::normalize_tags;
-use starbooru_core::{AiRoute, TagCategory, parse_suggestions};
+use starbooru_core::{AiMode, AiPreset, AiTool, TagCategory, parse_suggestions};
 use tokio::sync::Semaphore;
 use tracing::warn;
 
 use crate::error::{AppError, AppResult};
+use crate::local_ai::{self, Active};
 use crate::state::AppState;
 use crate::storage::{Storage, Variant};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-/// Longest a whole answer from a hosted provider may take.
-const TIMEOUT: Duration = Duration::from_secs(60);
-/// Longest a local answer may take: a Raspberry Pi needs a minute or more.
-const LOCAL_TIMEOUT: Duration = Duration::from_secs(300);
+/// Longest a whole answer may take: an API on a small machine needs minutes.
+const TIMEOUT: Duration = Duration::from_secs(300);
 /// Most bytes read from an answer.
 const MAX_ANSWER_BYTES: usize = 1 << 20;
 /// Largest image sent.
@@ -40,28 +36,18 @@ const USER_AGENT: &str = concat!("StarBooru/", env!("CARGO_PKG_VERSION"));
 /// Auto-tagging runs at most this many requests at once.
 static AUTOTAG_SLOTS: Semaphore = Semaphore::const_new(2);
 
-/// Where one request goes.
+/// An OpenAI-compatible API.
 #[derive(Clone, Default)]
 pub struct Provider {
-    /// Base URL of the OpenAI-compatible API, without a trailing slash.
-    /// Empty means off.
+    /// Base URL, without a trailing slash. Empty means none.
     pub url: String,
     pub key: String,
     pub model: String,
-    pub timeout: Duration,
-    /// The local runtime, for error messages.
-    pub local: bool,
 }
 
 impl Provider {
-    pub fn hosted(url: String, key: String, model: String) -> Self {
-        Self {
-            url,
-            key,
-            model,
-            timeout: TIMEOUT,
-            local: false,
-        }
+    pub fn new(url: String, key: String, model: String) -> Self {
+        Self { url, key, model }
     }
 
     pub fn enabled(&self) -> bool {
@@ -69,61 +55,52 @@ impl Provider {
     }
 }
 
+/// How one tool is set up.
+#[derive(Clone, Default)]
+pub struct ToolSetup {
+    pub tool: AiTool,
+    pub mode: AiMode,
+    pub preset: AiPreset,
+    /// A model chosen by hand. Empty: the preset picks one.
+    pub model: String,
+    pub api: Provider,
+}
+
 /// The AI setup in force (see `settings::ai`).
 #[derive(Clone, Default)]
 pub struct AiSetup {
-    pub hosted: Provider,
+    pub tools: Vec<ToolSetup>,
     pub autotag: bool,
-    pub local_enabled: bool,
-    /// Ollama's base address, without `/v1`.
-    pub local_url: String,
-    /// Empty: the preset recommended for this machine.
-    pub local_model: String,
-    pub tagging: AiRoute,
-    pub translation: AiRoute,
     /// Language new images with text are translated into; empty is off.
     pub auto_translate: String,
 }
 
 impl AiSetup {
-    /// The local model: the admin's pick or the recommended preset.
-    pub fn local_model(&self) -> String {
-        if self.local_model.is_empty() {
-            let hw = crate::local_ai::hardware();
-            machine_tier(&hw).preset().model.to_owned()
-        } else {
-            self.local_model.clone()
-        }
+    pub fn tool(&self, tool: AiTool) -> ToolSetup {
+        self.tools
+            .iter()
+            .find(|t| t.tool == tool)
+            .cloned()
+            .unwrap_or_else(|| ToolSetup {
+                tool,
+                ..ToolSetup::default()
+            })
     }
+}
 
-    pub fn local(&self) -> Provider {
-        Provider {
-            url: format!("{}/v1", self.local_url),
-            key: String::new(),
-            model: self.local_model(),
-            timeout: LOCAL_TIMEOUT,
-            local: true,
-        }
-    }
+/// Where one request goes.
+pub enum Route {
+    Api(Provider),
+    Local(Active),
+}
 
-    fn route(&self, route: AiRoute) -> Option<Provider> {
-        let provider = match route {
-            AiRoute::Off => return None,
-            AiRoute::Hosted => self.hosted.clone(),
-            AiRoute::Local if self.local_enabled && !self.local_url.is_empty() => self.local(),
-            AiRoute::Local => return None,
-        };
-        provider.enabled().then_some(provider)
-    }
-
-    /// Where tag suggestions go, if anywhere.
-    pub fn tagging(&self) -> Option<Provider> {
-        self.route(self.tagging)
-    }
-
-    /// Where translations go, if anywhere.
-    pub fn translation(&self) -> Option<Provider> {
-        self.route(self.translation)
+/// Where a tool's requests go now.
+pub async fn route(state: &AppState, setup: &ToolSetup) -> AppResult<Route> {
+    match setup.mode {
+        AiMode::Off => Err(turned_off()),
+        AiMode::Api if setup.api.enabled() => Ok(Route::Api(setup.api.clone())),
+        AiMode::Api => Err(turned_off()),
+        AiMode::Local => Ok(Route::Local(local_ai::active(state, setup)?)),
     }
 }
 
@@ -151,16 +128,11 @@ pub(crate) fn client() -> AppResult<&'static reqwest::Client> {
         .ok_or_else(|| AppError::Internal("the AI HTTP client failed to start".into()))
 }
 
-pub(crate) fn request_error(e: &reqwest::Error, local: bool) -> AppError {
-    let who = if local {
-        "the local AI runtime"
-    } else {
-        "the AI provider"
-    };
+fn request_error(e: &reqwest::Error) -> AppError {
     if e.is_timeout() {
-        AppError::Upstream(format!("{who} took too long to answer"))
+        AppError::Upstream("the AI provider took too long to answer".into())
     } else {
-        AppError::Upstream(format!("can't reach {who}"))
+        AppError::Upstream("can't reach the AI provider".into())
     }
 }
 
@@ -189,42 +161,35 @@ pub async fn chat(provider: &Provider, prompt: &str, jpeg: Option<&[u8]>) -> App
     let mut req = client()?
         .post(format!("{}/chat/completions", provider.url))
         .header(reqwest::header::CONTENT_TYPE, "application/json")
-        .timeout(provider.timeout)
         .body(body);
     if !provider.key.is_empty() {
         req = req.bearer_auth(&provider.key);
     }
-    let local = provider.local;
-    let mut resp = req.send().await.map_err(|e| request_error(&e, local))?;
+    let mut resp = req.send().await.map_err(|e| request_error(&e))?;
     let status = resp.status();
     if !status.is_success() {
         // The provider's own reason ("rate limited", "no credits") is what
         // the admin can act on. It can't hold the key: that went out only
         // in the header.
-        let reason = read_capped(&mut resp, local)
+        let reason = read_capped(&mut resp)
             .await
             .ok()
             .and_then(|b| error_reason(&b));
-        let who = if local {
-            "local AI runtime"
-        } else {
-            "AI provider"
-        };
         let code = status.as_u16();
         return Err(AppError::Upstream(match reason {
-            Some(r) => format!("{who} answered {code}: {r}"),
-            None => format!("{who} answered {code}"),
+            Some(r) => format!("AI provider answered {code}: {r}"),
+            None => format!("AI provider answered {code}"),
         }));
     }
-    let answer = read_capped(&mut resp, local).await?;
+    let answer = read_capped(&mut resp).await?;
     answer_text(&answer)
         .ok_or_else(|| AppError::Upstream("the AI provider's answer is not understood".into()))
 }
 
 /// Reads a whole answer, at most `MAX_ANSWER_BYTES`.
-async fn read_capped(resp: &mut reqwest::Response, local: bool) -> AppResult<Vec<u8>> {
+async fn read_capped(resp: &mut reqwest::Response) -> AppResult<Vec<u8>> {
     let mut answer = Vec::new();
-    while let Some(chunk) = resp.chunk().await.map_err(|e| request_error(&e, local))? {
+    while let Some(chunk) = resp.chunk().await.map_err(|e| request_error(&e))? {
         if answer.len().saturating_add(chunk.len()) > MAX_ANSWER_BYTES {
             return Err(AppError::Upstream(
                 "the AI provider's answer is too long".into(),
@@ -319,15 +284,20 @@ async fn thumbnail(state: &AppState, post_id: i64) -> AppResult<Vec<u8>> {
     Ok(bytes)
 }
 
-/// Asks the provider for tags for a post. Changes nothing.
+/// Asks the model for tags for a post. Changes nothing.
 pub async fn suggest(
     state: &AppState,
-    provider: &Provider,
+    route: &Route,
     post_id: i64,
 ) -> AppResult<ParsedSuggestions> {
     let jpeg = thumbnail(state, post_id).await?;
-    let answer = chat(provider, TAG_PROMPT, Some(&jpeg)).await?;
-    Ok(parse_suggestions(&answer))
+    match route {
+        Route::Api(provider) => {
+            let answer = chat(provider, TAG_PROMPT, Some(&jpeg)).await?;
+            Ok(parse_suggestions(&answer))
+        }
+        Route::Local(active) => local_ai::tag(state, active, &jpeg).await,
+    }
 }
 
 /// Starts auto-tagging a new post in the background when it is turned on.
@@ -343,14 +313,16 @@ pub fn autotag_later(state: &AppState, post_id: i64) {
 
 async fn autotag(state: &AppState, post_id: i64) -> AppResult<()> {
     let setup = crate::settings::ai(state).await?;
-    let Some(provider) = setup.tagging().filter(|_| setup.autotag) else {
+    let tool = setup.tool(AiTool::Tagging);
+    if !setup.autotag || tool.mode == AiMode::Off {
         return Ok(());
-    };
+    }
+    let route = route(state, &tool).await?;
     let _slot = AUTOTAG_SLOTS
         .acquire()
         .await
         .map_err(|_| AppError::Internal("auto-tagging is shutting down".into()))?;
-    let parsed = suggest(state, &provider, post_id).await?;
+    let parsed = suggest(state, &route, post_id).await?;
     add_tags(state, post_id, &parsed).await
 }
 

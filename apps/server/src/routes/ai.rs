@@ -1,46 +1,62 @@
 //! AI features: status, tag suggestions, translation of the text in an image,
-//! the admin's settings and the local runtime.
+//! the admin's settings and the built-in models.
 
 use axum::Json;
 use axum::extract::{Path, State};
-use starbooru_core::local_ai::clean_model_name;
 use starbooru_core::{
-    AiSettings, AiSettingsUpdate, AiStatus, LocalAiSettings, LocalAiStatus, LocalTestResult,
-    PanelTranslation, PullRequest, TagCategory, TagSuggestion, TagSuggestions, TranslateRequest,
-    Translation, clean_ai_settings, clean_language, clean_translation, translate_prompt,
+    AiAdminStatus, AiGeneralUpdate, AiMode, AiStatus, AiTestResult, AiTool, AiToolUpdate,
+    PanelTranslation, TagCategory, TagSuggestion, TagSuggestions, TranslateRequest, Translation,
+    clean_general_update, clean_language, clean_tool_update, clean_translation, translate_prompt,
 };
 
 use super::admin::require_admin_session;
+use crate::ai::{Route, ToolSetup};
 use crate::auth::AuthUser;
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 use crate::{ai, local_ai, settings};
 
+/// Whether a tool can answer, or will once its model is there.
+fn offered(state: &AppState, tool: &ToolSetup) -> bool {
+    match tool.mode {
+        AiMode::Off => false,
+        AiMode::Api => tool.api.enabled(),
+        AiMode::Local => state.local_ai.runtime().ready,
+    }
+}
+
 /// `GET /ai`: which AI features clients should offer.
 pub async fn status(State(state): State<AppState>, _user: AuthUser) -> AppResult<Json<AiStatus>> {
     let setup = settings::ai(&state).await?;
-    let tagging = setup.tagging();
-    let translation = setup.translation().is_some();
+    let tool = setup.tool(AiTool::Tagging);
+    let tagging = offered(&state, &tool);
+    let translation = offered(&state, &setup.tool(AiTool::Translation));
+    let comics = offered(&state, &setup.tool(AiTool::Comics));
+    let model = tagging.then(|| match tool.mode {
+        AiMode::Local => local_ai::active(&state, &tool)
+            .map(|a| a.model.name.to_owned())
+            .unwrap_or_default(),
+        _ => tool.api.model.clone(),
+    });
     Ok(Json(AiStatus {
-        enabled: tagging.is_some() || translation,
-        tagging: tagging.is_some(),
-        model: tagging.map(|p| p.model),
+        enabled: tagging || translation || comics,
+        tagging,
+        model,
         translation,
+        comics,
     }))
 }
 
-/// `POST /posts/{id}/suggest-tags`: asks the AI provider for tags. The post
+/// `POST /posts/{id}/suggest-tags`: asks the tagging model for tags. The post
 /// is not changed.
 pub async fn suggest_tags(
     State(state): State<AppState>,
     _user: AuthUser,
     Path(id): Path<i64>,
 ) -> AppResult<Json<TagSuggestions>> {
-    let provider = settings::ai(&state)
-        .await?
-        .tagging()
-        .ok_or_else(ai::turned_off)?;
-    let parsed = ai::suggest(&state, &provider, id).await?;
+    let setup = settings::ai(&state).await?;
+    let route = ai::route(&state, &setup.tool(AiTool::Tagging)).await?;
+    let parsed = ai::suggest(&state, &route, id).await?;
     let names: Vec<String> = parsed.tags.iter().map(|(n, _)| n.clone()).collect();
     // Each name, its canonical name (through aliases) and that tag's
     // category when it exists.
@@ -88,10 +104,8 @@ pub async fn translate(
     Json(req): Json<TranslateRequest>,
 ) -> AppResult<Json<Translation>> {
     let to = clean_language(&req.to).map_err(AppError::BadRequest)?;
-    let provider = settings::ai(&state)
-        .await?
-        .translation()
-        .ok_or_else(ai::turned_off)?;
+    let setup = settings::ai(&state).await?;
+    let route = ai::route(&state, &setup.tool(AiTool::Translation)).await?;
     let text: Option<Option<String>> =
         sqlx::query_scalar("SELECT ocr_text FROM posts WHERE id = $1 AND deleted_at IS NULL")
             .bind(id)
@@ -101,11 +115,14 @@ pub async fn translate(
         .ok_or(AppError::NotFound)?
         .filter(|t| !t.trim().is_empty())
         .ok_or_else(|| AppError::BadRequest("this post has no text to translate".into()))?;
-    let answer = ai::chat(&provider, &translate_prompt(&text, &to), None).await?;
+    let answer = match &route {
+        Route::Api(provider) => ai::chat(provider, &translate_prompt(&text, &to), None).await?,
+        Route::Local(active) => local_ai::translate_text(&state, active, &text, &to).await?,
+    };
     let text = clean_translation(&answer);
     if text.is_empty() {
         return Err(AppError::Upstream(
-            "the AI provider gave an empty translation".into(),
+            "the AI gave an empty translation".into(),
         ));
     }
     Ok(Json(Translation { text }))
@@ -122,8 +139,7 @@ pub async fn panel_translations(
 }
 
 /// `POST /posts/{id}/translations`: reads the text in the post's image with
-/// the translation model, translates it, keeps and returns it. The image is
-/// sent to the model.
+/// the comics tool, translates it, keeps and returns it.
 pub async fn translate_panels(
     State(state): State<AppState>,
     _user: AuthUser,
@@ -131,92 +147,100 @@ pub async fn translate_panels(
     Json(req): Json<TranslateRequest>,
 ) -> AppResult<Json<PanelTranslation>> {
     let to = clean_language(&req.to).map_err(AppError::BadRequest)?;
-    let provider = settings::ai(&state)
-        .await?
-        .translation()
-        .ok_or_else(ai::turned_off)?;
+    let setup = settings::ai(&state).await?;
+    let route = ai::route(&state, &setup.tool(AiTool::Comics)).await?;
     Ok(Json(
-        crate::panels::translate(&state, &provider, id, &to).await?,
+        crate::panels::translate(&state, &route, id, &to).await?,
     ))
 }
 
-fn to_settings(s: &ai::AiSetup) -> AiSettings {
-    AiSettings {
-        url: s.hosted.url.clone(),
-        model: s.hosted.model.clone(),
-        key_set: !s.hosted.key.is_empty(),
-        autotag: s.autotag,
-        local: LocalAiSettings {
-            enabled: s.local_enabled,
-            url: s.local_url.clone(),
-            model: s.local_model.clone(),
-        },
-        tagging: s.tagging,
-        translation: s.translation,
-        auto_translate: s.auto_translate.clone(),
-    }
-}
-
-/// `GET /admin/ai`. The key is never returned.
-pub async fn get_settings(
+/// `GET /admin/ai`: every tool, this machine and what can run on it. Keys are
+/// never returned.
+pub async fn admin_status(
     State(state): State<AppState>,
     user: AuthUser,
-) -> AppResult<Json<AiSettings>> {
+) -> AppResult<Json<AiAdminStatus>> {
     user.require_admin()?;
-    Ok(Json(to_settings(&settings::ai(&state).await?)))
+    Ok(Json(local_ai::admin_status(&state).await?))
 }
 
-/// `PUT /admin/ai`: takes effect at once.
-pub async fn put_settings(
+/// `PUT /admin/ai`: the settings all tools share.
+pub async fn put_general(
     State(state): State<AppState>,
     user: AuthUser,
-    Json(req): Json<AiSettingsUpdate>,
-) -> AppResult<Json<AiSettings>> {
+    Json(req): Json<AiGeneralUpdate>,
+) -> AppResult<Json<AiAdminStatus>> {
     require_admin_session(&user)?;
-    let update = clean_ai_settings(&req).map_err(AppError::BadRequest)?;
-    settings::save_ai(&state, &update).await?;
-    Ok(Json(to_settings(&settings::ai(&state).await?)))
-}
-
-/// `GET /admin/ai/local`: this machine's hardware, how each preset would
-/// run on it, and the runtime's models and download.
-pub async fn local_status(
-    State(state): State<AppState>,
-    user: AuthUser,
-) -> AppResult<Json<LocalAiStatus>> {
-    user.require_admin()?;
+    let update = clean_general_update(&req).map_err(AppError::BadRequest)?;
     let setup = settings::ai(&state).await?;
-    Ok(Json(local_ai::status(&state, &setup).await))
-}
-
-/// `POST /admin/ai/local/pull`: downloads a model into the runtime in the
-/// background; progress shows in `GET /admin/ai/local`.
-pub async fn local_pull(
-    State(state): State<AppState>,
-    user: AuthUser,
-    Json(req): Json<PullRequest>,
-) -> AppResult<Json<LocalAiStatus>> {
-    require_admin_session(&user)?;
-    let model = clean_model_name(&req.model).map_err(AppError::BadRequest)?;
-    let setup = settings::ai(&state).await?;
-    if setup.local_url.is_empty() {
+    if !update.auto_translate.is_empty() && setup.tool(AiTool::Comics).mode == AiMode::Off {
         return Err(AppError::BadRequest(
-            "enter the address of the local AI runtime first".into(),
+            "turn on comic translation first".into(),
         ));
     }
-    local_ai::start_pull(&state, setup.local_url.clone(), model).await?;
-    Ok(Json(local_ai::status(&state, &setup).await))
+    settings::save_ai_general(&state, &update).await?;
+    Ok(Json(local_ai::admin_status(&state).await?))
 }
 
-/// `POST /admin/ai/local/test`: times one tagging request on the local
-/// model.
-pub async fn local_test(
+fn parse_tool(tool: &str) -> AppResult<AiTool> {
+    AiTool::parse(tool).ok_or(AppError::NotFound)
+}
+
+/// `PUT /admin/ai/tools/{tool}`: takes effect at once. When it needs a model,
+/// that starts downloading.
+pub async fn put_tool(
     State(state): State<AppState>,
     user: AuthUser,
-) -> AppResult<Json<LocalTestResult>> {
+    Path(tool): Path<String>,
+    Json(req): Json<AiToolUpdate>,
+) -> AppResult<Json<AiAdminStatus>> {
     require_admin_session(&user)?;
-    let setup = settings::ai(&state).await?;
-    Ok(Json(local_ai::test(&setup).await?))
+    let tool = parse_tool(&tool)?;
+    let update = clean_tool_update(tool, &req).map_err(AppError::BadRequest)?;
+    settings::save_ai_tool(&state, tool, &update).await?;
+    state.local_ai.wake();
+    Ok(Json(local_ai::admin_status(&state).await?))
+}
+
+/// `POST /admin/ai/tools/{tool}/test`: whether the tool's API answers.
+pub async fn test_tool(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(tool): Path<String>,
+) -> AppResult<Json<AiTestResult>> {
+    require_admin_session(&user)?;
+    let setup = settings::ai(&state).await?.tool(parse_tool(&tool)?);
+    if setup.mode != AiMode::Api {
+        return Err(AppError::BadRequest("this tool doesn't use an API".into()));
+    }
+    let start = std::time::Instant::now();
+    ai::chat(&setup.api, "Reply with: OK", None).await?;
+    let ms = u32::try_from(start.elapsed().as_millis()).unwrap_or(u32::MAX);
+    Ok(Json(AiTestResult { ms }))
+}
+
+/// `POST /admin/ai/models/{id}/install`: downloads a model in the background;
+/// progress shows in `GET /admin/ai`.
+pub async fn install_model(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<String>,
+) -> AppResult<Json<AiAdminStatus>> {
+    require_admin_session(&user)?;
+    state.local_ai.install(&id)?;
+    Ok(Json(local_ai::admin_status(&state).await?))
+}
+
+/// `DELETE /admin/ai/models/{id}`: frees a model's disk space. A model in use
+/// stays.
+pub async fn uninstall_model(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<String>,
+) -> AppResult<Json<AiAdminStatus>> {
+    require_admin_session(&user)?;
+    local_ai::uninstall(&state, &id).await?;
+    Ok(Json(local_ai::admin_status(&state).await?))
 }
 
 #[cfg(test)]
@@ -279,14 +303,43 @@ mod tests {
         format!("http://{addr}/v1")
     }
 
+    /// A fake provider that answers everything.
+    async fn text_provider_any(answer: &'static str) -> String {
+        let app = Router::new().route(
+            "/v1/chat/completions",
+            post(move || async move {
+                json!({ "choices": [{ "message": { "content": answer } }] }).to_string()
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        format!("http://{addr}/v1")
+    }
+
     const ANSWER: &str = "```json\n{\"tags\": [{\"name\": \"Blue Sky\", \"category\": \"general\"}, \
         {\"name\": \"miku\", \"category\": \"character\"}, {\"name\": \"some_artist\", \
         \"category\": \"artist\"}, {\"name\": \"brand_new\"}, \"-bad\"], \
         \"rating\": \"sensitive\", \"figures\": [{\"kind\": \"girl\", \"character\": \"miku\", \
         \"hair\": [\"twintails\"]}]}\n```";
 
-    fn no_local() -> Value {
-        json!({ "enabled": false, "url": "", "model": "" })
+    /// The panel's entry for a tool.
+    fn tool_of<'a>(status: &'a Value, tool: &str) -> &'a Value {
+        status["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["tool"] == tool)
+            .unwrap()
+    }
+
+    fn model_of<'a>(tool: &'a Value, id: &str) -> &'a Value {
+        tool["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["id"] == id)
+            .unwrap()
     }
 
     fn tag_names(post: &Value) -> String {
@@ -321,7 +374,8 @@ mod tests {
         let status = app.get("/api/v1/ai", &admin).await.json();
         assert_eq!(
             status,
-            json!({ "enabled": true, "model": "llava", "tagging": true, "translation": true })
+            json!({ "enabled": true, "model": "llava", "tagging": true, "translation": true,
+                "comics": true })
         );
 
         let path = format!("/api/v1/posts/{id}/suggest-tags");
@@ -408,28 +462,64 @@ mod tests {
         // The admin sees that a key is set, never the key.
         let r = app.get("/api/v1/admin/ai", &admin).await;
         assert_eq!(r.status, StatusCode::OK);
-        assert_eq!(r.json()["key_set"], true);
+        let url = tool_of(&r.json(), "tagging")["settings"]["api_url"].clone();
+        assert_eq!(
+            tool_of(&r.json(), "tagging")["settings"]["api_key_set"],
+            true
+        );
         assert!(!r.json().to_string().contains("sk-wrong"));
 
         // Replacing the key fixes it; the new key isn't echoed either.
-        let body = json!({ "url": r.json()["url"], "model": "llava", "key": "sk-test",
-            "autotag": false, "local": no_local(), "tagging": "hosted", "translation": "hosted" });
+        let body = json!({ "mode": "api", "preset": "balanced", "api_url": url,
+            "api_model": "llava", "api_key": "sk-test" });
+        let tagging = "/api/v1/admin/ai/tools/tagging";
         let r = app
-            .call(Method::PUT, "/api/v1/admin/ai", Some(&admin), Some(body))
+            .call(Method::PUT, tagging, Some(&admin), Some(body))
             .await;
         assert_eq!(r.status, StatusCode::OK, "{:?}", r.json());
         assert!(!r.json().to_string().contains("sk-test"));
         let r = app.call(Method::POST, &path, Some(&admin), None).await;
         assert_eq!(r.status, StatusCode::OK, "{:?}", r.json());
 
-        // Clearing the key.
-        let body = json!({ "url": "http://x/v1", "model": "llava", "key": "", "autotag": true,
-            "local": no_local(), "tagging": "hosted", "translation": "off" });
+        // Each tool has its own API: the others still use the old key.
+        let translation = tool_of(
+            &app.get("/api/v1/admin/ai", &admin).await.json(),
+            "translation",
+        )
+        .clone();
+        assert_eq!(translation["settings"]["mode"], "api");
+
+        // Clearing the key. The environment's isn't sent to another address.
+        let body = json!({ "mode": "api", "preset": "balanced", "api_url": "http://x/v1",
+            "api_model": "llava", "api_key": "" });
         let r = app
-            .call(Method::PUT, "/api/v1/admin/ai", Some(&admin), Some(body))
+            .call(Method::PUT, tagging, Some(&admin), Some(body))
             .await;
-        assert_eq!(r.json()["key_set"], false);
-        assert_eq!(r.json()["autotag"], true);
+        assert_eq!(
+            tool_of(&r.json(), "tagging")["settings"]["api_key_set"],
+            false
+        );
+
+        // Nonsense is refused.
+        for body in [
+            json!({ "mode": "api", "preset": "fast", "api_url": "ftp://x", "api_model": "m" }),
+            json!({ "mode": "api", "preset": "fast", "api_url": "", "api_model": "" }),
+            json!({ "mode": "local", "preset": "fast", "model": "m2m" }),
+        ] {
+            let r = app
+                .call(Method::PUT, tagging, Some(&admin), Some(body))
+                .await;
+            assert_eq!(r.status, StatusCode::BAD_REQUEST, "{:?}", r.json());
+        }
+        let r = app
+            .call(
+                Method::PUT,
+                "/api/v1/admin/ai/tools/nope",
+                Some(&admin),
+                Some(json!({ "mode": "off", "preset": "fast" })),
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::NOT_FOUND);
 
         // Only admins.
         let user = app.register("user").await;
@@ -448,17 +538,21 @@ mod tests {
         let status = app.get("/api/v1/ai", &admin).await.json();
         assert_eq!(
             status,
-            json!({ "enabled": false, "model": null, "tagging": false, "translation": false })
+            json!({ "enabled": false, "model": null, "tagging": false, "translation": false,
+                "comics": false })
         );
         let path = format!("/api/v1/posts/{id}/suggest-tags");
         let r = app.call(Method::POST, &path, Some(&admin), None).await;
         assert_eq!(r.status, StatusCode::BAD_REQUEST);
         let r = app.get("/api/v1/admin/ai", &admin).await.json();
-        assert_eq!(
-            r,
-            json!({ "url": "", "model": "", "key_set": false, "autotag": false,
-                "local": no_local(), "tagging": "off", "translation": "off", "auto_translate": "" })
-        );
+        assert_eq!(r["autotag"], false);
+        assert_eq!(r["auto_translate"], "");
+        for tool in ["tagging", "translation", "comics"] {
+            let tool = tool_of(&r, tool);
+            assert_eq!(tool["settings"]["mode"], "off");
+            assert_eq!(tool["state"], "off");
+            assert_eq!(tool["active"], Value::Null);
+        }
         let path = format!("/api/v1/posts/{id}/translations");
         let r = app
             .call(
@@ -570,86 +664,236 @@ mod tests {
         app.finish().await;
     }
 
-    /// A fake Ollama: chat (no key), version, tags, pull and ps.
-    async fn ollama() -> String {
-        use axum::routing::get;
-        let app = Router::new()
-            .route(
-                "/v1/chat/completions",
-                post(|headers: HeaderMap, body: axum::Json<Value>| async move {
-                    if headers.contains_key("authorization")
-                        || body["model"] != "qwen3-vl:2b-instruct"
-                    {
-                        return (StatusCode::BAD_REQUEST, "{}".to_owned());
-                    }
-                    let answer = if body["messages"][0]["content"].is_array() {
-                        ANSWER
-                    } else {
-                        "CIAO"
-                    };
-                    let reply = json!({ "choices": [{ "message": { "content": answer } }] });
-                    (StatusCode::OK, reply.to_string())
-                }),
-            )
-            .route(
-                "/api/version",
-                get(|| async { json!({ "version": "0.12.9" }).to_string() }),
-            )
-            .route(
-                "/api/tags",
-                get(|| async {
-                    json!({ "models": [
-                        { "name": "qwen3-vl:2b-instruct", "size": 1_900_000_000u64 },
-                    ]})
-                    .to_string()
-                }),
-            )
-            .route(
-                "/api/pull",
-                post(|body: axum::Json<Value>| async move {
-                    if body["model"] != "qwen3-vl:4b-instruct" {
-                        return "{\"error\":\"pull model manifest: file does not exist\"}\n"
-                            .to_owned();
-                    }
-                    "{\"status\":\"pulling manifest\"}\n\
-                     {\"status\":\"pulling 1a2b\",\"total\":100,\"completed\":50}\n\
-                     {\"status\":\"success\"}\n"
-                        .to_owned()
-                }),
-            )
-            .route(
-                "/api/ps",
-                get(|| async {
-                    json!({ "models": [
-                        { "name": "qwen3-vl:2b-instruct", "size": 100, "size_vram": 100 },
-                    ]})
-                    .to_string()
-                }),
-            );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move { axum::serve(listener, app).await });
-        format!("http://{addr}")
-    }
+    /// A stand-in for the AI worker. The first answer to `tag` kills it, the
+    /// way running out of memory would, so tests cover its replacement.
+    const FAKE_WORKER: &str = r#"#!/bin/sh
+while IFS= read -r line; do
+  case "$line" in
+    *'"op":"hello"'*) echo '{"reply":"hello","gpu":null}' ;;
+    *'"op":"calibrate"'*) echo '{"reply":"calibrated","float_ms":4.87,"int8_ms":3.3,"gpu_ms":null}' ;;
+    *'"op":"measure"'*) echo '{"reply":"measured","cpu_ms":700,"gpu_ms":null,"gpu_matches":false}' ;;
+    *'"op":"unload"'*) echo '{"reply":"done"}' ;;
+    *'"op":"tag"'*)
+      if [ -e "$STARBOORU_AI_MODELS/damaged" ]; then
+        echo '{"reply":"error","message":"a model file is damaged"}'
+        continue
+      fi
+      if [ ! -e "$STARBOORU_AI_MODELS/crashed" ]; then
+        touch "$STARBOORU_AI_MODELS/crashed"
+        exit 9
+      fi
+      echo '{"reply":"tags","tags":[{"name":"Blue Sky","category":"general","score":0.9}],"rating":"general"}' ;;
+    *'"op":"translate"'*) echo '{"reply":"translated","texts":["CIAO"]}' ;;
+    *'"op":"detect"'*) echo '{"reply":"boxes","boxes":[{"x":0,"y":0,"w":1,"h":1}]}' ;;
+    *'"op":"read"'*) echo '{"reply":"texts","texts":["こんにちは"]}' ;;
+    *) echo '{"reply":"error","message":"unknown request"}' ;;
+  esac
+done
+"#;
 
-    async fn wait_for_pull(app: &testing::TestApp, admin: &str) -> Value {
-        for _ in 0..100 {
-            let status = app.get("/api/v1/admin/ai/local", admin).await.json();
-            if status["pull"]["done"] == true {
-                return status["pull"].clone();
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        }
-        panic!("the download never finished");
+    fn fake_worker(dir: &std::path::Path) -> std::path::PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join("fake-worker");
+        std::fs::write(&path, FAKE_WORKER).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
     }
 
     #[tokio::test]
-    async fn runs_tools_on_the_local_runtime() {
-        let url = ollama().await;
+    async fn runs_tools_on_the_built_in_models() {
+        let worker_dir = tempfile::tempdir().unwrap();
+        let worker = fake_worker(worker_dir.path());
+        let Some(app) = testing::app_with(|c| c.ai.worker = Some(worker)).await else {
+            return;
+        };
+        let ai = &app.state.local_ai;
+        std::fs::create_dir_all(app.state.config.data_dir.join("ai/models")).unwrap();
+        let admin = app.register("admin").await;
+        let id = app.upload_png(&admin, 9, "").await;
+        let path = format!("/api/v1/posts/{id}/suggest-tags");
+        let tagging = "/api/v1/admin/ai/tools/tagging";
+        let local = |preset: &str, model: &str| json!({ "mode": "local", "preset": preset, "model": model });
+
+        // Starting up times the machine, and keeps it.
+        crate::local_ai::sweep(&app.state, false).await;
+        let status = app.get("/api/v1/admin/ai", &admin).await.json();
+        assert_eq!(status["runtime"]["ready"], true);
+        assert!(status["hardware"]["threads"].as_u64().unwrap() >= 1);
+        let stored: Option<String> =
+            sqlx::query_scalar("SELECT ai_calibration::text FROM server_settings")
+                .fetch_one(app.db())
+                .await
+                .unwrap();
+        assert!(stored.unwrap().contains("float_ms"));
+        // Nothing runs, or downloads, until it's turned on.
+        assert_eq!(tool_of(&status, "tagging")["state"], "off");
+        assert_eq!(
+            model_of(tool_of(&status, "tagging"), "tresnet-320")["installed"],
+            false
+        );
+
+        // Presets that can't be met on this machine are unavailable.
+        let presets = &tool_of(&status, "comics")["presets"];
+        assert_eq!(presets[0]["preset"], "fast");
+        assert_eq!(presets[0]["available"], false);
+        assert_eq!(presets[1]["available"], true);
+
+        // Only one model is there: it answers while the preset's downloads.
+        crate::local_ai::mark_all_installed(
+            ai,
+            starbooru_core::ai_catalog::model("tresnet-320").unwrap(),
+        );
+        let r = app
+            .call(
+                Method::PUT,
+                tagging,
+                Some(&admin),
+                Some(local("balanced", "")),
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::OK, "{:?}", r.json());
+        let tool = tool_of(&r.json(), "tagging").clone();
+        assert_eq!(tool["state"], "installing");
+        // Both sizes of this model are the same file: the better one answers.
+        assert_eq!(tool["active"], "tresnet-448");
+        let status = app.get("/api/v1/ai", &admin).await.json();
+        assert_eq!(status["tagging"], true);
+        assert_eq!(status["translation"], false);
+
+        // Its answer goes through the worker, which recovers from a crash.
+        let r = app.call(Method::POST, &path, Some(&admin), None).await;
+        assert_eq!(r.status, StatusCode::OK, "{:?}", r.json());
+        assert_eq!(
+            r.json()["tags"],
+            json!([{ "name": "blue_sky", "category": "general", "exists": false }])
+        );
+        assert_eq!(r.json()["rating"], "general");
+
+        // The admin's own pick wins over the preset.
+        let r = app
+            .call(
+                Method::PUT,
+                tagging,
+                Some(&admin),
+                Some(local("fast", "tresnet-320")),
+            )
+            .await;
+        let tool = tool_of(&r.json(), "tagging").clone();
+        assert_eq!(tool["state"], "ready");
+        assert_eq!(tool["active"], "tresnet-320");
+
+        // Installing shows up as progress. A model of another tool is refused
+        // as a pick, and an unknown one can't be installed.
+        let r = app
+            .call(
+                Method::POST,
+                "/api/v1/admin/ai/models/nope/install",
+                Some(&admin),
+                None,
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::NOT_FOUND);
+        let r = app
+            .call(
+                Method::POST,
+                "/api/v1/admin/ai/models/m2m/install",
+                Some(&admin),
+                None,
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::OK, "{:?}", r.json());
+        let m2m = model_of(tool_of(&r.json(), "translation"), "m2m").clone();
+        assert!(m2m["progress"]["total"].as_u64().unwrap() > 0);
+        // Taken out of the queue again: it wasn't started.
+        let r = app
+            .call(
+                Method::DELETE,
+                "/api/v1/admin/ai/models/m2m",
+                Some(&admin),
+                None,
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::OK, "{:?}", r.json());
+        let m2m = model_of(tool_of(&r.json(), "translation"), "m2m").clone();
+        assert_eq!(m2m["progress"], Value::Null);
+
+        // A model in use stays. Once it isn't, it goes, with its files.
+        let tresnet = "/api/v1/admin/ai/models/tresnet-320";
+        let r = app.call(Method::DELETE, tresnet, Some(&admin), None).await;
+        assert_eq!(r.status, StatusCode::BAD_REQUEST, "{:?}", r.json());
+        let r = app
+            .call(
+                Method::PUT,
+                tagging,
+                Some(&admin),
+                Some(json!({ "mode": "off", "preset": "fast" })),
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::OK);
+        let r = app.call(Method::DELETE, tresnet, Some(&admin), None).await;
+        assert_eq!(r.status, StatusCode::OK, "{:?}", r.json());
+        let tool = tool_of(&r.json(), "tagging").clone();
+        assert_eq!(model_of(&tool, "tresnet-320")["installed"], false);
+        let r = app.call(Method::POST, &path, Some(&admin), None).await;
+        assert_eq!(r.status, StatusCode::BAD_REQUEST);
+
+        // Only admins.
+        let user = app.register("user").await;
+        for (method, url) in [
+            (Method::POST, "/api/v1/admin/ai/models/m2m/install"),
+            (Method::DELETE, "/api/v1/admin/ai/models/m2m"),
+            (Method::POST, "/api/v1/admin/ai/tools/tagging/test"),
+        ] {
+            let r = app.call(method, url, Some(&user), None).await;
+            assert_eq!(r.status, StatusCode::FORBIDDEN);
+        }
+        app.finish().await;
+    }
+
+    #[tokio::test]
+    async fn a_damaged_model_repairs_itself() {
+        let worker_dir = tempfile::tempdir().unwrap();
+        let worker = fake_worker(worker_dir.path());
+        let Some(app) = testing::app_with(|c| c.ai.worker = Some(worker)).await else {
+            return;
+        };
+        let ai = &app.state.local_ai;
+        let models = app.state.config.data_dir.join("ai/models");
+        std::fs::create_dir_all(&models).unwrap();
+        let model = starbooru_core::ai_catalog::model("tresnet-320").unwrap();
+        crate::local_ai::mark_all_installed(ai, model);
+        std::fs::write(models.join("damaged"), b"").unwrap();
+        let admin = app.register("admin").await;
+        let id = app.upload_png(&admin, 9, "").await;
+        crate::local_ai::sweep(&app.state, false).await;
+        let setup = json!({ "mode": "local", "preset": "fast", "model": "tresnet-320" });
+        let r = app
+            .call(
+                Method::PUT,
+                "/api/v1/admin/ai/tools/tagging",
+                Some(&admin),
+                Some(setup),
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::OK);
+
+        let path = format!("/api/v1/posts/{id}/suggest-tags");
+        let r = app.call(Method::POST, &path, Some(&admin), None).await;
+        assert_eq!(r.status, StatusCode::CONFLICT);
+        assert_eq!(r.json()["code"], "ai_unavailable");
+        assert!(!r.json()["message"].as_str().unwrap().contains('/'));
+        // The hash failed, so it's gone and the tool is getting it back.
+        assert!(!ai.is_installed(model));
+        let status = app.get("/api/v1/admin/ai", &admin).await.json();
+        assert_ne!(tool_of(&status, "tagging")["state"], "ready");
+        app.finish().await;
+    }
+
+    #[tokio::test]
+    async fn a_local_tool_without_its_model_says_so() {
         let Some(app) = testing::app_with(|c| {
-            c.ai.local_enabled = true;
-            c.ai.local_url = url;
-            c.ai.local_model = "qwen3-vl:2b-instruct".into();
+            c.ai.worker = Some("/nonexistent/worker".into());
+            c.ai.tagging = Some(starbooru_core::AiMode::Local);
         })
         .await
         else {
@@ -657,14 +901,14 @@ mod tests {
         };
         let admin = app.register("admin").await;
         let id = app.upload_png(&admin, 9, "").await;
-
-        // With no hosted provider, both tools default to local.
-        let status = app.get("/api/v1/ai", &admin).await.json();
-        assert_eq!(
-            status,
-            json!({ "enabled": true, "model": "qwen3-vl:2b-instruct", "tagging": true,
-                "translation": true })
-        );
+        crate::local_ai::sweep(&app.state, false).await;
+        // A build without the worker: an explanation, never an error page.
+        let status = app.get("/api/v1/admin/ai", &admin).await.json();
+        assert_eq!(status["runtime"]["ready"], false);
+        assert_eq!(tool_of(&status, "tagging")["state"], "failed");
+        assert!(tool_of(&status, "tagging")["error"].is_string());
+        let on = app.get("/api/v1/ai", &admin).await.json();
+        assert_eq!(on["tagging"], false);
         let r = app
             .call(
                 Method::POST,
@@ -673,136 +917,37 @@ mod tests {
                 None,
             )
             .await;
-        assert_eq!(r.status, StatusCode::OK, "{:?}", r.json());
-        assert_eq!(r.json()["rating"], "sensitive");
+        assert_eq!(r.status, StatusCode::CONFLICT, "{:?}", r.json());
+        app.finish().await;
+    }
 
-        // The machine, the presets and the runtime.
-        let r = app.get("/api/v1/admin/ai/local", &admin).await;
-        assert_eq!(r.status, StatusCode::OK);
-        let local = r.json();
-        assert_eq!(local["runtime"]["version"], "0.12.9");
-        assert_eq!(local["runtime_error"], Value::Null);
-        assert_eq!(local["tiers"][0]["model"], "qwen3-vl:2b-instruct");
-        assert_eq!(local["tiers"][0]["installed"], true);
-        assert_eq!(local["tiers"][1]["installed"], false);
-        assert!(local["hardware"]["threads"].as_u64().unwrap() >= 1);
-        let user = app.register("user").await;
-        let r = app.get("/api/v1/admin/ai/local", &user).await;
-        assert_eq!(r.status, StatusCode::FORBIDDEN);
-
-        // Downloads report progress, and their errors.
-        let pull = |model: &str| json!({ "model": model });
-        let r = app
-            .call(
-                Method::POST,
-                "/api/v1/admin/ai/local/pull",
-                Some(&admin),
-                Some(pull("a b")),
-            )
-            .await;
-        assert_eq!(r.status, StatusCode::BAD_REQUEST);
-        let r = app
-            .call(
-                Method::POST,
-                "/api/v1/admin/ai/local/pull",
-                Some(&admin),
-                Some(pull("qwen3-vl:4b-instruct")),
-            )
-            .await;
-        assert_eq!(r.status, StatusCode::OK, "{:?}", r.json());
-        let done = wait_for_pull(&app, &admin).await;
-        assert_eq!(done["status"], "success");
-        assert_eq!(
-            (done["completed"].as_u64(), done["total"].as_u64()),
-            (Some(50), Some(100))
-        );
-        assert_eq!(done["error"], Value::Null);
-        let r = app
-            .call(
-                Method::POST,
-                "/api/v1/admin/ai/local/pull",
-                Some(&admin),
-                Some(pull("missing:1b")),
-            )
-            .await;
-        assert_eq!(r.status, StatusCode::OK);
-        let failed = wait_for_pull(&app, &admin).await;
-        assert!(
-            failed["error"].as_str().unwrap().contains("does not exist"),
-            "{failed}"
-        );
-
-        // The speed test.
-        let r = app
-            .call(
-                Method::POST,
-                "/api/v1/admin/ai/local/test",
-                Some(&admin),
-                None,
-            )
-            .await;
-        assert_eq!(r.status, StatusCode::OK, "{:?}", r.json());
-        assert_eq!(r.json()["gpu_percent"], 100);
-        assert_eq!(r.json()["fit"], "good");
-
-        // Each tool can be turned off on its own.
-        let settings = |tagging: &str, local: bool| {
-            json!({ "url": "", "model": "", "autotag": false, "tagging": tagging,
-                "translation": "local", "local": { "enabled": local, "url": "http://127.0.0.1:9",
-                "model": "" } })
+    #[tokio::test]
+    async fn the_api_test_answers_with_its_time() {
+        let url = text_provider_any("OK").await;
+        let Some(app) = testing::app_with(|c| {
+            c.ai.url = url;
+            c.ai.model = "m".into();
+        })
+        .await
+        else {
+            return;
         };
-        let r = app
-            .call(
-                Method::PUT,
-                "/api/v1/admin/ai",
-                Some(&admin),
-                Some(settings("hosted", true)),
-            )
-            .await;
-        assert_eq!(r.status, StatusCode::BAD_REQUEST);
-        let r = app
-            .call(
-                Method::PUT,
-                "/api/v1/admin/ai",
-                Some(&admin),
-                Some(settings("local", false)),
-            )
-            .await;
-        assert_eq!(r.status, StatusCode::BAD_REQUEST);
-        let r = app
-            .call(
-                Method::PUT,
-                "/api/v1/admin/ai",
-                Some(&admin),
-                Some(settings("off", true)),
-            )
-            .await;
+        let admin = app.register("admin").await;
+        let test = "/api/v1/admin/ai/tools/tagging/test";
+        let r = app.call(Method::POST, test, Some(&admin), None).await;
         assert_eq!(r.status, StatusCode::OK, "{:?}", r.json());
-        assert_eq!(r.json()["tagging"], "off");
-        assert_eq!(r.json()["local"]["url"], "http://127.0.0.1:9");
-        let status = app.get("/api/v1/ai", &admin).await.json();
-        assert_eq!(
-            (status["tagging"].as_bool(), status["translation"].as_bool()),
-            (Some(false), Some(true))
-        );
+        assert!(r.json()["ms"].is_u64());
         let r = app
             .call(
-                Method::POST,
-                &format!("/api/v1/posts/{id}/suggest-tags"),
+                Method::PUT,
+                "/api/v1/admin/ai/tools/tagging",
                 Some(&admin),
-                None,
+                Some(json!({ "mode": "off", "preset": "fast" })),
             )
             .await;
+        assert_eq!(r.status, StatusCode::OK);
+        let r = app.call(Method::POST, test, Some(&admin), None).await;
         assert_eq!(r.status, StatusCode::BAD_REQUEST);
-        // The runtime now points nowhere: its error is reported, not fatal.
-        let local = app.get("/api/v1/admin/ai/local", &admin).await.json();
-        assert_eq!(local["runtime"], Value::Null);
-        assert!(
-            local["runtime_error"]
-                .as_str()
-                .unwrap()
-                .contains("local AI runtime")
-        );
         app.finish().await;
     }
 
@@ -896,15 +1041,14 @@ mod tests {
             .unwrap();
         let other_path = format!("/api/v1/posts/{other}/translations");
         assert_eq!(app.get(&other_path, &admin).await.json(), json!([]));
-        let mut settings = app.get("/api/v1/admin/ai", &admin).await.json();
+        let settings = app.get("/api/v1/admin/ai", &admin).await.json();
         assert_eq!(settings["auto_translate"], "");
-        settings["auto_translate"] = json!("pt-BR");
         let r = app
             .call(
                 Method::PUT,
                 "/api/v1/admin/ai",
                 Some(&admin),
-                Some(settings),
+                Some(json!({ "autotag": false, "auto_translate": "pt-BR" })),
             )
             .await;
         assert_eq!(r.status, StatusCode::OK, "{:?}", r.json());
@@ -921,14 +1065,14 @@ mod tests {
             ("Sorry, I can't read this.", StatusCode::BAD_GATEWAY),
             ("{\"blocks\": []}", StatusCode::OK),
         ] {
-            let mut settings = app.get("/api/v1/admin/ai", &admin).await.json();
-            settings["url"] = json!(provider(answer).await);
+            let body = json!({ "mode": "api", "preset": "balanced",
+                "api_url": provider(answer).await, "api_model": "llava", "api_key": "sk-test" });
             let r = app
                 .call(
                     Method::PUT,
-                    "/api/v1/admin/ai",
+                    "/api/v1/admin/ai/tools/comics",
                     Some(&admin),
-                    Some(settings),
+                    Some(body),
                 )
                 .await;
             assert_eq!(r.status, StatusCode::OK, "{:?}", r.json());

@@ -6,6 +6,9 @@
 pub mod admin;
 pub mod agent;
 pub mod ai;
+pub mod ai_catalog;
+mod ai_files;
+pub mod ai_worker;
 pub mod autotag;
 pub mod color;
 pub mod edit;
@@ -30,10 +33,13 @@ pub use admin::{
 };
 pub use agent::describe_user_agent;
 pub use ai::{
-    AiRoute, AiSettings, AiSettingsUpdate, AiStatus, LocalAiSettings, TagSuggestion,
-    TagSuggestions, TranslateRequest, Translation, clean_ai_settings, clean_language,
-    clean_translation, parse_suggestions, translate_prompt,
+    AiAdminStatus, AiGeneralUpdate, AiInstallProgress, AiModelOption, AiPresetOption,
+    AiRuntimeStatus, AiStatus, AiTestResult, AiToolSettings, AiToolState, AiToolStatus,
+    AiToolUpdate, TagSuggestion, TagSuggestions, TranslateRequest, Translation,
+    clean_general_update, clean_language, clean_tool_update, clean_translation, parse_suggestions,
+    translate_prompt,
 };
+pub use ai_catalog::{AiMode, AiPreset, AiTool};
 pub use autotag::{META_TAGS, META_VERSION, MediaFacts, meta_tags, meta_tags_since};
 pub use edit::{Crop, EditError, EditKind, MediaEdit, Trim, edit_kind};
 pub use figure::{
@@ -41,10 +47,7 @@ pub use figure::{
     Slot, clean_figures, cosplay_name, cosplay_tag, count_tags, is_count_tag, required_tags,
 };
 pub use keys::clean_api_key;
-pub use local_ai::{
-    Fit, FitCheck, Gpu, GpuKind, Hardware, LocalAiStatus, LocalModel, LocalRuntime,
-    LocalTestResult, LocalTier, Processor, PullProgress, PullRequest, TierCheck,
-};
+pub use local_ai::{Gpu, GpuKind, Hardware};
 pub use model::*;
 pub use oidc::{Identity, OidcBegin, OidcError, OidcFinish, OidcStart, SignInMethods};
 pub use panels::{PanelTranslation, TextBlock, panel_prompt, parse_panel_blocks};

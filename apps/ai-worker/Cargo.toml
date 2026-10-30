@@ -1,0 +1,30 @@
+[package]
+name = "starbooru-ai-worker"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Runs StarBooru's AI models for the server, in a process of its own"
+
+[lints]
+workspace = true
+
+[features]
+default = ["dynamic"]
+# Loads the ONNX Runtime library at startup.
+dynamic = ["ort/load-dynamic"]
+# Graphics cards through Vulkan. Links the runtime statically, and needs
+# libwebgpu_dawn.so next to the binary.
+webgpu = ["ort/webgpu", "ort/download-binaries", "ort/tls-rustls", "ort/copy-dylibs"]
+# NVIDIA. Loads the GPU build of the ONNX Runtime library.
+cuda = ["dynamic", "ort/cuda"]
+
+[dependencies]
+starbooru-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+base64 = "0.22"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "api-24"] }
+tokenizers = { version = "0.22", default-features = false, features = ["fancy-regex"] }

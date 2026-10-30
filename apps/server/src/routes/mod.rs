@@ -81,10 +81,14 @@ pub fn router(state: AppState) -> Router {
             "/admin/settings",
             get(admin::get_settings).put(admin::put_settings),
         )
-        .route("/admin/ai", get(ai::get_settings).put(ai::put_settings))
-        .route("/admin/ai/local", get(ai::local_status))
-        .route("/admin/ai/local/pull", post(ai::local_pull))
-        .route("/admin/ai/local/test", post(ai::local_test))
+        .route("/admin/ai", get(ai::admin_status).put(ai::put_general))
+        .route("/admin/ai/tools/{tool}", axum::routing::put(ai::put_tool))
+        .route("/admin/ai/tools/{tool}/test", post(ai::test_tool))
+        .route("/admin/ai/models/{id}/install", post(ai::install_model))
+        .route(
+            "/admin/ai/models/{id}",
+            axum::routing::delete(ai::uninstall_model),
+        )
         .route("/ai", get(ai::status))
         .route("/posts/{id}/suggest-tags", post(ai::suggest_tags))
         .route("/posts/{id}/translate", post(ai::translate))

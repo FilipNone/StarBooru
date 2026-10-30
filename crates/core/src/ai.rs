@@ -8,7 +8,10 @@ use serde::{Deserialize, Serialize};
 
 use std::collections::BTreeMap;
 
+use crate::ai_catalog::{AiMode, AiPreset, AiTool};
+use crate::ai_worker::FoundTag;
 use crate::figure::{Figure, FigureKind, MAX_FIGURES, Slot, clean_figures};
+use crate::local_ai::Hardware;
 use crate::model::{Rating, TagCategory};
 use crate::tag::normalize_tag;
 
@@ -36,37 +39,6 @@ other clothing and accessories, shape is their build, other is expression and th
 Character is who they are and cosplay the character they are dressed as; leave both empty \
 unless you are sure. Use an empty list for no figures.";
 
-/// Where an AI tool runs.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum AiRoute {
-    #[default]
-    Off,
-    /// The OpenAI-compatible provider (OpenAI, OpenRouter, …).
-    Hosted,
-    /// The local runtime on the server's own hardware.
-    Local,
-}
-
-impl AiRoute {
-    pub fn parse(s: &str) -> Option<Self> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "off" | "none" | "false" => Some(Self::Off),
-            "hosted" | "remote" => Some(Self::Hosted),
-            "local" => Some(Self::Local),
-            _ => None,
-        }
-    }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Off => "off",
-            Self::Hosted => "hosted",
-            Self::Local => "local",
-        }
-    }
-}
-
 /// `GET /ai`: which AI features clients should offer.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AiStatus {
@@ -76,79 +48,62 @@ pub struct AiStatus {
     pub model: Option<String>,
     /// Tag suggestions.
     pub tagging: bool,
-    /// Translation of the text in images.
+    /// Translation of text.
     pub translation: bool,
-}
-
-/// The local runtime (an Ollama server).
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LocalAiSettings {
-    /// Off by default (`STARBOORU_LOCAL_AI`).
-    pub enabled: bool,
-    /// Ollama's address, such as `http://ollama:11434`
-    /// (`STARBOORU_LOCAL_AI_URL`).
-    pub url: String,
-    /// Ollama model name (`STARBOORU_LOCAL_AI_MODEL`). Empty: the preset
-    /// recommended for this machine.
-    pub model: String,
-}
-
-/// `GET /admin/ai`. The key itself is never returned.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AiSettings {
-    /// Base URL of an OpenAI-compatible API, such as `https://api.openai.com/v1`
-    /// (`STARBOORU_AI_URL`). Empty turns the hosted provider off.
-    pub url: String,
-    /// Model name (`STARBOORU_AI_MODEL`).
-    pub model: String,
-    /// Whether an API key is stored or set in the environment.
-    pub key_set: bool,
-    /// Tag new uploads automatically (`STARBOORU_AI_AUTOTAG`).
-    pub autotag: bool,
-    pub local: LocalAiSettings,
-    /// Where tag suggestions run (`STARBOORU_AI_TAGGING`).
-    pub tagging: AiRoute,
-    /// Where translations run (`STARBOORU_AI_TRANSLATION`).
-    pub translation: AiRoute,
-    /// Translate the text in new images into this language (BCP 47) when
-    /// OCR finds some (`STARBOORU_AI_TRANSLATE_TO`). Empty is off.
+    /// Translation of the text in comics, over the picture.
     #[serde(default)]
-    pub auto_translate: String,
+    pub comics: bool,
+}
+
+/// How one AI tool is set up. The key itself is never returned.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AiToolSettings {
+    pub mode: AiMode,
+    pub preset: AiPreset,
+    /// A model chosen by hand. Empty: the preset picks one.
+    pub model: String,
+    /// Base URL of an OpenAI-compatible API, such as
+    /// `https://api.openai.com/v1` or `http://192.168.1.5:11434/v1`.
+    pub api_url: String,
+    pub api_model: String,
+    pub api_key_set: bool,
+}
+
+/// `PUT /admin/ai/tools/{tool}`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AiToolUpdate {
+    pub mode: AiMode,
+    pub preset: AiPreset,
+    #[serde(default)]
+    pub model: String,
+    #[serde(default)]
+    pub api_url: String,
+    #[serde(default)]
+    pub api_model: String,
+    /// `None` keeps the current key, `Some("")` clears it, anything else
+    /// replaces it.
+    #[serde(default)]
+    pub api_key: Option<String>,
 }
 
 /// `PUT /admin/ai`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AiSettingsUpdate {
-    pub url: String,
-    pub model: String,
-    /// `None` keeps the current key, `Some("")` clears it, anything else
-    /// replaces it.
-    #[serde(default)]
-    pub key: Option<String>,
+pub struct AiGeneralUpdate {
+    /// Tag new uploads automatically.
     pub autotag: bool,
-    pub local: LocalAiSettings,
-    pub tagging: AiRoute,
-    pub translation: AiRoute,
+    /// Translate the text in new images into this language (BCP 47). Empty
+    /// is off.
     #[serde(default)]
     pub auto_translate: String,
 }
 
-/// Checks an admin's AI settings. Returns them trimmed: URLs without a
-/// trailing `/` (and the local one without `/v1`, which is added per call).
-pub fn clean_ai_settings(update: &AiSettingsUpdate) -> Result<AiSettingsUpdate, String> {
-    let url = update.url.trim().trim_end_matches('/').to_owned();
+/// Checks an admin's setup of one tool. Returns it trimmed, the URL without a
+/// trailing `/`.
+pub fn clean_tool_update(tool: AiTool, update: &AiToolUpdate) -> Result<AiToolUpdate, String> {
+    let api_url = update.api_url.trim().trim_end_matches('/').to_owned();
+    let api_model = update.api_model.trim().to_owned();
     let model = update.model.trim().to_owned();
-    let local_url = update.local.url.trim().trim_end_matches('/');
-    let local_url = local_url
-        .strip_suffix("/v1")
-        .unwrap_or(local_url)
-        .to_owned();
-    let local_model = update.local.model.trim().to_owned();
-    for (what, value) in [
-        ("address", &url),
-        ("model", &model),
-        ("local address", &local_url),
-    ] {
+    for (what, value) in [("address", &api_url), ("model", &api_model)] {
         if value.chars().count() > MAX_AI_FIELD_CHARS {
             return Err(format!("the {what} is too long"));
         }
@@ -156,54 +111,129 @@ pub fn clean_ai_settings(update: &AiSettingsUpdate) -> Result<AiSettingsUpdate, 
             return Err(format!("the {what} contains a control character"));
         }
     }
-    for value in [&url, &local_url] {
-        if !value.is_empty() && !(value.starts_with("http://") || value.starts_with("https://")) {
-            return Err("the address must start with http:// or https://".into());
-        }
+    if !api_url.is_empty() && !(api_url.starts_with("http://") || api_url.starts_with("https://")) {
+        return Err("the address must start with http:// or https://".into());
     }
-    if !url.is_empty() && model.is_empty() {
-        return Err("enter a model name".into());
+    if update.mode == AiMode::Api && (api_url.is_empty() || api_model.is_empty()) {
+        return Err("enter the API's address and model".into());
     }
-    if let Some(key) = &update.key
+    if !model.is_empty() && crate::ai_catalog::model(&model).is_none_or(|m| m.tool != tool) {
+        return Err("unknown model".into());
+    }
+    if let Some(key) = &update.api_key
         && (key.chars().count() > MAX_AI_FIELD_CHARS || key.chars().any(char::is_control))
     {
         return Err("the key is not valid".into());
     }
-    if !local_model.is_empty() {
-        crate::local_ai::clean_model_name(&local_model)?;
-    }
-    if update.local.enabled && local_url.is_empty() {
-        return Err("enter the address of the local AI runtime".into());
-    }
-    let auto_translate = match update.auto_translate.trim() {
-        "" => String::new(),
-        lang => clean_language(lang)?,
-    };
-    if !auto_translate.is_empty() && update.translation == AiRoute::Off {
-        return Err("turn translation on to translate new images".into());
-    }
-    for route in [update.tagging, update.translation] {
-        if route == AiRoute::Hosted && url.is_empty() {
-            return Err("set up the hosted provider first, or pick local".into());
-        }
-        if route == AiRoute::Local && !update.local.enabled {
-            return Err("turn local AI on first, or pick hosted".into());
-        }
-    }
-    Ok(AiSettingsUpdate {
-        url,
+    Ok(AiToolUpdate {
+        mode: update.mode,
+        preset: update.preset,
         model,
-        key: update.key.clone(),
-        autotag: update.autotag,
-        local: LocalAiSettings {
-            enabled: update.local.enabled,
-            url: local_url,
-            model: local_model,
-        },
-        tagging: update.tagging,
-        translation: update.translation,
-        auto_translate,
+        api_url,
+        api_model,
+        api_key: update.api_key.as_deref().map(|k| k.trim().to_owned()),
     })
+}
+
+/// Checks the settings all tools share.
+pub fn clean_general_update(update: &AiGeneralUpdate) -> Result<AiGeneralUpdate, String> {
+    Ok(AiGeneralUpdate {
+        autotag: update.autotag,
+        auto_translate: match update.auto_translate.trim() {
+            "" => String::new(),
+            lang => clean_language(lang)?,
+        },
+    })
+}
+
+/// How far a tool is from answering.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AiToolState {
+    #[default]
+    Off,
+    Ready,
+    /// Its model is downloading. An installed one answers in the meantime,
+    /// when there is one.
+    Installing,
+    /// The last attempt failed; it's tried again by itself.
+    Failed,
+}
+
+/// What a preset means on this machine. Unavailable when no model meets its
+/// time limit here.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AiPresetOption {
+    pub preset: AiPreset,
+    pub available: bool,
+    /// The model it picks.
+    pub model: Option<String>,
+    pub est_ms: Option<u32>,
+}
+
+/// A download, in bytes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AiInstallProgress {
+    pub done: u64,
+    pub total: u64,
+}
+
+/// A model of a tool's catalog.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AiModelOption {
+    pub id: String,
+    pub name: String,
+    pub size: u64,
+    pub ram_mb: u32,
+    pub est_ms: u32,
+    /// `est_ms` was timed here, not estimated.
+    pub measured: bool,
+    /// It runs on the graphics card.
+    pub gpu: bool,
+    pub installed: bool,
+    /// It fits in this machine's memory.
+    pub fits: bool,
+    /// Downloading, or waiting to.
+    pub progress: Option<AiInstallProgress>,
+    pub error: Option<String>,
+}
+
+/// One tool in the admin's AI panel.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AiToolStatus {
+    pub tool: AiTool,
+    pub settings: AiToolSettings,
+    pub presets: Vec<AiPresetOption>,
+    pub models: Vec<AiModelOption>,
+    /// The model answering now.
+    pub active: Option<String>,
+    pub state: AiToolState,
+    pub error: Option<String>,
+}
+
+/// Whether StarBooru's own models can run here.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AiRuntimeStatus {
+    pub ready: bool,
+    pub reason: Option<String>,
+    /// The graphics card interface in use (`cuda`, `webgpu`).
+    pub gpu: Option<String>,
+}
+
+/// `GET /admin/ai`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AiAdminStatus {
+    pub hardware: Hardware,
+    pub runtime: AiRuntimeStatus,
+    pub autotag: bool,
+    pub auto_translate: String,
+    pub tools: Vec<AiToolStatus>,
+}
+
+/// `POST /admin/ai/tools/{tool}/test`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AiTestResult {
+    pub ms: u32,
 }
 
 /// One suggested tag.
@@ -298,6 +328,26 @@ pub struct ParsedSuggestions {
     pub rating: Option<Rating>,
     /// The people, cleaned like a saved edit. At most [`MAX_FIGURES`].
     pub figures: Vec<Figure>,
+}
+
+impl ParsedSuggestions {
+    /// What a built-in tagger found, cleaned like an answer.
+    pub fn from_found(found: Vec<FoundTag>, rating: Option<Rating>) -> Self {
+        let mut tags: Vec<(String, Option<TagCategory>)> = Vec::new();
+        for tag in found {
+            let Ok(name) = normalize_tag(&tag.name) else {
+                continue;
+            };
+            if tags.len() < MAX_SUGGESTIONS && !tags.iter().any(|(n, _)| *n == name) {
+                tags.push((name, tag.category));
+            }
+        }
+        Self {
+            tags,
+            rating,
+            figures: Vec::new(),
+        }
+    }
 }
 
 fn category(s: &str) -> Option<TagCategory> {
@@ -438,6 +488,84 @@ mod tests {
     }
 
     #[test]
+    fn cleans_a_tools_setup() {
+        let tool = AiTool::Tagging;
+        let good = AiToolUpdate {
+            mode: AiMode::Api,
+            api_url: " http://192.168.1.5:11434/v1/ ".into(),
+            api_model: " llava ".into(),
+            api_key: Some(" sk ".into()),
+            ..AiToolUpdate::default()
+        };
+        let clean = clean_tool_update(tool, &good).unwrap();
+        assert_eq!(clean.api_url, "http://192.168.1.5:11434/v1");
+        assert_eq!(clean.api_model, "llava");
+        assert_eq!(clean.api_key.as_deref(), Some("sk"));
+        let bad = |change: fn(&mut AiToolUpdate)| {
+            let mut update = good.clone();
+            change(&mut update);
+            clean_tool_update(tool, &update).is_err()
+        };
+        assert!(bad(|u| u.api_url = "ftp://x".into()));
+        assert!(bad(|u| u.api_url = String::new()));
+        assert!(bad(|u| u.api_model = String::new()));
+        assert!(bad(|u| u.api_url = "http://a\nb".into()));
+        assert!(bad(|u| u.api_key = Some("a\nb".into())));
+        assert!(bad(|u| u.api_model = "x".repeat(MAX_AI_FIELD_CHARS + 1)));
+        // Another tool's model, or none of ours.
+        assert!(bad(|u| u.model = "opus".into()));
+        assert!(bad(|u| u.model = "gpt".into()));
+        // Local needs no address.
+        let local = AiToolUpdate {
+            mode: AiMode::Local,
+            model: "wd-eva02".into(),
+            ..AiToolUpdate::default()
+        };
+        assert_eq!(clean_tool_update(tool, &local).unwrap().model, "wd-eva02");
+    }
+
+    #[test]
+    fn cleans_the_shared_settings() {
+        let update = |lang: &str| AiGeneralUpdate {
+            autotag: true,
+            auto_translate: lang.into(),
+        };
+        assert_eq!(
+            clean_general_update(&update(" it "))
+                .unwrap()
+                .auto_translate,
+            "it"
+        );
+        assert_eq!(
+            clean_general_update(&update("")).unwrap().auto_translate,
+            ""
+        );
+        assert!(clean_general_update(&update("not a language")).is_err());
+    }
+
+    #[test]
+    fn found_tags_are_cleaned_like_answers() {
+        let found = |name: &str| FoundTag {
+            name: name.into(),
+            category: None,
+            score: 0.9,
+        };
+        let many: Vec<FoundTag> = (0..MAX_SUGGESTIONS + 5)
+            .map(|i| found(&format!("tag{i}")))
+            .collect();
+        assert_eq!(
+            ParsedSuggestions::from_found(many, None).tags.len(),
+            MAX_SUGGESTIONS
+        );
+        let parsed = ParsedSuggestions::from_found(
+            vec![found("Blue Sky"), found("blue_sky"), found("-bad")],
+            Some(Rating::Sensitive),
+        );
+        assert_eq!(parsed.tags, [("blue_sky".to_string(), None)]);
+        assert_eq!(parsed.rating, Some(Rating::Sensitive));
+    }
+
+    #[test]
     fn reads_the_requested_shape() {
         let p = parse_suggestions(
             r#"{"tags":[{"name":"Long Hair","category":"general"},
@@ -558,90 +686,5 @@ mod tests {
             clean_translation(&long).chars().count(),
             MAX_TRANSLATE_CHARS
         );
-    }
-
-    #[test]
-    fn checks_settings() {
-        let mut u = AiSettingsUpdate {
-            url: " http://ollama:11434/v1/ ".into(),
-            model: "llava".into(),
-            tagging: AiRoute::Hosted,
-            ..AiSettingsUpdate::default()
-        };
-        let c = clean_ai_settings(&u).unwrap();
-        assert_eq!(
-            (c.url.as_str(), c.model.as_str()),
-            ("http://ollama:11434/v1", "llava")
-        );
-        u.url = "ftp://x".into();
-        assert!(clean_ai_settings(&u).is_err());
-        u.url = "https://x".into();
-        u.model = " ".into();
-        assert!(clean_ai_settings(&u).is_err());
-        u.url = String::new();
-        // Tagging can't go to a hosted provider that isn't set up.
-        assert!(clean_ai_settings(&u).is_err());
-        u.tagging = AiRoute::Off;
-        assert!(clean_ai_settings(&u).is_ok());
-    }
-
-    #[test]
-    fn checks_local_settings() {
-        let mut u = AiSettingsUpdate {
-            local: LocalAiSettings {
-                enabled: true,
-                url: " http://ollama:11434/v1/ ".into(),
-                model: " qwen3-vl:4b-instruct ".into(),
-            },
-            tagging: AiRoute::Local,
-            translation: AiRoute::Local,
-            ..AiSettingsUpdate::default()
-        };
-        let c = clean_ai_settings(&u).unwrap();
-        assert_eq!(c.local.url, "http://ollama:11434");
-        assert_eq!(c.local.model, "qwen3-vl:4b-instruct");
-        u.local.model = "bad name".into();
-        assert!(clean_ai_settings(&u).is_err());
-        u.local.model = String::new();
-        assert!(clean_ai_settings(&u).is_ok());
-        u.local.url = " ".into();
-        assert!(clean_ai_settings(&u).is_err());
-        u.local.url = "http://x".into();
-        u.local.enabled = false;
-        assert!(clean_ai_settings(&u).is_err());
-        u.tagging = AiRoute::Off;
-        u.translation = AiRoute::Off;
-        assert!(clean_ai_settings(&u).is_ok());
-    }
-
-    #[test]
-    fn checks_auto_translate() {
-        let mut u = AiSettingsUpdate {
-            local: LocalAiSettings {
-                enabled: true,
-                url: "http://ollama:11434".into(),
-                model: String::new(),
-            },
-            translation: AiRoute::Local,
-            auto_translate: " pt-BR ".into(),
-            ..AiSettingsUpdate::default()
-        };
-        assert_eq!(clean_ai_settings(&u).unwrap().auto_translate, "pt-BR");
-        u.auto_translate = "portuguese please".into();
-        assert!(clean_ai_settings(&u).is_err());
-        u.auto_translate = "it".into();
-        u.translation = AiRoute::Off;
-        assert!(clean_ai_settings(&u).is_err());
-        u.auto_translate = " ".into();
-        assert_eq!(clean_ai_settings(&u).unwrap().auto_translate, "");
-    }
-
-    #[test]
-    fn routes() {
-        for r in [AiRoute::Off, AiRoute::Hosted, AiRoute::Local] {
-            assert_eq!(AiRoute::parse(r.as_str()), Some(r));
-        }
-        assert_eq!(AiRoute::parse(" LOCAL "), Some(AiRoute::Local));
-        assert_eq!(AiRoute::parse("cloud"), None);
     }
 }

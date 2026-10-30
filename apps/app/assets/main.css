@@ -206,6 +206,7 @@ input[type="range"] { width: 100%; accent-color: var(--primary); margin-top: 12p
   transition: background-color var(--med) var(--ease), color var(--med) var(--ease);
 }
 .seg + .seg { border-left: 1px solid var(--outline); }
+.seg:disabled { opacity: .45; cursor: not-allowed; }
 .seg.on { background: var(--primary-container); color: var(--on-primary-container); font-weight: 600; }
 
 .swatches { display: flex; flex-wrap: wrap; gap: 10px; }
@@ -796,36 +797,28 @@ button.thumb { width: 100%; padding: 0; border: 0; font: inherit; color: inherit
 .ocr-foot { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
 
 /* admin: AI */
-.ai-section { font-size: 15px; font-weight: 600; margin: 24px 0 4px; padding-top: 16px; border-top: 1px solid var(--outline); }
-.local-ai { display: grid; gap: 12px; margin-bottom: 16px; }
-.local-hw { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
-.tiers { display: grid; gap: 8px; }
-.tier {
-  display: grid; gap: 4px; padding: 12px 14px; border: 1px solid var(--outline); border-radius: var(--radius-m);
-  font-size: 14px; cursor: pointer; transition: background-color var(--med) var(--ease), border-color var(--med) var(--ease);
-}
-.tier:hover { background: var(--surface-2); }
-.tier:focus-visible { outline: 3px solid var(--primary); outline-offset: 2px; }
-.tier.on { border-color: var(--primary); background: var(--primary-container); color: var(--on-primary-container); }
-.tier.on .muted { color: inherit; opacity: 0.85; }
-.tier-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.tier-head strong { margin-right: auto; font-size: 15px; }
-.tier-head .pill { max-width: none; }
-.tier-model { overflow-wrap: anywhere; }
-.tier-model code { font-size: 13px; }
-.tier-installed { display: inline-flex; align-items: center; gap: 4px; font-weight: 600; color: var(--primary); }
-.tier.on .tier-installed { color: inherit; }
-.tier .btn.text { justify-self: start; margin-left: -12px; }
-.tier .chip { justify-self: start; gap: 8px; }
-.tier-input {
-  width: 100%; padding: 10px 12px; border: 1px solid var(--outline); border-radius: var(--radius-s);
-  font: inherit; background: var(--surface); color: var(--on-surface);
-}
-.tier-input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px oklch(from var(--primary) l c h / 0.25); }
-.pull { display: grid; gap: 6px; font-size: 14px; }
-.pull .meter { max-width: none; }
-.local-test { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; font-size: 14px; }
-.local-test .pill { max-width: none; }
+.ai-machine { margin-bottom: 4px; overflow-wrap: anywhere; }
+.ai-tool { display: grid; gap: 12px; padding: 16px 0; border-top: 1px solid var(--outline); min-width: 0; }
+.ai-tool:last-child { padding-bottom: 0; }
+.ai-tool .segmented { justify-self: start; max-width: 100%; }
+.ai-tool .field, .ai-tool .check { margin: 0; }
+.ai-tool-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 28px; }
+.ai-tool-head h3 { margin: 0; font-size: 16px; font-weight: 600; }
+.ai-tool-head .pill { flex: none; max-width: none; }
+.ai-note { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
+.ai-tool .banner { margin: 0; justify-content: space-between; }
+.ai-models summary { cursor: pointer; font-size: 14px; font-weight: 500; padding: 4px 0; }
+.ai-model { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; padding: 10px 0; border-top: 1px solid var(--outline); }
+.ai-models summary + .ai-model { margin-top: 8px; }
+.ai-model-text { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; flex: 1 1 220px; min-width: 0; font-size: 14px; overflow-wrap: anywhere; }
+.ai-model-text strong { flex-basis: 100%; font-weight: 500; }
+.ai-model-text .pill { max-width: none; }
+.ai-model-error { flex-basis: 100%; color: var(--danger); }
+.ai-model-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 14px; }
+.ai-model-actions .pill { max-width: none; }
+.ai-meter { width: 96px; }
+.ai-api { display: grid; gap: 12px; }
+.ai-api-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; font-size: 14px; }
 .edit .field:last-of-type { margin-bottom: 20px; }
 .related-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 6px; }
 .related-grid .thumb, .related-grid .thumb:hover { border-radius: var(--radius-s); }

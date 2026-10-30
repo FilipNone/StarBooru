@@ -3,7 +3,7 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
-use starbooru_core::AiRoute;
+use starbooru_core::AiMode;
 use starbooru_core::admin::{MAX_BACKUP_DAYS, MAX_BACKUP_KEEP};
 use thiserror::Error;
 use url::Url;
@@ -61,26 +61,26 @@ pub struct Config {
     pub ai: AiConfig,
 }
 
-/// The AI providers from the environment. An empty URL turns the hosted
-/// provider off; the local runtime is off unless `STARBOORU_LOCAL_AI` is set.
+/// The AI defaults from the environment; the admin's panel overrides them.
 #[derive(Clone, Default)]
 pub struct AiConfig {
+    /// An OpenAI-compatible API. An empty URL means none.
     pub url: String,
     pub key: String,
     pub model: String,
     pub autotag: bool,
-    pub local_enabled: bool,
-    /// Ollama's address, without a trailing `/`.
-    pub local_url: String,
-    /// Empty: the preset recommended for this machine.
-    pub local_model: String,
-    /// Where each tool runs; `None` picks hosted when it is set up, else
-    /// local when it is on, else off.
-    pub tagging: Option<AiRoute>,
-    pub translation: Option<AiRoute>,
+    /// Tools use the built-in models when nothing else is said.
+    pub local_default: bool,
+    /// Where each tool runs; `None` picks the API when there is one, else
+    /// the built-in models when `local_default` is on, else off.
+    pub tagging: Option<AiMode>,
+    pub translation: Option<AiMode>,
+    pub comics: Option<AiMode>,
     /// Language (BCP 47) new images with text are translated into; empty
     /// is off.
     pub translate_to: String,
+    /// The AI worker to run; by default the ones next to the server's binary.
+    pub worker: Option<PathBuf>,
 }
 
 impl std::fmt::Debug for AiConfig {
@@ -90,12 +90,12 @@ impl std::fmt::Debug for AiConfig {
             .field("url", &self.url)
             .field("model", &self.model)
             .field("autotag", &self.autotag)
-            .field("local_enabled", &self.local_enabled)
-            .field("local_url", &self.local_url)
-            .field("local_model", &self.local_model)
+            .field("local_default", &self.local_default)
             .field("tagging", &self.tagging)
             .field("translation", &self.translation)
+            .field("comics", &self.comics)
             .field("translate_to", &self.translate_to)
+            .field("worker", &self.worker)
             .finish_non_exhaustive()
     }
 }
@@ -286,17 +286,14 @@ impl Config {
                     .trim()
                     .to_owned(),
                 autotag: flag(get("STARBOORU_AI_AUTOTAG")),
-                local_enabled: flag(get("STARBOORU_LOCAL_AI")),
-                local_url: get("STARBOORU_LOCAL_AI_URL")
-                    .map(|u| u.trim().trim_end_matches('/').to_owned())
-                    .filter(|u| !u.is_empty())
-                    .unwrap_or_else(|| "http://127.0.0.1:11434".into()),
-                local_model: get("STARBOORU_LOCAL_AI_MODEL")
-                    .unwrap_or_default()
-                    .trim()
-                    .to_owned(),
-                tagging: route(&get, "STARBOORU_AI_TAGGING")?,
-                translation: route(&get, "STARBOORU_AI_TRANSLATION")?,
+                local_default: flag(get("STARBOORU_LOCAL_AI")),
+                tagging: ai_mode(&get, "STARBOORU_AI_TAGGING")?,
+                translation: ai_mode(&get, "STARBOORU_AI_TRANSLATION")?,
+                comics: ai_mode(&get, "STARBOORU_AI_COMICS")?,
+                worker: get("STARBOORU_AI_WORKER")
+                    .map(|v| v.trim().to_owned())
+                    .filter(|v| !v.is_empty())
+                    .map(PathBuf::from),
                 translate_to: match get("STARBOORU_AI_TRANSLATE_TO")
                     .map(|v| v.trim().to_owned())
                     .filter(|v| !v.is_empty())
@@ -436,18 +433,18 @@ fn whole(
     }
 }
 
-/// `off`, `hosted` or `local`; unset or empty is `None`.
-fn route(
+/// `off`, `local` or `api`; unset or empty is `None`.
+fn ai_mode(
     get: &impl Fn(&str) -> Option<String>,
     name: &'static str,
-) -> Result<Option<AiRoute>, ConfigError> {
+) -> Result<Option<AiMode>, ConfigError> {
     match get(name).filter(|v| !v.trim().is_empty()) {
         None => Ok(None),
-        Some(v) => AiRoute::parse(&v)
+        Some(v) => AiMode::parse(&v.trim().to_ascii_lowercase())
             .map(Some)
             .ok_or_else(|| ConfigError::Invalid {
                 name,
-                reason: format!("`{v}` is not off, hosted or local"),
+                reason: format!("`{v}` is not off, local or api"),
             }),
     }
 }

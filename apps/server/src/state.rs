@@ -8,6 +8,7 @@ use tracing::warn;
 use crate::backup::Backups;
 use crate::config::Config;
 use crate::fetch::Fetcher;
+use crate::local_ai::LocalAi;
 use crate::media::Signer;
 use crate::ocr::Ocr;
 use crate::oidc::Oidc;
@@ -34,8 +35,8 @@ pub struct Inner {
     pub ocr: Option<Ocr>,
     /// Woken when background imports are queued.
     pub imports: tokio::sync::Notify,
-    /// The latest local AI model download.
-    pub local_pull: tokio::sync::Mutex<Option<starbooru_core::PullProgress>>,
+    /// The built-in AI models and the process that runs them.
+    pub local_ai: LocalAi,
     pub started_at: DateTime<Utc>,
 }
 
@@ -60,6 +61,7 @@ impl AppState {
                 }
             });
         let ocr = config.ocr.clone().filter(Ocr::available);
+        let local_ai = LocalAi::new(config.ai.worker.clone(), &config.data_dir);
         Self(Arc::new(Inner {
             config,
             db,
@@ -71,7 +73,7 @@ impl AppState {
             oidc,
             ocr,
             imports: tokio::sync::Notify::new(),
-            local_pull: tokio::sync::Mutex::new(None),
+            local_ai,
             started_at: Utc::now(),
         }))
     }
