@@ -5,6 +5,8 @@
 #[macro_use]
 mod i18n;
 mod activity;
+#[cfg(target_os = "android")]
+mod back;
 mod cache;
 mod download;
 mod icons;

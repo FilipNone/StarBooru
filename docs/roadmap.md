@@ -85,7 +85,7 @@ The checklist's *better tagging system* request, built in five phases. Each phas
 
 | Item | Status | Notes |
 |---|---|---|
-| builds and runs | ✅ | Same code. Built with `dx build --android` and run on Android 13 (Waydroid, x86_64): sign-in, gallery, viewer, settings. HTTPS uses the system's trusted CAs; it used to panic on the first request. |
+| builds and runs | ✅ | Same code. Built with `dx build --android` and run on Android 13 (Waydroid, x86_64): sign-in, gallery, viewer, settings. HTTPS uses the system's trusted CAs; it used to panic on the first request. Also run on a phone (Android 13, arm64), which found two crashes that Waydroid hadn't: a picture slower than 10 seconds to load, and closing the app (both fixed in `vendor`). |
 | login | ✅ | Session and settings are kept in the app's private files dir and survive a restart (verified on Android 13). They were lost before, because Android apps have no home directory for `directories` to use. The media cache uses the app's cache dir. |
 | mobile optimised layout | ✅ | Bottom navigation, 3-column grid, stacked viewer |
 | tablet layout, left/right hand modes, ppi optimisation | ✅ | Between phone and desktop widths (761–1100 px, tablets) the navigation is a rail at the side with its items centred, within reach of a thumb. A *Hand* setting (either, left, right) puts the rail, the viewer's panel and its zoom tools on that side. The viewer shows the smaller copy of a big image only while it has every pixel the screen can show: on a dense or big screen (fullscreen on 4K, a 3× phone) it loads the original. Same layout on the web and desktop. |

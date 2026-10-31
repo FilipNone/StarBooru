@@ -1,6 +1,6 @@
 # wry 0.53.5, patched
 
-This is [wry](https://github.com/tauri-apps/wry) 0.53.5 from crates.io (Apache-2.0 or MIT, see `LICENSE-APACHE` and `LICENSE-MIT`) with one change, to custom protocol requests on Android. The diff is `android-custom-protocol.patch`. The examples were left out.
+This is [wry](https://github.com/tauri-apps/wry) 0.53.5 from crates.io (Apache-2.0 or MIT, see `LICENSE-APACHE` and `LICENSE-MIT`) with two changes on Android. The first is to custom protocol requests. The diff is `android-custom-protocol.patch`. The examples were left out.
 
 Upstream, `handle_request` keeps the `REQUEST_HANDLER` lock while it waits for a response, and panics after 10 seconds without one, in a function that can't unwind. So one request at a time gets through, and:
 
@@ -13,4 +13,6 @@ Here the lock covers only the call to the handler, and a response that takes ove
 
 wry 0.57 stops waiting under the lock and doesn't panic either, but it runs the handler outside the lock as well. Dioxus 0.7's handler isn't thread safe (`RefCell`s in `assets.rs`), so the handler stays under the lock here.
 
-The root `Cargo.toml` points crates.io's `wry` here with `[patch.crates-io]`. Remove this folder and that entry once `dioxus-desktop` depends on a wry with this fixed and its own handler copes with running at the same time on several threads.
+The second is `android-back-key.patch`. The app's history is its router's, not the WebView's, so upstream's `WebView.goBack` has nothing to go back to and the key closes the app from any page. The activity now asks the page instead (`apps/app/src/back.rs`), and closes the app only if the page has no use for the key.
+
+The root `Cargo.toml` points crates.io's `wry` here with `[patch.crates-io]`. Remove this folder and that entry once `dioxus-desktop` depends on a wry with the first fixed and its own handler copes with running at the same time on several threads, and the back key has another way in.

@@ -1,0 +1,21 @@
+--- a/src/android/kotlin/WryActivity.kt
++++ b/src/android/kotlin/WryActivity.kt
+@@ -103,8 +103,16 @@
+     }
+ 
+     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+-        if (handleBackNavigation && keyCode == KeyEvent.KEYCODE_BACK && mWebView.canGoBack()) {
+-            mWebView.goBack()
++        // StarBooru: the app's history is its router's, so the page answers the key.
++        if (handleBackNavigation && keyCode == KeyEvent.KEYCODE_BACK && ::mWebView.isInitialized) {
++            if (event?.repeatCount == 0) {
++                mWebView.evaluateJavascript("window.__sbBack?.() === true") { handled ->
++                    if (handled != "true") {
++                        @Suppress("DEPRECATION")
++                        onBackPressed()
++                    }
++                }
++            }
+             return true
+         }
+         return super.onKeyDown(keyCode, event)

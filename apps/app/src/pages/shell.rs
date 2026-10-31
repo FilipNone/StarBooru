@@ -16,6 +16,8 @@ pub fn Shell() -> Element {
         return rsx! { Login {} };
     }
     let route = use_route::<Route>();
+    #[cfg(target_os = "android")]
+    crate::back::watch(&route);
     // Opening the app carries on from the last search.
     use_hook(|| {
         let last = store::last_search();
