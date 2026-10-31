@@ -11,7 +11,7 @@ use dioxus::prelude::*;
 use starbooru_core::Tag;
 
 use super::login::Login;
-use super::search_demo::SearchDemo;
+use super::search_demo::{SearchDemo, plays_on};
 use crate::Route;
 use crate::activity::{self, Activity};
 use crate::brand::{Mark, Wordmark};
@@ -350,7 +350,7 @@ fn SearchBox(route: Route) -> Element {
                     }
                 },
             }
-            if text.read().is_empty() {
+            if text.read().is_empty() && plays_on(&route) {
                 SearchDemo {}
             }
             }

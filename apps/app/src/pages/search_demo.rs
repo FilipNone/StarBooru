@@ -1,6 +1,7 @@
 //! What the empty search box shows: someone typing searches into it, each with
 //! a line on what it does, a walk through the cheat sheet (`help.rs`).
 
+use crate::Route;
 use dioxus::prelude::*;
 
 /// The tag the examples search for.
@@ -33,10 +34,15 @@ fn examples() -> [(&'static str, String); 18] {
     ]
 }
 
+/// The gallery is where a search goes, so that's where it's taught.
+pub fn plays_on(route: &Route) -> bool {
+    matches!(route, Route::Gallery { .. })
+}
+
 /// Writes straight into the page, so a keystroke costs no render. It rests while
-/// the box has focus or nobody can see it, ends when the box gets a search, and
-/// doesn't start under reduced motion or the battery saver: the input's own
-/// placeholder shows then.
+/// the box has focus, nobody can see it or the page is scrolled down, ends when
+/// the box gets a search or the page changes, and doesn't start under reduced
+/// motion or the battery saver: the input's own placeholder shows then.
 const TYPING: &str = r##"
 window.__sbTyping ??= {
   run: 0,
@@ -55,10 +61,21 @@ window.__sbTyping ??= {
     const note = demo.querySelector(".demo-note");
     const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
     const alive = () => run === this.run && demo.isConnected && !this.calm();
-    // Waits out the time, and then for as long as it should rest.
+    // Away from the top the demo gives way to the placeholder.
+    const atTop = () => {
+      const top = scrollY <= 8;
+      box.toggleAttribute("data-typing", top);
+      return top;
+    };
+    // Waits out the time, in steps so that leaving shows at once, and then for as
+    // long as it should rest.
     const beat = async (ms) => {
-      await sleep(ms);
-      while (alive() && (document.hidden || box.matches(":focus-within"))) await sleep(250);
+      for (let left = ms; left > 0; left -= 100) {
+        await sleep(Math.min(left, 100));
+        if (!alive()) return false;
+        atTop();
+      }
+      while (alive() && (!atTop() || document.hidden || box.matches(":focus-within"))) await sleep(250);
       return alive();
     };
     // The tag itself stays quiet: what the example teaches is what's coloured.
@@ -94,7 +111,7 @@ window.__sbTyping ??= {
       }
     };
     if (this.calm()) return;
-    box.dataset.typing = "";
+    atTop();
     await play();
     // A newer run has the box now if the demo came back.
     if (run === this.run) delete box.dataset.typing;
@@ -124,8 +141,27 @@ pub fn SearchDemo() -> Element {
 
 #[cfg(test)]
 mod tests {
-    use super::{TAG, TYPING, examples};
+    use super::{TAG, TYPING, examples, plays_on};
+    use crate::Route;
     use starbooru_core::parse_query;
+
+    #[test]
+    fn it_plays_only_in_the_gallery() {
+        assert!(plays_on(&Route::Gallery { q: String::new() }));
+        for page in [
+            Route::PostView {
+                id: 1,
+                q: String::new(),
+            },
+            Route::Explore { q: String::new() },
+            Route::Tags {},
+            Route::Upload {},
+            Route::Settings {},
+            Route::Help {},
+        ] {
+            assert!(!plays_on(&page));
+        }
+    }
 
     #[test]
     fn every_example_is_a_search_that_works() {
@@ -157,6 +193,7 @@ mod tests {
         assert!(TYPING.contains(":focus-within"));
         assert!(TYPING.contains("document.hidden"));
         assert!(TYPING.contains("demo.isConnected"));
+        assert!(TYPING.contains("scrollY <= 8"));
     }
 
     #[test]
