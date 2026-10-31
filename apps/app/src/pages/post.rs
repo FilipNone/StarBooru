@@ -68,7 +68,8 @@ pub static OPENING: GlobalSignal<Option<Post>> = Signal::global(|| None);
 
 #[component]
 pub fn PostView(id: i64, q: String) -> Element {
-    let mut post = use_signal(|| None::<Post>);
+    // In place from the first render: an empty page in between would flash.
+    let mut post = use_signal(|| OPENING.peek().clone().filter(|p| p.id == id));
     let mut error = use_signal(|| None::<String>);
     let mut busy = use_signal(|| false);
     let mut editing = use_signal(|| false);
@@ -992,7 +993,17 @@ fn css_url(url: &str) -> String {
     )
 }
 
-/// The viewer's image. Until it loads, the thumbnail stretched over its
+/// Waits until the viewer's image can paint: a big one has loaded some time
+/// before it has decoded.
+async fn image_decoded() {
+    let _ = document::eval(
+        "await document.getElementById('stage-img')?.decode().catch(() => {}); return true",
+    )
+    .join::<bool>()
+    .await;
+}
+
+/// The viewer's image. Until it can paint, the thumbnail stretched over its
 /// box stands in for it.
 #[component]
 fn StageImage(
@@ -1019,7 +1030,12 @@ fn StageImage(
             alt: "{alt}",
             draggable: "false",
             style,
-            onload: move |_| loaded.set(true),
+            onload: move |_| {
+                spawn(async move {
+                    image_decoded().await;
+                    loaded.set(true);
+                });
+            },
             onmounted: move |_| {
                 motion::arrive(id);
                 // A cached image can finish before the listener exists.
@@ -1030,6 +1046,7 @@ fn StageImage(
                     .join::<bool>()
                     .await;
                     if complete.unwrap_or(false) {
+                        image_decoded().await;
                         loaded.set(true);
                     }
                 });

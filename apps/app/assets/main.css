@@ -746,6 +746,7 @@ button.thumb { width: 100%; padding: 0; border: 0; font: inherit; color: inherit
 }
 .stage img, .stage video {
   display: block; max-width: 100%; max-height: var(--fit-h); object-fit: contain;
+  border-radius: inherit;
   animation: zoom-in var(--slow) var(--ease);
 }
 /* the thumbnail stands in until the image loads */
@@ -756,6 +757,7 @@ button.thumb { width: 100%; padding: 0; border: 0; font: inherit; color: inherit
 .stage { touch-action: pan-y; user-select: none; -webkit-user-select: none; }
 .stage img { transform-origin: center; transition: transform var(--fast) var(--ease); }
 .stage.zoomed { touch-action: none; cursor: grab; }
+.stage.zoomed img { border-radius: 0; }
 .stage.zoomed:active { cursor: grabbing; }
 .stage.dragging img { transition: none; }
 .stage.full { position: fixed; inset: 0; z-index: 50; min-height: 0; border-radius: 0; }
@@ -1117,6 +1119,9 @@ html.sb-hero .stage img, html.sb-hero .stage video { visibility: hidden; }
 .page.post-layout { animation-name: fade-in; }
 html.sb-hero-leaving .page.gallery { opacity: 0; }
 html.sb-hero-back .page.gallery { animation: fade-in var(--med) var(--ease); }
+.hero-past { position: fixed; inset: 0; z-index: 8; overflow: hidden; pointer-events: none; background: var(--canvas); }
+.hero-past .page { position: absolute; margin: 0; }
+.hero-past * { animation: none !important; transition: none !important; }
 @keyframes drift { to { transform: translate(4%, -3%) rotate(8deg); } }
 
 @media (prefers-reduced-motion: reduce) {

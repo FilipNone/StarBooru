@@ -9,7 +9,7 @@ use dioxus::prelude::*;
 /// its motion tokens.
 const HERO: &str = r##"
 window.__sbHero ??= {
-  ghost: null, hidden: null, flying: false, stage: null, timer: 0, veil: 0, unwatch: null,
+  ghost: null, hidden: null, flying: false, holding: false, past: null, stage: null, timer: 0, veil: 0, unwatch: null,
   calm() {
     return matchMedia("(prefers-reduced-motion: reduce)").matches
       || !!document.querySelector('.app[data-saver="on"]');
@@ -19,10 +19,16 @@ window.__sbHero ??= {
     this.ghost?.remove();
     this.ghost = null;
     this.flying = false;
-    if (this.hidden) this.hidden.style.visibility = "";
-    this.hidden = null;
+    this.holding = false;
+    this.past?.remove();
+    this.past = null;
+    this.uncover();
     this.unveil();
     document.documentElement.classList.remove("sb-hero", "sb-hero-back");
+  },
+  uncover() {
+    if (this.hidden) this.hidden.style.visibility = "";
+    this.hidden = null;
   },
   unveil() {
     clearTimeout(this.veil);
@@ -46,19 +52,65 @@ window.__sbHero ??= {
     this.ghost = ghost;
     this.timer = setTimeout(() => this.clear(), 1500);
   },
+  // The gallery goes the moment the viewer comes. A copy of it stays on top until
+  // the viewer is there and fades out over it, or the page blinks empty between them.
+  linger(id, tile) {
+    const page = tile.closest(".page");
+    const app = page?.closest(".app");
+    if (!app) return;
+    const box = page.getBoundingClientRect();
+    const copy = page.cloneNode(true);
+    for (const img of copy.querySelectorAll("img")) img.decoding = "sync";
+    const media = copy.querySelector(`[data-post="${id}"]`)?.closest(".thumb")?.querySelector(".thumb-media");
+    if (media) media.style.visibility = "hidden";
+    Object.assign(copy.style, { left: `${box.left}px`, top: `${box.top}px`, width: `${box.width}px` });
+    const past = document.createElement("div");
+    past.className = "hero-past";
+    past.setAttribute("aria-hidden", "true");
+    past.style.setProperty("--pad-x", getComputedStyle(page).getPropertyValue("--pad-x"));
+    past.append(copy);
+    app.append(past);
+    this.past = past;
+  },
+  fadePast() {
+    const past = this.past;
+    if (!past) return;
+    const gone = () => {
+      past.remove();
+      if (this.past === past) this.past = null;
+    };
+    past.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 200, easing: "ease-out", fill: "forwards" })
+      .finished.then(gone, gone);
+  },
+  // Landed: what it landed on shows underneath, and it leaves once that can
+  // really paint. A new picture may still be coming or decoding, in which case
+  // the thumbnail standing in for it takes over after a moment.
+  async under(el) {
+    document.documentElement.classList.remove("sb-hero");
+    this.uncover();
+    const shown = el?.tagName === "VIDEO" && el.readyState < 2
+      ? new Promise((done) => el.addEventListener("loadeddata", done, { once: true }))
+      : el?.decode?.().catch(() => {});
+    await Promise.race([shown, new Promise((done) => setTimeout(done, 400))]);
+    await new Promise(requestAnimationFrame);
+    await new Promise(requestAnimationFrame);
+  },
   // What it lands on can still move while the page settles, so it aims anew
   // each frame.
-  fly(aim, radius) {
+  fly(aim, radius, hold) {
     const ghost = this.ghost;
     const from = ghost.getBoundingClientRect();
     const round = parseFloat(ghost.style.borderRadius) || 0;
     const rounded = parseFloat(radius) || 0;
     this.flying = true;
     clearTimeout(this.timer);
-    this.timer = setTimeout(() => this.clear(), 1000);
+    this.timer = setTimeout(() => this.clear(), 1500);
     // Moves nothing itself: it keeps the time and the easing.
     const flight = ghost.animate([], { duration: 420, easing: "cubic-bezier(0.2, 0, 0, 1)", fill: "forwards" });
-    const end = () => {
+    const end = async () => {
+      if (this.ghost !== ghost) return;
+      this.holding = true;
+      await hold();
       if (this.ghost === ghost) this.clear();
     };
     flight.finished.then(end, end);
@@ -85,6 +137,7 @@ window.__sbHero ??= {
     if (this.calm() || !img?.complete || !img.naturalWidth) return;
     const tile = img.closest(".thumb");
     this.float(img.currentSrc || img.src, tile.getBoundingClientRect(), getComputedStyle(tile).borderRadius);
+    this.linger(id, tile);
     document.documentElement.classList.add("sb-hero");
   },
   watch(el, id) {
@@ -95,6 +148,7 @@ window.__sbHero ??= {
       if (box.width < 2) return;
       this.stage = {
         id, at: 0, left: box.left, top: box.top, width: box.width, height: box.height,
+        radius: getComputedStyle(el).borderRadius,
         src: el.tagName === "IMG" ? el.currentSrc || el.src : "",
       };
     };
@@ -116,15 +170,19 @@ window.__sbHero ??= {
   arrive(id) {
     const el = document.querySelector("#stage-img, .stage video");
     if (!el) return;
-    // The flight is its entrance.
-    if (this.ghost) for (const running of el.getAnimations()) running.cancel();
+    // The flight is its entrance, and the gallery's fade the page's.
+    if (this.ghost) {
+      const page = el.closest(".page");
+      for (const running of [...el.getAnimations(), ...(page?.getAnimations() ?? [])]) running.cancel();
+    }
     this.watch(el, id);
     const go = (tries) => {
       if (!this.ghost || this.flying) return;
       scrollTo({ top: 0, behavior: "instant" });
       const box = el.getBoundingClientRect();
       if (box.width >= 2 && box.height >= 2) {
-        this.fly(() => (el.isConnected ? el.getBoundingClientRect() : null), "0px");
+        this.fadePast();
+        this.fly(() => (el.isConnected ? el.getBoundingClientRect() : null), getComputedStyle(el).borderRadius, () => this.under(el));
       } else if (tries > 0) {
         requestAnimationFrame(() => go(tries - 1));
       } else {
@@ -168,8 +226,8 @@ window.__sbHero ??= {
     const tile = document.querySelector(`.masonry [data-post="${id}"]`)?.closest(".thumb");
     const media = tile?.querySelector(".thumb-media");
     if (!media) return null;
-    if (media !== this.hidden) {
-      if (this.hidden) this.hidden.style.visibility = "";
+    if (!this.holding && media !== this.hidden) {
+      this.uncover();
       media.style.visibility = "hidden";
       this.hidden = media;
     }
@@ -195,9 +253,12 @@ window.__sbHero ??= {
         return;
       }
       this.clear();
-      this.float(src, from, "0px", thumb);
+      this.float(src, from, from.radius, thumb);
       document.documentElement.classList.add("sb-hero-back");
-      this.fly(() => this.landing(from.id), getComputedStyle(tile).borderRadius);
+      this.fly(() => this.landing(from.id), getComputedStyle(tile).borderRadius, () => {
+        const shown = this.hidden?.querySelector("img");
+        return this.under(shown);
+      });
     };
     go(30);
   },
@@ -291,9 +352,42 @@ mod tests {
     fn a_flight_follows_what_it_lands_on() {
         // Regression: the picture landed where its tile was at take-off, which
         // was wrong whenever the page moved after that.
-        let (_, body) = HERO.split_once("fly(aim, radius) {").unwrap();
+        let (_, body) = HERO.split_once("fly(aim, radius, hold) {").unwrap();
         let (body, _) = body.split_once("\n  },").unwrap();
         assert!(body.contains("aim()") && body.contains("requestAnimationFrame"));
+    }
+
+    #[test]
+    fn a_landed_picture_waits_for_the_real_one() {
+        // Regression: it went at the end of the flight, while a new picture was
+        // still coming or decoding.
+        let (_, body) = HERO.split_once("async under(el) {").unwrap();
+        let (body, _) = body.split_once("\n  },").unwrap();
+        assert!(body.contains("decode") && body.contains("setTimeout"));
+        let (_, body) = HERO.split_once("fly(aim, radius, hold) {").unwrap();
+        assert!(body.contains("await hold()"));
+    }
+
+    #[test]
+    fn the_gallery_fades_out_over_the_viewer() {
+        // Regression: the page went empty between the gallery and the viewer.
+        let (_, body) = HERO.split_once("  open(id) {").unwrap();
+        let (body, _) = body.split_once("\n  },").unwrap();
+        assert!(body.contains("this.linger(id, tile)"));
+        let (_, body) = HERO.split_once("  arrive(id) {").unwrap();
+        let (body, _) = body.split_once("\n  },").unwrap();
+        assert!(body.contains("this.fadePast()"));
+    }
+
+    #[test]
+    fn a_flight_keeps_the_pictures_corners() {
+        // Regression: the picture flew to square corners and came back from
+        // them, while the stage it sits on is rounded.
+        assert!(!HERO.contains("\"0px\""));
+        let css = include_str!("../assets/main.css");
+        let (_, rule) = css.split_once(".stage img, .stage video {").unwrap();
+        let (rule, _) = rule.split_once('}').unwrap();
+        assert!(rule.contains("border-radius: inherit"));
     }
 
     #[test]
