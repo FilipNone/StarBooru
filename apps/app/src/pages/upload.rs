@@ -3,12 +3,15 @@
 
 use dioxus::html::{FileData, HasFileData};
 use dioxus::prelude::*;
-use starbooru_core::{ImportJob, JobState, Rating};
+use starbooru_core::tag::TagError;
+use starbooru_core::{ImportJob, JobState, Rating, parse_tag_list};
 
+use super::notify;
 use super::post::RatingPicker;
 use crate::Route;
 use crate::activity::{self, Item, JOBS, QUEUE, Source, Status};
 use crate::icons::{Ico, Icon};
+use crate::motion;
 use crate::store;
 use crate::util::{folder_tag, human_size, is_media_name, parse_urls};
 
@@ -159,19 +162,7 @@ pub fn Upload() -> Element {
                 div { class: "banner info", role: "status", "{message}" }
             }
             div { class: "card",
-                label { class: "field",
-                    span { {t!("upload-shared-tags")} }
-                    input {
-                        placeholder: "artist_name landscape blue_sky",
-                        spellcheck: "false",
-                        value: "{SHARED_TAGS}",
-                        oninput: move |e| *SHARED_TAGS.write() = e.value(),
-                    }
-                }
-                div { class: "field",
-                    span { {t!("rating")} }
-                    RatingPicker { value: *RATING.read(), onchange: move |r| *RATING.write() = r }
-                }
+                SharedFields {}
                 div { class: "row-end",
                     button {
                         class: "btn text",
@@ -220,6 +211,264 @@ pub fn Upload() -> Element {
                     ul { class: "queue",
                         for job in JOBS.read().iter() {
                             JobRow { key: "{job.id}", job: job.clone(), onerror: move |m| job_error.set(Some(m)) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The tags and rating every file in a batch gets.
+#[component]
+fn SharedFields(#[props(default)] focus: bool) -> Element {
+    rsx! {
+        label { class: "field",
+            span { {t!("upload-shared-tags")} }
+            input {
+                placeholder: "artist_name landscape blue_sky",
+                spellcheck: "false",
+                autofocus: focus,
+                value: "{SHARED_TAGS}",
+                oninput: move |e| *SHARED_TAGS.write() = e.value(),
+            }
+        }
+        div { class: "field",
+            span { {t!("rating")} }
+            RatingPicker { value: *RATING.read(), onchange: move |r| *RATING.write() = r }
+        }
+    }
+}
+
+/// Notices files dragged over the page. It's on the window, as the page doesn't
+/// fill it, and a file dropped outside would make a browser open that file.
+/// Pictures dragged off the page itself don't count.
+const WATCH_DROP: &str = r#"
+window.__sbDrop?.stop();
+let own = false;
+const files = (e) => {
+  const types = [...(e.dataTransfer?.types ?? [])];
+  return !own && (FILE_DRAG);
+};
+const over = (e) => {
+  if (!files(e)) return;
+  e.preventDefault();
+  if (!document.querySelector(".drop-veil, .upload-sheet")) dioxus.send(true);
+};
+const leave = (e) => {
+  if (e.target?.classList?.contains("drop-veil")) dioxus.send(false);
+};
+const drop = (e) => {
+  if (files(e)) e.preventDefault();
+  own = false;
+  dioxus.send(false);
+};
+const start = () => { own = true; };
+const end = () => { own = false; };
+const hooks = { dragenter: over, dragover: over, dragleave: leave, drop, dragstart: start, dragend: end };
+for (const [name, hook] of Object.entries(hooks)) addEventListener(name, hook);
+window.__sbDrop = {
+  stop() {
+    for (const [name, hook] of Object.entries(hooks)) removeEventListener(name, hook);
+  },
+};
+"#;
+/// What a drag carrying files looks like. WebKitGTK lists files only by their
+/// addresses, and the stand-in events Dioxus makes on Windows list nothing. The
+/// desktop's file paths come from the webview itself on the drop.
+#[cfg(feature = "desktop")]
+const FILE_DRAG: &str =
+    r#"!types.length || types.includes("Files") || types.includes("text/uri-list")"#;
+#[cfg(not(feature = "desktop"))]
+const FILE_DRAG: &str = r#"types.includes("Files")"#;
+const WATCH_DROP_OFF: &str = "window.__sbDrop?.stop(); window.__sbDrop = null;";
+
+/// What's wrong with the tags of a batch, if anything: each file gets the shared
+/// ones and its own.
+fn tag_problem<'a>(shared: &str, own: impl IntoIterator<Item = &'a str>) -> Option<TagError> {
+    own.into_iter()
+        .find_map(|tags| parse_tag_list(&format!("{shared} {tags}")).err())
+}
+
+/// Files dropped on the page: asks for their tags in a sheet that comes out of
+/// the Upload tab and goes back into it.
+#[component]
+pub fn DropToUpload() -> Element {
+    let mut veil = use_signal(|| false);
+    // The drafts in the sheet, which is open once it knows where it comes from.
+    let mut keys = use_signal(Vec::<u64>::new);
+    let mut from = use_signal(|| None::<(f64, f64)>);
+    let mut closing = use_signal(|| false);
+    // Whether closing the sheet also drops what's in it.
+    let mut discard = use_signal(|| false);
+    let mut error = use_signal(|| None::<String>);
+
+    use_hook(move || {
+        spawn(async move {
+            let mut watch = document::eval(&WATCH_DROP.replace("FILE_DRAG", FILE_DRAG));
+            while let Ok(shown) = watch.recv::<bool>().await {
+                if *veil.peek() != shown {
+                    veil.set(shown && store::can_upload());
+                }
+            }
+        });
+    });
+    use_drop(|| {
+        document::eval(WATCH_DROP_OFF);
+    });
+
+    let mut take = move |files: Vec<FileData>| {
+        veil.set(false);
+        if *closing.peek() || !store::can_upload() {
+            return;
+        }
+        let total = files.len();
+        let media: Vec<FileData> = files
+            .into_iter()
+            .filter(|f| is_media_name(&f.name()))
+            .collect();
+        let skipped = total.saturating_sub(media.len());
+        if skipped > 0 {
+            notify(t!("upload-skipped", count = skipped));
+        }
+        if media.is_empty() {
+            return;
+        }
+        for file in media {
+            // The desktop keeps the last drag's paths, and hands them over again
+            // for text dropped inside the sheet.
+            let known = QUEUE.peek().iter().any(|i| {
+                keys.peek().contains(&i.key)
+                    && matches!(&i.source, Source::File(f) if f.path() == file.path() && f.size() == file.size())
+            });
+            if !known {
+                let key = activity::add(Source::File(file), String::new());
+                keys.write().push(key);
+            }
+        }
+        if from.peek().is_none() {
+            spawn(async move {
+                from.set(Some(motion::upload_tab().await));
+            });
+        }
+    };
+
+    // Waits for the way back, in this scope so that nothing stops it halfway.
+    use_effect(move || {
+        if !closing() {
+            return;
+        }
+        spawn(async move {
+            motion::settled(".upload-sheet").await;
+            if *discard.peek() {
+                for key in keys.peek().iter() {
+                    activity::remove(*key);
+                }
+            }
+            keys.write().clear();
+            error.set(None);
+            discard.set(false);
+            from.set(None);
+            closing.set(false);
+        });
+    });
+    let mut close = move |drop_files: bool| {
+        if !*closing.peek() {
+            discard.set(drop_files);
+            closing.set(true);
+        }
+    };
+
+    let items: Vec<Item> = QUEUE
+        .read()
+        .iter()
+        .filter(|i| keys.read().contains(&i.key))
+        .cloned()
+        .collect();
+    let drafts = items.iter().filter(|i| i.status == Status::Draft).count();
+    // Each file removed from the list: nothing left to ask about.
+    let emptied = from().is_some() && drafts == 0;
+    use_effect(use_reactive!(|emptied| {
+        if emptied {
+            close(false);
+        }
+    }));
+    let send = move |_| {
+        let shared = SHARED_TAGS.peek().clone();
+        let chosen = keys.peek().clone();
+        let problem = tag_problem(
+            &shared,
+            QUEUE
+                .peek()
+                .iter()
+                .filter(|i| chosen.contains(&i.key))
+                .map(|i| i.tags.as_str()),
+        );
+        if let Some(problem) = problem {
+            error.set(Some(problem.to_string()));
+            return;
+        }
+        activity::start_only(&chosen, &shared, *RATING.peek());
+        close(false);
+    };
+
+    rsx! {
+        if veil() {
+            div {
+                class: "drop-veil",
+                ondragover: move |e| e.prevent_default(),
+                ondrop: move |e| {
+                    e.prevent_default();
+                    take(e.files());
+                },
+                div { class: "drop-veil-card",
+                    Ico { icon: Icon::Upload, size: 40 }
+                    strong { {t!("upload-drop-now")} }
+                }
+            }
+        }
+        if let Some((x, y)) = from() {
+            div {
+                class: if closing() { "sheet-scrim closing" } else { "sheet-scrim" },
+                onclick: move |_| close(true),
+                onkeydown: move |e| {
+                    if e.key() == Key::Escape {
+                        close(true);
+                    }
+                },
+                ondragover: move |e| e.prevent_default(),
+                ondrop: move |e| {
+                    e.prevent_default();
+                    take(e.files());
+                },
+                div {
+                    class: "card sheet upload-sheet",
+                    style: "--from-x: {x:.1}px; --from-y: {y:.1}px",
+                    role: "dialog",
+                    aria_modal: "true",
+                    aria_labelledby: "upload-sheet-title",
+                    onclick: move |e| e.stop_propagation(),
+                    div { class: "sheet-head",
+                        h2 { id: "upload-sheet-title", class: "card-title", {t!("nav-upload")} }
+                        button { class: "icon-btn", r#type: "button", aria_label: t!("cancel"), title: t!("cancel"),
+                            onclick: move |_| close(true),
+                            Ico { icon: Icon::Close }
+                        }
+                    }
+                    if let Some(message) = error() {
+                        div { class: "banner error", role: "alert", "{message}" }
+                    }
+                    ul { class: "queue",
+                        for item in items {
+                            QueueRow { key: "{item.key}", item }
+                        }
+                    }
+                    SharedFields { focus: true }
+                    div { class: "row-end",
+                        button { class: "btn text", r#type: "button", onclick: move |_| close(true), {t!("cancel")} }
+                        button { class: "btn", r#type: "button", disabled: drafts == 0, onclick: send,
+                            Ico { icon: Icon::Upload }
+                            {t!("upload-start", count = drafts)}
                         }
                     }
                 }
@@ -334,5 +583,31 @@ fn JobRow(job: ImportJob, onerror: EventHandler<String>) -> Element {
                 span { class: "queue-tags muted", Ico { icon: Icon::Label, size: 18 } "{tags}" }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_batch_needs_good_tags_on_every_file() {
+        assert!(tag_problem("sky blue", ["", "cloud"]).is_none());
+        let long = "x".repeat(400);
+        assert!(tag_problem(&long, ["cloud"]).is_some());
+        assert!(tag_problem("sky", ["cloud", long.as_str()]).is_some());
+        // Nothing to send, nothing wrong.
+        assert!(tag_problem(&long, []).is_none());
+    }
+
+    #[test]
+    fn drags_from_the_webviews_count_as_files() {
+        assert!(WATCH_DROP.contains("FILE_DRAG"));
+        assert!(FILE_DRAG.contains(r#"types.includes("Files")"#));
+        #[cfg(feature = "desktop")]
+        assert!(FILE_DRAG.contains("text/uri-list"));
+        // A link dragged in a browser isn't a file.
+        #[cfg(not(feature = "desktop"))]
+        assert!(!FILE_DRAG.contains("text/uri-list"));
     }
 }

@@ -391,6 +391,7 @@ upload-skipped =
     }
 upload-urls-only = Enter addresses that start with http:// or https://.
 upload-drop = Drop images or videos here
+upload-drop-now = Drop to upload
 upload-or-choose = or click to choose files
 upload-folder = Choose a folder
 upload-folder-tags = Tag files with their folder name

@@ -316,7 +316,7 @@ input[type="range"] { width: 100%; accent-color: var(--primary); margin-top: 12p
 
 /* A notice above everything at the bottom, over the phone's bottom bar. */
 .snackbar-slot {
-  position: fixed; left: 0; right: 0; bottom: 24px; z-index: 30;
+  position: fixed; left: 0; right: 0; bottom: 24px; z-index: 45;
   display: flex; justify-content: center; padding: 0 16px; pointer-events: none;
 }
 .snackbar {
@@ -1155,6 +1155,28 @@ pre.command {
   background: var(--scrim); animation: fade-in var(--med) var(--ease);
 }
 .sheet { width: min(520px, 100%); max-height: calc(100dvh - 32px); overflow-y: auto; box-shadow: var(--shadow-2); animation: fade-up var(--med) var(--ease); }
+/* Files dropped on the gallery. The sheet leaves and returns to the Upload tab
+   (`--from-x`, `--from-y`: how far that is from the middle of the window). */
+.drop-veil {
+  position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; padding: 16px;
+  background: var(--scrim); animation: fade-in var(--fast) var(--ease);
+}
+.drop-veil::before {
+  content: ""; position: absolute; inset: 12px; pointer-events: none;
+  border: 2px dashed var(--on-scrim); border-radius: var(--radius-l);
+}
+.drop-veil-card {
+  display: grid; justify-items: center; gap: 8px; padding: 24px 32px; pointer-events: none;
+  border-radius: var(--radius-l); background: var(--primary-container); color: var(--on-primary-container);
+  box-shadow: var(--shadow-2); animation: pop-in var(--med) var(--ease);
+}
+.upload-sheet { animation: from-tab var(--slow) var(--ease); }
+.upload-sheet .queue { margin: 12px 0 16px; max-height: 32dvh; overflow-y: auto; }
+.sheet-scrim.closing { animation: fade-out var(--med) var(--ease) forwards; }
+.sheet-scrim.closing .upload-sheet { animation: to-tab var(--med) var(--ease) forwards; }
+@keyframes from-tab { from { opacity: 0; transform: translate(var(--from-x), var(--from-y)) scale(0.08); } }
+@keyframes to-tab { to { opacity: 0; transform: translate(var(--from-x), var(--from-y)) scale(0.08); } }
+@keyframes fade-out { to { opacity: 0; } }
 .sheet-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .sheet-head .card-title { margin: 0; }
 .sheet .key-created { margin: 12px 0; }

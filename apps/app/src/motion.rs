@@ -162,6 +162,39 @@ window.__sbHero ??= {
 };
 "##;
 
+/// How far the Upload tab's centre is from the middle of the window, where a
+/// sheet sits. Nothing to measure means no distance.
+pub async fn upload_tab() -> (f64, f64) {
+    let mut eval = document::eval(
+        r#"
+        const tab = [...document.querySelectorAll(".nav-upload")]
+          .map((el) => el.getBoundingClientRect())
+          .find((box) => box.width > 0);
+        dioxus.send(tab
+          ? [tab.left + tab.width / 2 - innerWidth / 2, tab.top + tab.height / 2 - innerHeight / 2]
+          : [0, 0]);
+        "#,
+    );
+    eval.recv().await.unwrap_or_default()
+}
+
+/// Waits for the first element `selector` finds to finish animating. Call it
+/// from an effect, so the animation has been asked for.
+pub async fn settled(selector: &str) {
+    let mut eval = document::eval(&format!(
+        r#"
+        await new Promise(requestAnimationFrame);
+        const running = document.querySelector({selector:?})?.getAnimations() ?? [];
+        await Promise.race([
+          Promise.allSettled(running.map((a) => a.finished)),
+          new Promise((done) => setTimeout(done, 800)),
+        ]);
+        dioxus.send(true);
+        "#
+    ));
+    let _ = eval.recv::<bool>().await;
+}
+
 /// Lifts a tile's picture off the grid. Returns once it floats, so the page can
 /// change underneath it.
 pub async fn open(id: i64) {

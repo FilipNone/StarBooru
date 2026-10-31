@@ -309,6 +309,12 @@ pub fn persist() {
     }
 }
 
+/// Whether this account can add posts. Every signed-in account can today. The
+/// Upload tab and dropping files on the gallery both ask here.
+pub fn can_upload() -> bool {
+    SESSION.read().is_some()
+}
+
 /// Who the app is signed in as, so one account never sees what another
 /// searched.
 pub fn owner() -> String {

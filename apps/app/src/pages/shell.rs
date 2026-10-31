@@ -116,7 +116,7 @@ fn NavItems(route: Route) -> Element {
     let pending = activity::pending();
     let note = t!("activity-pending", count = pending);
     rsx! {
-        for (to, icon, label) in items {
+        for (to, icon, label) in items.into_iter().filter(|(to, ..)| !matches!(to, Route::Upload {}) || store::can_upload()) {
             NavLink {
                 key: "{label}",
                 active: std::mem::discriminant(&to) == std::mem::discriminant(&route),
@@ -140,9 +140,16 @@ fn NavLink(
     badge: usize,
     note: String,
 ) -> Element {
+    // The upload sheet comes out of this tab (`.nav-upload`).
+    let upload = if matches!(to, Route::Upload {}) {
+        " nav-upload"
+    } else {
+        ""
+    };
+    let on = if active { " active" } else { "" };
     rsx! {
         Link {
-            class: if active { "nav-item active" } else { "nav-item" },
+            class: "nav-item{upload}{on}",
             title: if badge > 0 { note.clone() } else { String::new() },
             to,
             span { class: "nav-pill",

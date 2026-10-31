@@ -391,6 +391,7 @@ upload-skipped =
     }
 upload-urls-only = Inserisci indirizzi che iniziano con http:// o https://.
 upload-drop = Trascina qui immagini o video
+upload-drop-now = Rilascia per caricare
 upload-or-choose = oppure fai clic per scegliere i file
 upload-folder = Scegli una cartella
 upload-folder-tags = Tagga i file con il nome della loro cartella

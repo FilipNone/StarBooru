@@ -12,8 +12,10 @@ use starbooru_core::{
 
 use super::post::OPENING;
 use super::share::ShareSheet;
+use super::upload::DropToUpload;
 use super::{Choice, CorrectionBanner, ErrorBanner, Select, Spinner};
 use crate::Route;
+use crate::activity;
 use crate::cache;
 use crate::icons::{Ico, Icon};
 use crate::layout::{self, Place, TILE_GAP};
@@ -405,6 +407,17 @@ pub fn Gallery(q: String) -> Element {
         restart(q);
     }));
 
+    // What finishes uploading while the user stays here shows up here.
+    let finished = use_memo(activity::finished_count);
+    let mut seen_finished = use_signal(|| *finished.peek());
+    use_effect(move || {
+        let now = finished();
+        if now > *seen_finished.peek() {
+            refresh_head();
+        }
+        seen_finished.set(now);
+    });
+
     // Remembers the spot as the user scrolls. Nothing to remember while the
     // list is loading.
     use_hook(move || {
@@ -599,7 +612,9 @@ pub fn Gallery(q: String) -> Element {
                     if q.is_empty() {
                         h2 { {t!("gallery-empty")} }
                         p { class: "muted", {t!("gallery-empty-body")} }
-                        Link { class: "btn", to: Route::Upload {}, Ico { icon: Icon::Upload } {t!("nav-upload")} }
+                        if store::can_upload() {
+                            Link { class: "btn", to: Route::Upload {}, Ico { icon: Icon::Upload } {t!("nav-upload")} }
+                        }
                     } else {
                         h2 { {t!("no-matches")} }
                         p { class: "muted", {t!("gallery-try-fewer")} }
@@ -658,6 +673,7 @@ pub fn Gallery(q: String) -> Element {
                     ondone,
                 }
             }
+            DropToUpload {}
         }
     }
 }

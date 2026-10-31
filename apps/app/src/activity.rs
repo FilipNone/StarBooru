@@ -72,7 +72,8 @@ static WATCHED: GlobalSignal<HashSet<i64>> = Signal::global(HashSet::new);
 const POLL_BUSY: u32 = 2;
 const POLL_IDLE: u32 = 60;
 
-pub fn add(source: Source, tags: String) {
+/// Adds a draft and returns its key.
+pub fn add(source: Source, tags: String) -> u64 {
     let key = *NEXT_KEY.peek();
     *NEXT_KEY.write() = key.wrapping_add(1);
     QUEUE.write().push(Item {
@@ -81,6 +82,7 @@ pub fn add(source: Source, tags: String) {
         tags,
         status: Status::Draft,
     });
+    key
 }
 
 pub fn set_tags(key: u64, tags: String) {
@@ -108,12 +110,37 @@ pub fn pending() -> usize {
     uploads.saturating_add(imports)
 }
 
-/// Sends every draft: files to the upload runner, addresses to the server's
-/// import queue, each with the shared tags and rating.
+/// How many uploads and imports have finished, for pages showing their results.
+pub fn finished_count() -> usize {
+    let uploads = QUEUE
+        .read()
+        .iter()
+        .filter(|i| matches!(i.status, Status::Done(_)))
+        .count();
+    let imports = JOBS
+        .read()
+        .iter()
+        .filter(|j| j.state == JobState::Done)
+        .count();
+    uploads.saturating_add(imports)
+}
+
+/// Sends every draft.
 pub fn start(shared: &str, rating: Rating) {
+    send(shared, rating, |_| true);
+}
+
+/// Sends these drafts and leaves any others waiting on the Upload page.
+pub fn start_only(keys: &[u64], shared: &str, rating: Rating) {
+    send(shared, rating, |key| keys.contains(&key));
+}
+
+/// Files go to the upload runner and addresses to the server's import queue,
+/// each with the shared tags and rating.
+fn send(shared: &str, rating: Rating, wanted: impl Fn(u64) -> bool) {
     let mut batch = Vec::new();
     for item in QUEUE.write().iter_mut() {
-        if item.status != Status::Draft {
+        if item.status != Status::Draft || !wanted(item.key) {
             continue;
         }
         let tags = match parse_tag_list(&format!("{shared} {}", item.tags)) {
