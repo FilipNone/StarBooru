@@ -386,6 +386,16 @@ mod tests {
     use std::mem::discriminant;
 
     #[test]
+    fn the_rail_and_its_thumb_round_the_same_sides() {
+        // Regression: cells shorter than the thumb is wide made a thumb flat on top
+        // and bottom, in a rail flat on left and right.
+        let css = include_str!("../../assets/main.css");
+        assert!(css.contains("min-height: var(--rail-w);"));
+        assert!(css.contains("min-height: calc(var(--rail-w) - 2 * var(--pad));"));
+        assert!(css.contains("border-radius: calc(var(--rail-w) / 2 - var(--pad));"));
+    }
+
+    #[test]
     fn a_page_under_a_tab_keeps_that_tab_selected() {
         let settings = discriminant(&Route::Settings {});
         for page in [

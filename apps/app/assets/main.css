@@ -514,20 +514,25 @@ a.brand:hover .mark-star, a.search-home:hover .mark-star { transform: rotate(90d
    things clear of it. */
 .app { --rail-l: 0px; --rail-r: 0px; }
 @media (min-width: 761px) and (max-width: 1529px) {
-  .app { --rail-l: 92px; }
-  .app[data-hand="right"] { --rail-l: 0px; --rail-r: 92px; }
+  .app { --rail-w: 76px; --rail-l: calc(var(--rail-w) + 16px); }
+  .app[data-hand="right"] { --rail-l: 0px; --rail-r: calc(var(--rail-w) + 16px); }
   .nav-bottom {
-    position: fixed; z-index: 9; left: var(--bar-gap); width: 76px; height: fit-content;
+    position: fixed; z-index: 9; left: var(--bar-gap); width: var(--rail-w); height: fit-content;
     top: calc(var(--bar-end) + var(--bar-gap)); bottom: var(--bar-gap); margin-block: auto;
-    display: grid; grid-auto-rows: 1fr; border-radius: 38px;
+    display: grid; grid-auto-rows: 1fr; border-radius: calc(var(--rail-w) / 2);
   }
   .app[data-hand="right"] .nav-bottom { left: auto; right: var(--bar-gap); }
   .nav-bottom .slider-thumb {
-    left: var(--pad); right: var(--pad); border-radius: 34px;
+    left: var(--pad); right: var(--pad); border-radius: calc(var(--rail-w) / 2 - var(--pad));
     top: calc(var(--pad) + var(--i) * var(--cell));
     bottom: calc(var(--pad) + (var(--n) - 1 - var(--i)) * var(--cell));
   }
-  .nav-bottom .nav-item { flex-direction: column; gap: 2px; min-height: 58px; padding: 0 2px; font-size: 12px; border-radius: 34px; }
+  /* At least as tall as the thumb is wide, or a full radius rounds its left and
+     right instead of following the rail. */
+  .nav-bottom .nav-item {
+    flex-direction: column; gap: 2px; min-height: var(--rail-w); padding: 0 2px; font-size: 12px;
+    border-radius: calc(var(--rail-w) / 2 - var(--pad));
+  }
   .nav-bottom .nav-item .icon { width: 22px; height: 22px; }
   .content { padding-left: calc(8px + var(--rail-l)); padding-right: calc(8px + var(--rail-r)); }
   .bulk-bar, .snackbar-slot { left: var(--rail-l); right: var(--rail-r); }
@@ -539,7 +544,8 @@ a.brand:hover .mark-star, a.search-home:hover .mark-star { transform: rotate(90d
 }
 /* A phone on its side: icons alone fit the height, and still say what they are. */
 @media (min-width: 761px) and (max-width: 1529px) and (max-height: 500px) {
-  .nav-bottom .nav-item { min-height: 44px; }
+  .app { --rail-w: 52px; }
+  .nav-bottom .nav-item { min-height: calc(var(--rail-w) - 2 * var(--pad)); }
   .nav-bottom .nav-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 }
 
