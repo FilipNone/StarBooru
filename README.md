@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/lockup-gold.svg">
+    <img src="docs/brand/lockup.svg" alt="StarBooru" width="360">
+  </picture>
+</p>
+
 # StarBooru
 
 A self-hosted personal booru for organising and tagging private image and video collections. It is written in Rust.

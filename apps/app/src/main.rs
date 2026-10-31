@@ -7,6 +7,9 @@ mod i18n;
 mod activity;
 #[cfg(target_os = "android")]
 mod back;
+mod brand;
+#[rustfmt::skip]
+mod brand_paths;
 mod cache;
 mod download;
 mod icons;
@@ -30,6 +33,9 @@ use crate::pages::{
 use crate::store::{PREFS, SESSION};
 
 const MAIN_CSS: Asset = asset!("/assets/main.css");
+const FAVICON: Asset = asset!("/assets/brand/favicon.svg");
+const FAVICON_PNG: Asset = asset!("/assets/brand/favicon-32.png");
+const TOUCH_ICON: Asset = asset!("/assets/brand/apple-touch-icon.png");
 
 #[derive(Routable, Clone, PartialEq, Debug)]
 #[rustfmt::skip]
@@ -81,18 +87,22 @@ fn main() {
 
 #[cfg(feature = "desktop")]
 fn launch_desktop() {
-    use dioxus::desktop::{Config, LogicalSize, WindowBuilder};
+    use dioxus::desktop::tao::window::Icon;
+    use dioxus::desktop::{Config, LogicalSize, WindowBuilder, icon_from_memory};
     let window = WindowBuilder::new()
         .with_title("StarBooru")
         .with_inner_size(LogicalSize::new(1280.0, 820.0))
         .with_min_inner_size(LogicalSize::new(360.0, 480.0));
+    let mut config = Config::new()
+        .with_window(window)
+        .with_menu(None)
+        .with_disable_dma_buf_on_wayland(system::dmabuf_off_here());
+    // A bad icon is no reason not to start.
+    if let Ok(icon) = icon_from_memory::<Icon>(include_bytes!("../assets/brand/window-icon.png")) {
+        config = config.with_icon(icon);
+    }
     dioxus::LaunchBuilder::desktop()
-        .with_cfg(
-            Config::new()
-                .with_window(window)
-                .with_menu(None)
-                .with_disable_dma_buf_on_wayland(system::dmabuf_off_here()),
-        )
+        .with_cfg(config)
         .launch(App);
 }
 
@@ -123,6 +133,9 @@ fn App() -> Element {
             content: "width=device-width, initial-scale=1, viewport-fit=cover",
         }
         document::Stylesheet { href: MAIN_CSS }
+        document::Link { rel: "icon", r#type: "image/svg+xml", href: FAVICON }
+        document::Link { rel: "icon", r#type: "image/png", sizes: "32x32", href: FAVICON_PNG }
+        document::Link { rel: "apple-touch-icon", href: TOUCH_ICON }
         div {
             class: "app",
             lang,

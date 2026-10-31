@@ -8,6 +8,7 @@ use starbooru_core::share::{MAX_SHARE_TITLE_CHARS, share_path};
 use starbooru_core::{MediaKind, NewShare, Share, SharedView};
 
 use super::{Choice, ErrorBanner, Select, Spinner};
+use crate::brand::{Mark, Wordmark};
 use crate::icons::{Ico, Icon};
 use crate::power;
 use crate::store;
@@ -452,9 +453,9 @@ pub fn SharedPage(token: String) -> Element {
         document::Meta { name: "referrer", content: "no-referrer" }
         document::Meta { name: "robots", content: "noindex, nofollow" }
         div { class: "shared-page",
-            div { class: "brand legal-brand",
-                Ico { icon: Icon::Star }
-                span { "StarBooru" }
+            div { class: "brand legal-brand", role: "img", aria_label: "StarBooru",
+                Mark { height: 30, compact: true }
+                Wordmark { height: 19 }
             }
             {body}
         }

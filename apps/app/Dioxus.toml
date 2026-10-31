@@ -9,3 +9,11 @@ identifier = "eu.filipnone.starbooru"
 publisher = "StarBooru"
 short_description = "Self-hosted personal booru"
 category = "Graphics"
+icon = [
+  "icons/icon-32.png",
+  "icons/icon-128.png",
+  "icons/icon-256.png",
+  "icons/icon-512.png",
+  "icons/icon.ico",
+  "icons/icon.icns",
+]

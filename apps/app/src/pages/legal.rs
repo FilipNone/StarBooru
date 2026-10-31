@@ -5,7 +5,7 @@
 use dioxus::prelude::*;
 
 use crate::Route;
-use crate::icons::{Ico, Icon};
+use crate::brand::{Mark, Wordmark};
 
 #[component]
 pub fn Privacy() -> Element {
@@ -81,9 +81,9 @@ fn LegalPage(title: String, children: Element) -> Element {
     rsx! {
         div { class: "legal-page",
             article { class: "legal card",
-                Link { class: "brand legal-brand", to: Route::Gallery { q: String::new() },
-                    Ico { icon: Icon::Star }
-                    span { "StarBooru" }
+                Link { class: "brand legal-brand", aria_label: "StarBooru", to: Route::Gallery { q: String::new() },
+                    Mark { height: 30, compact: true }
+                    Wordmark { height: 19 }
                 }
                 h1 { "{title}" }
                 {children}

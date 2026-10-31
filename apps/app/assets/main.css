@@ -340,8 +340,13 @@ input[type="range"] { width: 100%; accent-color: var(--primary); margin-top: 12p
   display: flex; align-items: center; gap: 8px; color: var(--primary);
   font-weight: 700; font-size: 20px; text-decoration: none; letter-spacing: -0.01em;
 }
-.brand .icon { transition: transform var(--slow) var(--ease-spring); }
-.brand:hover .icon { transform: rotate(72deg) scale(1.15); }
+.mark, .wordmark { display: block; flex: none; }
+/* The star turns a quarter, back onto itself. */
+.mark-star {
+  transform-box: fill-box; transform-origin: center;
+  transition: transform var(--slow) var(--ease-spring);
+}
+a.brand:hover .mark-star { transform: rotate(90deg) scale(1.08); }
 
 .search {
   position: relative; flex: 1; max-width: 680px; margin: 0 auto;
@@ -399,7 +404,7 @@ input[type="range"] { width: 100%; accent-color: var(--primary); margin-top: 12p
 
 @media (max-width: 760px) {
   .topbar { gap: 10px; padding-left: 12px; padding-right: 12px; }
-  .brand span { display: none; }
+  .brand .wordmark { display: none; }
   .nav-top { display: none; }
   .segmented { align-self: stretch; }
   .seg { min-width: 0; padding: 0 6px; font-size: 13px; white-space: normal; line-height: 1.2; }
@@ -1046,7 +1051,7 @@ button.chip:disabled { cursor: default; }
   animation: fade-up var(--slow) var(--ease);
 }
 .login-brand { display: grid; justify-items: center; gap: 4px; margin-bottom: 24px; text-align: center; }
-.login-brand h1 { font-size: 28px; }
+.login-brand h1 { display: grid; justify-items: center; margin: 4px 0; font-size: 28px; }
 .logo {
   display: grid; place-items: center; width: 64px; height: 64px; margin-bottom: 8px;
   border-radius: 20px; background: var(--primary); color: var(--on-primary);
@@ -1120,7 +1125,7 @@ kbd { box-shadow: inset 0 -1px 0 var(--outline); white-space: nowrap; }
 .legal-page { min-height: 100vh; min-height: 100dvh; padding: 32px 16px; background: var(--canvas); }
 .legal { max-width: 720px; margin: 0 auto; line-height: 1.6; }
 .legal-brand { margin-bottom: 20px; }
-.legal .legal-brand span { display: inline; }
+.legal .legal-brand .wordmark { display: block; }
 .legal h1 { font-size: 28px; margin: 0 0 12px; }
 .legal h2 { font-size: 17px; margin: 24px 0 6px; }
 .legal p, .legal ul { margin: 0 0 8px; }
@@ -1236,7 +1241,7 @@ pre.command {
   .session.share .key-token .btn { width: 40px; padding: 0; justify-content: center; }
 }
 .shared-page { min-height: 100vh; min-height: 100dvh; max-width: 1600px; margin: 0 auto; padding: 24px 16px 48px; background: var(--canvas); }
-.shared-page .legal-brand span { display: inline; }
+.shared-page .legal-brand .wordmark { display: block; }
 .shared-head { margin-bottom: 16px; }
 .shared-head .page-title { margin: 0 0 4px; overflow-wrap: anywhere; }
 .shared-head p { margin: 0; }

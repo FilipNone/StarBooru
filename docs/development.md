@@ -58,10 +58,12 @@ Release builds:
 
 ```sh
 dx bundle --desktop --release -p starbooru-app    # installers for the host OS (.deb/.AppImage, .msi, .dmg)
-dx bundle --android --release -p starbooru-app    # .apk / .aab
+tools/brand/android-build.sh --release            # .apk, with the StarBooru icon and name
 ```
 
 The bundle identifier, publisher and category are in `apps/app/Dioxus.toml`.
+
+Build any Android APK you mean to keep with `tools/brand/android-build.sh`, which takes `dx build` flags such as `--target aarch64-linux-android`. `dx` always writes its default launcher icon and an app label of "StarbooruApp" into the Gradle project, so the script copies `apps/app/android-res/` over them and runs Gradle again. A plain `dx build --android` or `dx serve --android` works for testing and only looks wrong on the home screen.
 
 With a phone, use `adb -s <serial>` (or `ANDROID_SERIAL`) if Waydroid is also listed, and `dx build --android -p starbooru-app --target aarch64-linux-android`. A dozing phone shows a black screenshot and `Page.captureScreenshot` hangs, so wake it first: `adb shell input keyevent KEYCODE_WAKEUP`, then `adb shell wm dismiss-keyguard`. The stage is as tall as its picture, so a test that swipes has to work out the middle again for each one. Things only a device shows, to check by hand when they change, because unit tests can't reach them:
 - Tap a tile on a cold cache (`adb shell "run-as eu.filipnone.starbooru rm -rf cache/media"`) with media held back by a proxy for over 10 seconds (`adb reverse tcp:<app's port> tcp:<proxy>`). The app stays up and the tabs still answer.

@@ -7,6 +7,7 @@ use starbooru_core::Tag;
 use super::login::Login;
 use crate::Route;
 use crate::activity::{self, Activity};
+use crate::brand::{Mark, Wordmark};
 use crate::icons::{Ico, Icon};
 use crate::store::{self, SESSION};
 
@@ -27,9 +28,9 @@ pub fn Shell() -> Element {
     });
     rsx! {
         header { class: "topbar glass",
-            Link { class: "brand", to: Route::Gallery { q: String::new() },
-                Ico { icon: Icon::Star }
-                span { "StarBooru" }
+            Link { class: "brand", aria_label: "StarBooru", to: Route::Gallery { q: String::new() },
+                Mark { height: 30, compact: true }
+                Wordmark { height: 19 }
             }
             SearchBox { route: route.clone() }
             nav { class: "nav-top", aria_label: t!("nav-main"),

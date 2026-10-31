@@ -3,6 +3,7 @@ use starbooru_client::Client;
 use starbooru_core::{Credentials, ServerInfo};
 
 use super::LegalLinks;
+use crate::brand::{Mark, Wordmark};
 use crate::icons::{Ico, Icon};
 use crate::oidc::{self, Done};
 use crate::store::{self, PREFS};
@@ -122,8 +123,8 @@ pub fn Login() -> Element {
             div { class: "aurora", aria_hidden: "true" }
             form { class: "login-card glass", onsubmit: submit,
                 div { class: "login-brand",
-                    span { class: "logo", Ico { icon: Icon::Star, size: 32 } }
-                    h1 { "StarBooru" }
+                    span { class: "logo", Mark { height: 40 } }
+                    h1 { aria_label: "StarBooru", Wordmark { height: 27 } }
                     p { class: "muted",
                         if let Some(i) = info() { "{i.name} · v{i.version}" } else { {t!("login-tagline")} }
                     }
