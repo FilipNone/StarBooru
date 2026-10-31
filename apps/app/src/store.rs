@@ -230,11 +230,61 @@ impl Default for Prefs {
     }
 }
 
+/// Where the gallery was for one search. It remembers the tile at the top of
+/// the screen and how far down it was, as a scroll position alone means
+/// nothing once new posts arrive or the layout changes.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Spot {
+    pub q: String,
+    pub post: Option<i64>,
+    /// The tile's distance from the top of the screen in pixels.
+    pub offset: f64,
+    /// The scroll position, for when that tile has gone.
+    pub y: f64,
+    /// How many posts were loaded.
+    pub count: u32,
+}
+
+const MAX_SPOTS: usize = 30;
+
+/// The searches the gallery has shown this account, the latest first.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GalleryMemory {
+    owner: String,
+    spots: Vec<Spot>,
+}
+
+impl GalleryMemory {
+    fn visit(&mut self, q: &str) {
+        let spot = self
+            .spots
+            .iter()
+            .position(|s| s.q == q)
+            .map(|i| self.spots.remove(i))
+            .unwrap_or_else(|| Spot {
+                q: q.to_owned(),
+                ..Spot::default()
+            });
+        self.spots.insert(0, spot);
+        self.spots.truncate(MAX_SPOTS);
+    }
+
+    fn remember(&mut self, spot: Spot) {
+        self.visit(&spot.q);
+        if let Some(first) = self.spots.first_mut() {
+            *first = spot;
+        }
+    }
+}
+
 #[derive(Default, Serialize, Deserialize)]
 #[serde(default)]
 struct Stored {
     session: Option<Session>,
     prefs: Prefs,
+    memory: GalleryMemory,
 }
 
 fn load() -> Stored {
@@ -245,16 +295,67 @@ fn load() -> Stored {
 
 pub static SESSION: GlobalSignal<Option<Session>> = Signal::global(|| load().session);
 pub static PREFS: GlobalSignal<Prefs> = Signal::global(|| load().prefs);
+static MEMORY: GlobalSignal<GalleryMemory> = Signal::global(|| load().memory);
 
 /// Writes the current state. Called from an effect whenever it changes.
 pub fn persist() {
     let stored = Stored {
         session: SESSION.peek().clone(),
         prefs: PREFS.peek().clone(),
+        memory: MEMORY.peek().clone(),
     };
     if let Ok(json) = serde_json::to_string(&stored) {
         backend::write(&json);
     }
+}
+
+/// Who the app is signed in as, so one account never sees what another
+/// searched.
+pub fn owner() -> String {
+    SESSION
+        .peek()
+        .as_ref()
+        .map_or_else(String::new, |s| format!("{}|{}", s.server, s.user.id))
+}
+
+fn update_memory(change: impl FnOnce(&mut GalleryMemory)) {
+    let owner = owner();
+    let mut memory = MEMORY.write();
+    if memory.owner != owner {
+        *memory = GalleryMemory {
+            owner,
+            spots: Vec::new(),
+        };
+    }
+    change(&mut memory);
+    drop(memory);
+    persist();
+}
+
+/// Makes `q` the search the gallery goes back to.
+pub fn visit_search(q: &str) {
+    update_memory(|memory| memory.visit(q));
+}
+
+pub fn remember_spot(spot: Spot) {
+    update_memory(|memory| memory.remember(spot));
+}
+
+/// Where the gallery was for `q`.
+pub fn spot(q: &str) -> Option<Spot> {
+    let memory = MEMORY.peek();
+    (memory.owner == owner())
+        .then(|| memory.spots.iter().find(|s| s.q == q).cloned())
+        .flatten()
+}
+
+/// The search the gallery showed last.
+pub fn last_search() -> String {
+    let memory = MEMORY.peek();
+    (memory.owner == owner())
+        .then(|| memory.spots.first().map(|s| s.q.clone()))
+        .flatten()
+        .unwrap_or_default()
 }
 
 thread_local! {
@@ -305,6 +406,7 @@ pub fn sign_out() {
             let _ = client.logout().await;
         });
     }
+    *MEMORY.write() = GalleryMemory::default();
     forget_session();
 }
 
@@ -403,6 +505,41 @@ mod tests {
         // An unknown hand from a newer version falls back rather than failing.
         let prefs: Prefs = serde_json::from_str(r#"{"hand":"both","theme":"light"}"#).unwrap();
         assert_eq!((prefs.hand, prefs.theme), (Hand::Either, Theme::Light));
+    }
+
+    #[test]
+    fn the_latest_search_comes_first_and_keeps_its_spot() {
+        let mut memory = GalleryMemory::default();
+        memory.remember(Spot {
+            q: "cat".into(),
+            post: Some(7),
+            offset: 12.0,
+            y: 900.0,
+            count: 120,
+        });
+        memory.visit("dog");
+        assert_eq!(memory.spots.first().map(|s| s.q.as_str()), Some("dog"));
+        assert_eq!(memory.spots.first().and_then(|s| s.post), None);
+        memory.visit("cat");
+        assert_eq!(memory.spots.first().map(|s| s.q.as_str()), Some("cat"));
+        assert_eq!(memory.spots.first().and_then(|s| s.post), Some(7));
+        assert_eq!(memory.spots.len(), 2);
+    }
+
+    #[test]
+    fn old_searches_drop_off() {
+        let mut memory = GalleryMemory::default();
+        for i in 0..MAX_SPOTS + 5 {
+            memory.visit(&format!("tag{i}"));
+        }
+        assert_eq!(memory.spots.len(), MAX_SPOTS);
+        assert!(memory.spots.iter().all(|s| s.q != "tag0"));
+    }
+
+    #[test]
+    fn stored_state_without_memory_still_loads() {
+        let stored: Stored = serde_json::from_str(r#"{"prefs":{"theme":"dark"}}"#).unwrap();
+        assert_eq!(stored.memory, GalleryMemory::default());
     }
 
     #[test]

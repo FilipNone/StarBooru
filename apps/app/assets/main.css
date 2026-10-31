@@ -475,6 +475,7 @@ input[type="range"] { width: 100%; accent-color: var(--primary); margin-top: 12p
   border-radius: var(--tile-radius); background: var(--surface-2);
   animation: pop-in var(--slow) var(--ease-spring) both; animation-delay: var(--delay, 0ms);
 }
+.thumb.still { animation: none; }
 .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; transition: filter var(--fast) var(--ease); }
 /* Hover and press only change the light: nothing in the grid moves. */
 .thumb:hover img { filter: brightness(1.08); }

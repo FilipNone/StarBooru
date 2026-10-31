@@ -1,10 +1,12 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 
+use chrono::{DateTime, Utc};
 use dioxus::prelude::*;
+use serde::Deserialize;
 use starbooru_core::color::{NAMED_COLORS, to_hex, wheel_color};
 use starbooru_core::saved::MAX_SEARCH_NAME_CHARS;
 use starbooru_core::{
-    BulkEdit, MAX_BULK_POSTS, MediaKind, Order, Post, Rating, SavedSearch, TagCorrection,
+    BulkEdit, MAX_BULK_POSTS, MediaKind, Order, Post, Rating, SavedSearch, SortKey, TagCorrection,
     parse_query, with_color, with_exact, with_order,
 };
 
@@ -16,7 +18,7 @@ use crate::cache;
 use crate::icons::{Ico, Icon};
 use crate::layout::{self, Place, TILE_GAP};
 use crate::power;
-use crate::store::{self, GalleryView, PREFS};
+use crate::store::{self, GalleryView, PREFS, Spot};
 use crate::util::{escape_attr, format_duration, rating_label, split_tag_edit};
 
 const PAGE_SIZE: u32 = 60;
@@ -37,6 +39,148 @@ if (box) {
   });
   seen.observe(box);
 }
+"#;
+
+/// Results kept while the app runs, so coming back to a search shows it as it
+/// was without loading it again.
+#[derive(Clone)]
+struct List {
+    q: String,
+    owner: String,
+    posts: Vec<Post>,
+    next_page: u32,
+    has_more: bool,
+    corrected: Vec<TagCorrection>,
+    loaded_at: DateTime<Utc>,
+}
+
+static LISTS: GlobalSignal<Vec<List>> = Signal::global(Vec::new);
+const MAX_LISTS: usize = 4;
+/// Signed media links last at least six hours (`docs/architecture.md`).
+const MAX_LIST_HOURS: i64 = 4;
+/// The saved searches last seen and whose they are, so their chips don't push
+/// the grid down when they load.
+static SAVED: GlobalSignal<Option<(String, Vec<SavedSearch>)>> = Signal::global(|| None);
+
+fn cached_list(q: &str) -> Option<List> {
+    let owner = store::owner();
+    let now = Utc::now();
+    LISTS
+        .peek()
+        .iter()
+        .find(|l| l.q == q && l.owner == owner && (now - l.loaded_at).num_hours() < MAX_LIST_HOURS)
+        .cloned()
+}
+
+fn keep_list(list: List) {
+    let mut lists = LISTS.write();
+    lists.retain(|l| l.q != list.q);
+    lists.insert(0, list);
+    lists.truncate(MAX_LISTS);
+}
+
+/// Takes a post out of the kept results, as it went to the recycle bin.
+pub(super) fn forget_post(id: i64) {
+    for list in LISTS.write().iter_mut() {
+        list.posts.retain(|p| p.id != id);
+    }
+}
+
+/// Drops the kept results, after a change that can move posts in or out of any
+/// of them.
+pub(super) fn forget_lists() {
+    LISTS.write().clear();
+}
+
+/// Restoring a long list asks for this many pages of results at a time.
+const RESTORE_PAGES: u32 = 3;
+/// How many posts going back to a spot will load, before it settles for the
+/// scroll position.
+const MAX_RESTORE: usize = 6000;
+
+/// `order:random` comes out different each time, so it has no spot to go back to.
+fn is_random(q: &str) -> bool {
+    parse_query(q).is_ok_and(|p| p.order.key == SortKey::Random)
+}
+
+/// The first page as it is now, followed by the rest of what was loaded. `None`
+/// if nothing changed. With no overlap, or no further pages, the rest is gone.
+fn merge_head(current: &[Post], head: Vec<Post>, has_more: bool) -> Option<Vec<Post>> {
+    let same = current
+        .iter()
+        .map(|p| p.id)
+        .take(head.len())
+        .eq(head.iter().map(|p| p.id));
+    if same && (has_more || head.len() == current.len()) {
+        return None;
+    }
+    let ids: HashSet<i64> = head.iter().map(|p| p.id).collect();
+    let rest = current
+        .iter()
+        .rposition(|p| ids.contains(&p.id))
+        .filter(|_| has_more)
+        .and_then(|last| current.get(last + 1..))
+        .unwrap_or_default()
+        .to_vec();
+    Some(head.into_iter().chain(rest).collect())
+}
+
+/// What the scroll watcher reports.
+#[derive(Deserialize)]
+struct Seen {
+    post: Option<i64>,
+    offset: f64,
+    y: f64,
+}
+
+/// Reports the first tile on the screen once scrolling stops: a whole one, if
+/// there is one, as it stays on the screen when the layout changes.
+const WATCH_SCROLL: &str = r#"
+window.__sbSpot?.stop();
+let timer = 0;
+const report = () => {
+  const bar = document.querySelector(".topbar")?.getBoundingClientRect().bottom ?? 0;
+  let tile = null;
+  for (const each of document.querySelectorAll(".masonry .thumb")) {
+    const box = each.getBoundingClientRect();
+    if (box.bottom > bar && !tile) tile = each;
+    if (box.top >= bar) {
+      tile = each;
+      break;
+    }
+  }
+  if (tile) {
+    const post = Number(tile.querySelector("[data-post]")?.dataset.post) || null;
+    dioxus.send({ post, offset: tile.getBoundingClientRect().top, y: scrollY });
+  }
+};
+const onscroll = () => {
+  clearTimeout(timer);
+  timer = setTimeout(report, 200);
+};
+addEventListener("scroll", onscroll, { passive: true });
+window.__sbSpot = {
+  stop() {
+    clearTimeout(timer);
+    removeEventListener("scroll", onscroll);
+  },
+};
+"#;
+const WATCH_SCROLL_OFF: &str = "window.__sbSpot?.stop(); window.__sbSpot = null;";
+
+/// Puts a remembered tile back where it was on the screen, or failing that,
+/// the scroll position. The tile may land a frame after the list does.
+const JUMP_TO_SPOT: &str = r#"
+const [post, offset, y] = await dioxus.recv();
+const go = tries => {
+  const tile = y >= 1 && post != null
+    ? document.querySelector(`.masonry [data-post="${post}"]`)?.closest(".thumb")
+    : null;
+  if (tile) scrollBy({ top: tile.getBoundingClientRect().top - offset, behavior: "instant" });
+  else if (y >= 1 && tries > 0) requestAnimationFrame(() => go(tries - 1));
+  else scrollTo({ top: y, behavior: "instant" });
+};
+go(5);
 "#;
 
 /// Sort menu entries: `order:` values.
@@ -75,6 +219,24 @@ pub fn Gallery(q: String) -> Element {
     // Unknown tags the search corrected.
     let mut corrected = use_signal(Vec::<TagCorrection>::new);
 
+    // Tiles below this index appeared with the list, and don't animate in.
+    let mut settled = use_signal(|| 0usize);
+    let mut loaded_at = use_signal(Utc::now);
+    // Bumped to put the page back at the remembered spot.
+    let mut jump = use_signal(|| 0u64);
+
+    let keep = move || {
+        keep_list(List {
+            q: query.peek().clone(),
+            owner: store::owner(),
+            posts: posts.peek().clone(),
+            next_page: *next_page.peek(),
+            has_more: *has_more.peek(),
+            corrected: corrected.peek().clone(),
+            loaded_at: *loaded_at.peek(),
+        });
+    };
+
     let mut load_more = move || {
         if *loading.peek() || !*has_more.peek() {
             return;
@@ -94,10 +256,16 @@ pub fn Gallery(q: String) -> Element {
             loading.set(false);
             match result {
                 Ok(found) => {
-                    posts.write().extend(found.posts);
+                    {
+                        // Posts added since can push earlier ones onto this page.
+                        let mut list = posts.write();
+                        let seen: HashSet<i64> = list.iter().map(|p| p.id).collect();
+                        list.extend(found.posts.into_iter().filter(|p| !seen.contains(&p.id)));
+                    }
                     has_more.set(found.has_more);
                     corrected.set(found.corrected);
                     next_page.set(page.saturating_add(1));
+                    keep();
                 }
                 Err(e) if e.is_unauthorized() => store::forget_session(),
                 Err(e) => {
@@ -108,16 +276,121 @@ pub fn Gallery(q: String) -> Element {
         });
     };
 
+    // Loads as far as the user had got, all at once, and goes back there.
+    let mut restore = move |spot: Spot| {
+        let Some(client) = store::client() else {
+            return;
+        };
+        let generation_at_start = *generation.peek();
+        let wanted = usize::try_from(spot.count)
+            .unwrap_or(MAX_RESTORE)
+            .min(MAX_RESTORE);
+        loading.set(true);
+        spawn(async move {
+            let mut found = Vec::<Post>::new();
+            let mut seen = HashSet::new();
+            let mut fixed = Vec::new();
+            let mut page = 1u32;
+            let mut more = true;
+            let mut failure = None;
+            while more && found.len() < wanted {
+                let at = (page - 1) / RESTORE_PAGES + 1;
+                let result = client
+                    .search_posts(&spot.q, at, PAGE_SIZE * RESTORE_PAGES)
+                    .await;
+                if *generation.peek() != generation_at_start {
+                    return;
+                }
+                match result {
+                    Ok(results) => {
+                        found.extend(results.posts.into_iter().filter(|p| seen.insert(p.id)));
+                        more = results.has_more;
+                        fixed = results.corrected;
+                        page = page.saturating_add(RESTORE_PAGES);
+                    }
+                    Err(e) if e.is_unauthorized() => {
+                        store::forget_session();
+                        return;
+                    }
+                    Err(e) => {
+                        failure = Some(e.to_string());
+                        break;
+                    }
+                }
+            }
+            loading.set(false);
+            settled.set(found.len());
+            posts.set(found);
+            corrected.set(fixed);
+            next_page.set(page);
+            has_more.set(more && failure.is_none());
+            if failure.is_none() {
+                keep();
+                jump += 1;
+            }
+            error.set(failure);
+        });
+    };
+
+    // Picks up what changed at the top of a list kept from earlier.
+    let refresh_head = move || {
+        let q = query.peek().clone();
+        let Some(client) = store::client().filter(|_| !is_random(&q)) else {
+            return;
+        };
+        let generation_at_start = *generation.peek();
+        spawn(async move {
+            let Ok(found) = client.search_posts(&q, 1, PAGE_SIZE).await else {
+                return;
+            };
+            if *generation.peek() != generation_at_start {
+                return;
+            }
+            let head = found.posts.len();
+            let merged = merge_head(&posts.peek(), found.posts, found.has_more);
+            let Some(merged) = merged else {
+                return;
+            };
+            if merged.len() == head {
+                next_page.set(2);
+                has_more.set(found.has_more);
+            }
+            settled.set(merged.len());
+            posts.set(merged);
+            keep();
+            jump += 1;
+        });
+    };
+
     let mut restart = move |q: String| {
         generation += 1;
-        query.set(q);
-        posts.write().clear();
-        corrected.write().clear();
-        next_page.set(1);
-        has_more.set(true);
+        if parse_query(&q).is_ok() {
+            store::visit_search(&q);
+        }
+        query.set(q.clone());
         loading.set(false);
         error.set(None);
-        load_more();
+        if let Some(list) = cached_list(&q) {
+            settled.set(list.posts.len());
+            posts.set(list.posts);
+            corrected.set(list.corrected);
+            next_page.set(list.next_page);
+            has_more.set(list.has_more);
+            loaded_at.set(list.loaded_at);
+            jump += 1;
+            refresh_head();
+            return;
+        }
+        posts.write().clear();
+        corrected.write().clear();
+        settled.set(0);
+        next_page.set(1);
+        has_more.set(true);
+        loaded_at.set(Utc::now());
+        match store::spot(&q).filter(|s| s.y >= 1.0 && s.count > 0 && !is_random(&q)) {
+            Some(spot) => restore(spot),
+            None => load_more(),
+        }
     };
     // Bumped to run the search again, in this scope (spawns from a child's
     // task would die with the child).
@@ -126,6 +399,38 @@ pub fn Gallery(q: String) -> Element {
         reload();
         restart(q);
     }));
+
+    // Remembers the spot as the user scrolls. Nothing to remember while the
+    // list is loading.
+    use_hook(move || {
+        spawn(async move {
+            let mut watch = document::eval(WATCH_SCROLL);
+            while let Ok(seen) = watch.recv::<Seen>().await {
+                let count = posts.peek().len();
+                if count > 0 {
+                    store::remember_spot(Spot {
+                        q: query.peek().clone(),
+                        post: seen.post,
+                        offset: seen.offset,
+                        y: seen.y,
+                        count: u32::try_from(count).unwrap_or(u32::MAX),
+                    });
+                }
+            }
+        });
+    });
+    use_drop(|| {
+        document::eval(WATCH_SCROLL_OFF);
+    });
+    use_effect(move || {
+        if jump() == 0 {
+            return;
+        }
+        if let Some(spot) = store::spot(&query.peek()) {
+            let eval = document::eval(JUMP_TO_SPOT);
+            let _ = eval.send((spot.post, spot.offset, spot.y));
+        }
+    });
 
     // Selection mode for mass edits. `anchor` is the last thumb clicked, for
     // shift-click ranges.
@@ -164,16 +469,28 @@ pub fn Gallery(q: String) -> Element {
     let ondone = move |message: String| {
         stop_selecting();
         notice.set(Some(message));
+        forget_lists();
         reload += 1;
     };
 
     // The user's saved searches; `None` until loaded.
-    let mut saved = use_signal(|| None::<Vec<SavedSearch>>);
+    let mut saved = use_signal(|| {
+        let owner = store::owner();
+        SAVED
+            .peek()
+            .as_ref()
+            .filter(|(whose, _)| *whose == owner)
+            .map(|(_, list)| list.clone())
+    });
     use_hook(move || {
         if let Some(client) = store::client() {
             spawn(async move {
                 if let Ok(list) = client.saved_searches().await {
-                    saved.set(Some(list));
+                    *SAVED.write() = Some((store::owner(), list.clone()));
+                    if saved.peek().as_ref() != Some(&list) {
+                        saved.set(Some(list));
+                        jump += 1;
+                    }
                 }
             });
         }
@@ -204,6 +521,11 @@ pub fn Gallery(q: String) -> Element {
             .map(|p| layout::tile_ratio(view, p.width, p.height)),
         columns,
     );
+    // A new layout moves everything, so the same tile goes back to the top.
+    use_effect(use_reactive!(|columns, view, gap, width| {
+        let _ = (columns, view, gap, width);
+        jump += 1;
+    }));
 
     rsx! {
         div { class: "page gallery",
@@ -298,6 +620,7 @@ pub fn Gallery(q: String) -> Element {
                             selected: selecting().then(|| selected.read().contains(&post.id)),
                             ontoggle: toggle,
                             place: *place,
+                            still: index < settled(),
                         }
                     }
                 }
@@ -807,7 +1130,8 @@ fn ViewMenu(width: f64, gap: f64) -> Element {
 /// A post in the grid. With `selected` set (selection mode), a click
 /// toggles it instead of opening it. Both modes render the same elements, so
 /// turning selection on doesn't load the thumbnails again. `place` is its
-/// spot in the gallery's layout; other grids leave it out.
+/// spot in the gallery's layout; other grids leave it out. `still` skips the
+/// entrance, for a tile that isn't new to the user.
 #[component]
 pub(super) fn Thumb(
     post: Post,
@@ -816,6 +1140,7 @@ pub(super) fn Thumb(
     selected: Option<bool>,
     ontoggle: EventHandler<(usize, bool)>,
     place: Option<Place>,
+    #[props(default)] still: bool,
 ) -> Element {
     let client = store::client();
     let src = post
@@ -848,10 +1173,13 @@ pub(super) fn Thumb(
     let id = post.id;
     let kind = post.kind;
     let to = Route::PostView { id, q: q.clone() };
-    let class = match selected {
-        Some(true) => "thumb selectable on",
-        Some(false) => "thumb selectable",
-        None => "thumb",
+    let class = match (selected, still) {
+        (Some(true), false) => "thumb selectable on",
+        (Some(true), true) => "thumb selectable on still",
+        (Some(false), false) => "thumb selectable",
+        (Some(false), true) => "thumb selectable still",
+        (None, false) => "thumb",
+        (None, true) => "thumb still",
     };
     let open = move || {
         *OPENING.write() = Some(post.clone());
@@ -976,6 +1304,61 @@ mod tests {
         // Regression: clicking a thumbnail crashed the Linux desktop app.
         let linux_desktop = cfg!(all(feature = "desktop", target_os = "linux"));
         assert_eq!(HERO_TRANSITION, !linux_desktop);
+    }
+
+    fn post(id: i64) -> Post {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "kind": "image", "mime": "image/png", "file_size": 1,
+            "width": 1, "height": 1, "sha256": "", "rating": "general", "score": 0,
+            "my_vote": 0, "source": null, "tags": [],
+            "created_at": "2026-01-01T00:00:00Z", "deleted": false,
+            "file_url": "", "thumb_url": null,
+        }))
+        .unwrap()
+    }
+
+    fn merged(current: &[i64], head: &[i64], has_more: bool) -> Option<Vec<i64>> {
+        let current: Vec<Post> = current.iter().copied().map(post).collect();
+        let head = head.iter().copied().map(post).collect();
+        merge_head(&current, head, has_more).map(|l| l.iter().map(|p| p.id).collect())
+    }
+
+    #[test]
+    fn nothing_new_changes_nothing() {
+        assert_eq!(merged(&[5, 4, 3, 2, 1], &[5, 4], true), None);
+        assert_eq!(merged(&[5, 4], &[5, 4], false), None);
+    }
+
+    #[test]
+    fn new_posts_go_on_top_of_what_was_loaded() {
+        assert_eq!(
+            merged(&[5, 4, 3, 2, 1], &[7, 6], true),
+            Some(vec![7, 6]),
+            "no overlap: a whole page newer, so the rest is out of step",
+        );
+        assert_eq!(
+            merged(&[5, 4, 3, 2, 1], &[6, 5], true),
+            Some(vec![6, 5, 4, 3, 2, 1]),
+        );
+    }
+
+    #[test]
+    fn posts_gone_from_the_first_page_go() {
+        assert_eq!(
+            merged(&[5, 4, 3, 2, 1], &[5, 3], true),
+            Some(vec![5, 3, 2, 1]),
+        );
+        // No further pages: the first page is the whole list.
+        assert_eq!(merged(&[5, 4, 3], &[5, 4], false), Some(vec![5, 4]));
+        assert_eq!(merged(&[5, 4, 3], &[], false), Some(vec![]));
+    }
+
+    #[test]
+    fn random_order_has_no_spot() {
+        assert!(is_random("cat order:random"));
+        assert!(!is_random("cat"));
+        assert!(!is_random("order:new"));
+        assert!(!is_random("order:nonsense"));
     }
 
     #[test]

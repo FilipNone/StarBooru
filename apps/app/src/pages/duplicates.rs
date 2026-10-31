@@ -5,6 +5,7 @@
 use dioxus::prelude::*;
 use starbooru_core::{DEFAULT_DUPLICATE_DISTANCE, DuplicateGroup, Post, ResolveDuplicates};
 
+use super::gallery::forget_lists;
 use super::{ErrorBanner, Spinner};
 use crate::Route;
 use crate::cache;
@@ -164,7 +165,10 @@ fn DupGroup(group: DuplicateGroup, ondone: EventHandler<i64>) -> Element {
                 // Settle local state first: `ondone` unmounts this group.
                 busy.set(false);
                 match result {
-                    Ok(_) => ondone.call(key),
+                    Ok(_) => {
+                        forget_lists();
+                        ondone.call(key);
+                    }
                     Err(e) if e.is_unauthorized() => store::forget_session(),
                     Err(e) => error.set(Some(e.to_string())),
                 }

@@ -16,6 +16,13 @@ pub fn Shell() -> Element {
         return rsx! { Login {} };
     }
     let route = use_route::<Route>();
+    // Opening the app carries on from the last search.
+    use_hook(|| {
+        let last = store::last_search();
+        if !last.is_empty() && matches!(&route, Route::Gallery { q } if q.is_empty()) {
+            navigator().replace(Route::Gallery { q: last });
+        }
+    });
     rsx! {
         header { class: "topbar glass",
             Link { class: "brand", to: Route::Gallery { q: String::new() },
@@ -90,7 +97,9 @@ fn Snackbar() -> Element {
 fn NavItems(route: Route) -> Element {
     let items = [
         (
-            Route::Gallery { q: String::new() },
+            Route::Gallery {
+                q: store::last_search(),
+            },
             Icon::Gallery,
             t!("nav-gallery"),
         ),
@@ -150,11 +159,12 @@ fn NavLink(
     }
 }
 
-/// The query the search box shows for a route: the gallery's own, else none.
-fn route_query(route: &Route) -> String {
+/// The query the search box shows for a route: the one in the route, else the
+/// last search, which is where the Gallery tab goes.
+fn route_query(route: &Route, last: &str) -> String {
     match route {
-        Route::Gallery { q } => q.clone(),
-        _ => String::new(),
+        Route::Gallery { q } | Route::PostView { q, .. } => q.clone(),
+        _ => last.to_owned(),
     }
 }
 
@@ -167,12 +177,14 @@ fn split_word(word: &str) -> (&str, &str) {
 /// Tag search with autocomplete on the word being typed.
 #[component]
 fn SearchBox(route: Route) -> Element {
-    let mut text = use_signal(|| route_query(&route));
+    let mut text = use_signal(|| route_query(&route, &store::last_search()));
     let mut focused = use_signal(|| false);
     // The highlighted suggestion, moved with the arrow keys.
     let mut active = use_signal(|| None::<usize>);
     // Every navigation resets the box, so a half-typed query doesn't linger.
-    use_effect(use_reactive!(|route| text.set(route_query(&route))));
+    use_effect(use_reactive!(
+        |route| text.set(route_query(&route, &store::last_search()))
+    ));
 
     let suggestions = use_resource(move || async move {
         let value = text();
@@ -308,7 +320,22 @@ fn SearchBox(route: Route) -> Element {
 
 #[cfg(test)]
 mod tests {
-    use super::split_word;
+    use super::{route_query, split_word};
+    use crate::Route;
+
+    #[test]
+    fn the_box_shows_the_routes_search_or_else_the_last() {
+        let gallery = Route::Gallery { q: "cat".into() };
+        assert_eq!(route_query(&gallery, "dog"), "cat");
+        let everything = Route::Gallery { q: String::new() };
+        assert_eq!(route_query(&everything, "dog"), "");
+        let post = Route::PostView {
+            id: 1,
+            q: "cat".into(),
+        };
+        assert_eq!(route_query(&post, "dog"), "cat");
+        assert_eq!(route_query(&Route::Settings {}, "dog"), "dog");
+    }
 
     #[test]
     fn words_split_from_what_leads_them() {

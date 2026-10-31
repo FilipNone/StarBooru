@@ -3,6 +3,7 @@
 use dioxus::prelude::*;
 use starbooru_core::{Post, Role};
 
+use super::gallery::forget_lists;
 use super::{ErrorBanner, Spinner};
 use crate::Route;
 use crate::cache;
@@ -58,7 +59,10 @@ pub fn Trash() -> Element {
         };
         spawn(async move {
             match client.restore_post(id).await {
-                Ok(_) => remove_from_list(id),
+                Ok(_) => {
+                    forget_lists();
+                    remove_from_list(id);
+                }
                 Err(e) => error.set(Some(e.to_string())),
             }
         });

@@ -9,6 +9,7 @@ use starbooru_core::{
 };
 
 use super::editor::EditorSheet;
+use super::gallery::{forget_lists, forget_post};
 use super::people::People;
 use super::share::{ShareSheet, copy_text};
 use super::tags::TagGroups;
@@ -256,10 +257,16 @@ pub fn PostView(id: i64, q: String) -> Element {
                 Op::Vote(v) => client.vote(id, v).await,
                 Op::Save(update) => client.update_post(id, &update).await,
                 Op::Delete => match client.delete_post(id).await {
-                    Ok(()) => client.post(id).await,
+                    Ok(()) => {
+                        forget_post(id);
+                        client.post(id).await
+                    }
                     Err(e) => Err(e),
                 },
-                Op::Restore => client.restore_post(id).await,
+                Op::Restore => {
+                    forget_lists();
+                    client.restore_post(id).await
+                }
             };
             let saved = result.is_ok();
             handle(result);
