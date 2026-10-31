@@ -26,10 +26,40 @@ use crate::util::{format_duration, human_size, rating_label};
 use crate::zoom::{STEP, Zoom, wheel_factor};
 
 /// Keys the viewer handles, sent from a page-wide listener. Typing in a
-/// field never triggers them.
+/// field never triggers them. In fullscreen the controls rest a moment after the
+/// last sign of anyone using them, and any pointer or key brings them back.
+///
+/// The wheel gets past the picture too: rolling down, or up from further down
+/// the page, moves the page, and `stopPropagation` keeps that from the zoom. One
+/// gesture stays one thing to its end, so a trackpad's coasting doesn't turn a
+/// scroll into a zoom when the page gets to the top.
 const KEY_LISTENER: &str = r#"
+const REST_ON = ['pointermove', 'pointerdown', 'keydown'];
 if (window.__sbKeys) window.removeEventListener('keydown', window.__sbKeys);
 if (window.__sbFs) document.removeEventListener('fullscreenchange', window.__sbFs);
+for (const type of REST_ON) if (window.__sbWake) window.removeEventListener(type, window.__sbWake);
+let resting = 0;
+window.__sbWake = () => {
+  document.querySelector('.stage')?.removeAttribute('data-rest');
+  clearTimeout(resting);
+  resting = setTimeout(() => {
+    // A touch leaves `:hover` on whatever it last tapped, so only a real pointer counts.
+    const held = matchMedia('(hover: hover)').matches ? ':focus-visible, .stage-btn:hover, .stage-tools:hover' : ':focus-visible';
+    document.querySelector(`.stage.full:not(:has(${held}))`)?.setAttribute('data-rest', '');
+  }, 2800);
+};
+for (const type of REST_ON) window.addEventListener(type, window.__sbWake, { passive: true });
+if (window.__sbWheel) window.removeEventListener('wheel', window.__sbWheel, true);
+let quiet = 0;
+let scrolls = false;
+window.__sbWheel = (e) => {
+  const stage = e.target.closest?.('.stage');
+  if (!stage) return;
+  if (e.timeStamp > quiet) scrolls = !e.ctrlKey && !stage.matches('.full, .zoomed') && (e.deltaY > 0 || scrollY > 0);
+  quiet = e.timeStamp + 300;
+  if (scrolls) e.stopPropagation();
+};
+window.addEventListener('wheel', window.__sbWheel, { capture: true, passive: true });
 const keys = ['ArrowLeft', 'ArrowRight', 'Escape', 'f', '+', '=', '-', '0', 'e'];
 window.__sbKeys = (e) => {
   if (e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return;
@@ -48,6 +78,10 @@ document.addEventListener('fullscreenchange', window.__sbFs);
 const KEY_LISTENER_OFF: &str = r#"
 if (window.__sbKeys) window.removeEventListener('keydown', window.__sbKeys);
 if (window.__sbFs) document.removeEventListener('fullscreenchange', window.__sbFs);
+for (const type of ['pointermove', 'pointerdown', 'keydown']) if (window.__sbWake) window.removeEventListener(type, window.__sbWake);
+window.__sbWake = null;
+if (window.__sbWheel) window.removeEventListener('wheel', window.__sbWheel, true);
+window.__sbWheel = null;
 window.__sbKeys = null;
 window.__sbFs = null;
 "#;
@@ -213,6 +247,25 @@ pub fn PostView(id: i64, q: String) -> Element {
         full.set(on);
         browser_fullscreen(on);
     };
+    // Where the arrow goes: where you came from, or the gallery if this is the
+    // first page. The web build always says it can go back, so that one finds out
+    // by trying.
+    let step_back = move || {
+        let nav = navigator();
+        let q = current.peek().1.clone();
+        if !nav.can_go_back() {
+            nav.push(Route::Gallery { q });
+            return;
+        }
+        let here = router().full_route_string();
+        nav.go_back();
+        spawn(async move {
+            crate::activity::wait_ms(250).await;
+            if router().full_route_string() == here {
+                navigator().push(Route::Gallery { q });
+            }
+        });
+    };
     let mut start_edit = move || {
         if let Some(p) = post.peek().as_ref().filter(|p| p.id == current.peek().0) {
             tag_text.set(p.tags.join(" "));
@@ -335,23 +388,71 @@ pub fn PostView(id: i64, q: String) -> Element {
     });
 
     rsx! {
-        div { class: "page post-layout",
-            Stage {
-                id: p.id,
-                kind: p.kind,
-                src,
-                thumb,
-                size: p.width.zip(p.height),
-                enter: enter_class(entered()),
-                alt,
-                zoom,
-                full,
-                nav: nav(),
-                onnav: move |to| go(Some(to)),
-                onfull: set_full,
-                rect,
-            }
-            aside { class: "side",
+        div { class: if full() { "page post-layout full-open" } else { "page post-layout" },
+            PostGlow { thumb: thumb.clone() }
+            div { class: "post-main",
+                Stage {
+                    id: p.id,
+                    kind: p.kind,
+                    src,
+                    thumb,
+                    size: p.width.zip(p.height),
+                    enter: enter_class(entered()),
+                    alt,
+                    zoom,
+                    full,
+                    nav: nav(),
+                    onnav: move |to| go(Some(to)),
+                    onfull: set_full,
+                    onback: move |()| step_back(),
+                    rect,
+                }
+                // What you do with the post, apart from how you look at it: an
+                // opinion, what leaves with the file, and the one that removes it.
+                div { class: "post-bar glass float", role: "toolbar", aria_label: t!("post-actions"),
+                    div { class: "vote",
+                        button {
+                            class: if p.my_vote > 0 { "icon-btn on" } else { "icon-btn" },
+                            aria_label: t!("post-upvote"),
+                            aria_pressed: "{p.my_vote > 0}",
+                            disabled: busy() || p.deleted,
+                            onclick: move |_| act(Op::Vote(if p.my_vote > 0 { 0 } else { 1 })),
+                            Ico { icon: Icon::ThumbUp }
+                        }
+                        span { class: "score", "{p.score}" }
+                        button {
+                            class: if p.my_vote < 0 { "icon-btn on" } else { "icon-btn" },
+                            aria_label: t!("post-downvote"),
+                            aria_pressed: "{p.my_vote < 0}",
+                            disabled: busy() || p.deleted,
+                            onclick: move |_| act(Op::Vote(if p.my_vote < 0 { 0 } else { -1 })),
+                            Ico { icon: Icon::ThumbDown }
+                        }
+                    }
+                    div { class: "bar-acts",
+                        DownloadLink { path: p.file_url.clone(), name: format!("{}.{ext}", p.sha256), label: t!("post-download") }
+                        if !p.deleted {
+                            button { class: "icon-btn", aria_label: t!("share-button"), title: t!("share-button"), onclick: move |_| sharing.set(true),
+                                Ico { icon: Icon::Share }
+                                span { class: "bar-label", {t!("share-button")} }
+                            }
+                            if let Some(kind) = editable {
+                                button { class: "icon-btn", aria_label: t!("editor-open"), title: t!("editor-open"), onclick: move |_| media_editing.set(true),
+                                    Ico { icon: if kind == EditKind::Video { Icon::Cut } else { Icon::Crop } }
+                                    span { class: "bar-label",
+                                        if kind == EditKind::Video { {t!("editor-video-short")} } else { {t!("editor-image-short")} }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if !p.deleted {
+                        button { class: "icon-btn danger bar-delete", aria_label: t!("post-delete"), title: t!("post-delete-title"),
+                            disabled: busy(), onclick: move |_| act(Op::Delete),
+                            Ico { icon: Icon::Delete }
+                        }
+                    }
+                }
                 if let Some(message) = error() {
                     ErrorBanner { message }
                 }
@@ -363,61 +464,18 @@ pub fn PostView(id: i64, q: String) -> Element {
                         }
                     }
                 }
-                div { class: "card actions",
-                    div { class: "vote",
-                        button {
-                            class: if p.my_vote > 0 { "icon-btn on" } else { "icon-btn" },
-                            aria_label: t!("post-upvote"),
-                            disabled: busy() || p.deleted,
-                            onclick: move |_| act(Op::Vote(if p.my_vote > 0 { 0 } else { 1 })),
-                            Ico { icon: Icon::ThumbUp }
-                        }
-                        span { class: "score", "{p.score}" }
-                        button {
-                            class: if p.my_vote < 0 { "icon-btn on" } else { "icon-btn" },
-                            aria_label: t!("post-downvote"),
-                            disabled: busy() || p.deleted,
-                            onclick: move |_| act(Op::Vote(if p.my_vote < 0 { 0 } else { -1 })),
-                            Ico { icon: Icon::ThumbDown }
-                        }
-                    }
-                    div { class: "row-actions",
-                        DownloadLink { path: p.file_url.clone(), name: format!("{}.{ext}", p.sha256), label: t!("post-download") }
-                        if !p.deleted {
-                            button { class: "icon-btn", aria_label: t!("share-button"), title: t!("share-button"), onclick: move |_| sharing.set(true),
-                                Ico { icon: Icon::Share }
-                            }
-                            button { class: "icon-btn", aria_label: t!("post-edit"), title: t!("post-edit-tags"), onclick: move |_| start_edit(),
-                                Ico { icon: Icon::Edit }
-                            }
-                            if let Some(kind) = editable {
-                                button { class: "icon-btn", aria_label: t!("editor-open"), title: t!("editor-open"), onclick: move |_| media_editing.set(true),
-                                    Ico { icon: if kind == EditKind::Video { Icon::Cut } else { Icon::Crop } }
-                                }
-                            }
-                            button { class: "icon-btn danger", aria_label: t!("post-delete"), title: t!("post-delete-title"),
-                                disabled: busy(), onclick: move |_| act(Op::Delete),
-                                Ico { icon: Icon::Delete }
-                            }
-                        }
-                    }
+                Related {
+                    id: p.id,
+                    onopen: move |near: Post| {
+                        *OPENING.write() = Some(near.clone());
+                        entered.set(None);
+                        document::eval(SCROLL_TOP);
+                        // Pushed, so Back returns to this post.
+                        navigator().push(Route::PostView { id: near.id, q: String::new() });
+                    },
                 }
-                if sharing() {
-                    ShareSheet { post_ids: vec![id], onclose: move |()| sharing.set(false) }
-                }
-                if let Some(kind) = editable.filter(|_| media_editing()) {
-                    EditorSheet {
-                        post: p.clone(),
-                        kind,
-                        file_url: file_url.clone(),
-                        onclose: move |()| media_editing.set(false),
-                        onsaved: move |new_id| {
-                            media_editing.set(false);
-                            let q = current.peek().1.clone();
-                            navigator().push(Route::PostView { id: new_id, q });
-                        },
-                    }
-                }
+            }
+            aside { class: "side",
                 if editing() {
                     form {
                         class: "card edit",
@@ -456,7 +514,15 @@ pub fn PostView(id: i64, q: String) -> Element {
                     }
                 } else {
                     div { class: "card",
-                        h2 { class: "card-title", {t!("post-tags")} }
+                        div { class: "card-head",
+                            h2 { class: "card-title", {t!("post-tags")} }
+                            if !p.deleted {
+                                button { class: "btn text small", title: t!("post-edit-tags"), onclick: move |_| start_edit(),
+                                    Ico { icon: Icon::Edit, size: 18 }
+                                    {t!("post-edit")}
+                                }
+                            }
+                        }
                         if p.tags.is_empty() {
                             p { class: "muted", {t!("post-no-tags")} }
                         }
@@ -512,15 +578,48 @@ pub fn PostView(id: i64, q: String) -> Element {
                 if let Some(text) = p.ocr_text.clone().filter(|t| !t.trim().is_empty()) {
                     OcrText { key: "{p.id}", id: p.id, text }
                 }
-                Related {
-                    id: p.id,
-                    onopen: move |near: Post| {
-                        *OPENING.write() = Some(near.clone());
-                        entered.set(None);
-                        document::eval(SCROLL_TOP);
-                        // Pushed, so Back returns to this post.
-                        navigator().push(Route::PostView { id: near.id, q: String::new() });
+            }
+            if sharing() {
+                ShareSheet { post_ids: vec![id], onclose: move |()| sharing.set(false) }
+            }
+            if let Some(kind) = editable.filter(|_| media_editing()) {
+                EditorSheet {
+                    post: p.clone(),
+                    kind,
+                    file_url: file_url.clone(),
+                    onclose: move |()| media_editing.set(false),
+                    onsaved: move |new_id| {
+                        media_editing.set(false);
+                        let q = current.peek().1.clone();
+                        navigator().push(Route::PostView { id: new_id, q });
                     },
+                }
+            }
+        }
+    }
+}
+
+/// The picture's own colours, blurred, as the light the viewer stands in, and all
+/// there is around the picture in fullscreen. The last one stays underneath until
+/// the new one has faded in. The battery saver leaves it out.
+#[component]
+fn PostGlow(thumb: Option<String>) -> Element {
+    let mut now = use_signal(|| thumb.clone());
+    let mut past = use_signal(|| None::<String>);
+    use_effect(use_reactive!(|thumb| {
+        if *now.peek() != thumb {
+            past.set(now.peek().clone());
+            now.set(thumb);
+        }
+    }));
+    rsx! {
+        div { class: "post-glow", aria_hidden: "true",
+            if let Some(url) = past() {
+                div { key: "past-{url}", class: "glow-layer still", style: "background-image: {css_url(&url)}" }
+            }
+            if let Some(url) = now() {
+                div { key: "now-{url}", class: "glow-layer", style: "background-image: {css_url(&url)}",
+                    onanimationend: move |_| past.set(None),
                 }
             }
         }
@@ -583,7 +682,7 @@ fn OcrText(id: i64, text: String) -> Element {
     };
     rsx! {
         div { class: "card ocr",
-            div { class: "ocr-head",
+            div { class: "card-head",
                 h2 { class: "card-title", {t!("post-ocr-title")} }
                 button {
                     class: "btn tonal small",
@@ -637,7 +736,7 @@ fn OcrText(id: i64, text: String) -> Element {
     }
 }
 
-/// Posts the viewer suggests under the details.
+/// Posts the viewer suggests under the picture.
 const RELATED_SHOWN: u32 = 12;
 
 /// The viewer starts at the top when another post opens from below.
@@ -848,7 +947,7 @@ fn Related(id: i64, onopen: EventHandler<Post>) -> Element {
     }
     let client = store::client();
     rsx! {
-        section { class: "card related",
+        section { class: "related",
             h2 { class: "card-title", {t!("post-related")} }
             div { class: "related-grid",
                 for near in posts {
@@ -1004,11 +1103,12 @@ fn enter_class(next: Option<bool>) -> &'static str {
 
 /// Sizes the image box to the fitted image before it loads, so the
 /// thumbnail can stand in and nothing jumps when the image arrives.
-/// `--fit-h` is the stage's height limit.
+/// `--fit-h` is the stage's height limit. A picture isn't enlarged past its own
+/// size, except where `--fit-cap` lifts that: fullscreen fits the display.
 fn fit_style(size: Option<(i32, i32)>) -> String {
     match size {
         Some((w, h)) if w > 0 && h > 0 => format!(
-            "; aspect-ratio: {w} / {h}; width: min(100%, calc(var(--fit-h) * {w} / {h}), {w}px)"
+            "; aspect-ratio: {w} / {h}; width: min(100%, calc(var(--fit-h) * {w} / {h}), var(--fit-cap, {w}px))"
         ),
         _ => String::new(),
     }
@@ -1043,6 +1143,7 @@ fn StageImage(
     size: Option<(i32, i32)>,
     transform: String,
     enter: &'static str,
+    onwheel: EventHandler<WheelEvent>,
 ) -> Element {
     let mut loaded = use_signal(|| false);
     // For this picture's whole time on the stage: another entrance starting on
@@ -1064,6 +1165,7 @@ fn StageImage(
             draggable: "false",
             decoding: "async",
             style,
+            onwheel: move |e| onwheel.call(e),
             onload: move |_| {
                 spawn(async move {
                     image_decoded().await;
@@ -1094,7 +1196,13 @@ fn StageImage(
 
 /// The viewer's video.
 #[component]
-fn StageVideo(id: i64, src: String, thumb: Option<String>, enter: &'static str) -> Element {
+fn StageVideo(
+    id: i64,
+    src: String,
+    thumb: Option<String>,
+    size: Option<(i32, i32)>,
+    enter: &'static str,
+) -> Element {
     // As for the image: one entrance.
     let enter = use_hook(|| enter);
     rsx! {
@@ -1102,6 +1210,7 @@ fn StageVideo(id: i64, src: String, thumb: Option<String>, enter: &'static str) 
             class: enter,
             "data-turn": (!enter.is_empty()).then_some("wait"),
             src: "{src}",
+            style: fit_style(size),
             controls: true,
             autoplay: !power::active(),
             r#loop: true,
@@ -1218,7 +1327,7 @@ fn PanelOverlay(id: i64, size: (i32, i32), transform: String) -> Element {
             p { class: "stage-note", role: "status", "{message}" }
         }
         button {
-            class: if busy() { "stage-btn stage-translate busy" } else { "stage-btn stage-translate" },
+            class: if busy() { "stage-btn stage-translate glass float busy" } else { "stage-btn stage-translate glass float" },
             r#type: "button",
             title,
             aria_label: label,
@@ -1246,6 +1355,7 @@ fn Stage(
     nav: Neighbors,
     onnav: EventHandler<i64>,
     onfull: EventHandler<bool>,
+    onback: EventHandler<()>,
     rect: Signal<Option<PixelsRect>>,
 ) -> Element {
     let mut mounted = use_signal(|| None::<std::rc::Rc<MountedData>>);
@@ -1271,6 +1381,17 @@ fn Stage(
             rect.set(Some(r));
         }
         *rect.peek()
+    };
+
+    let wheel = move |e: WheelEvent| {
+        e.prevent_default();
+        e.stop_propagation();
+        let factor = wheel_factor(e.delta());
+        let at = e.client_coordinates();
+        spawn(async move {
+            let r = measure().await;
+            zoom.set(zoom().zoom_at(factor, from_centre(at, r), size_of(r)));
+        });
     };
 
     let z = zoom();
@@ -1299,17 +1420,13 @@ fn Stage(
                     measure().await;
                 });
             },
+            // The wheel zooms on the picture (see `KEY_LISTENER` for when it scrolls
+            // instead). Beside it, it scrolls on to what's below, unless there's
+            // no page to scroll or the picture has grown.
             onwheel: move |e| {
-                if !zoomable {
-                    return;
+                if zoomable && (full() || zoom().is_zoomed()) {
+                    wheel(e);
                 }
-                e.prevent_default();
-                let factor = wheel_factor(e.delta());
-                let at = e.client_coordinates();
-                spawn(async move {
-                    let r = measure().await;
-                    zoom.set(zoom().zoom_at(factor, from_centre(at, r), size_of(r)));
-                });
             },
             ondoubleclick: move |e| {
                 if !zoomable {
@@ -1380,32 +1497,44 @@ fn Stage(
             },
             match kind {
                 MediaKind::Video => rsx! {
-                    StageVideo { key: "{id}", id, src, thumb, enter }
+                    StageVideo { key: "{id}", id, src, thumb, size, enter }
                 },
                 _ => rsx! {
-                    StageImage { key: "{id}", id, src, thumb, alt, size, transform: z.css(), enter }
+                    StageImage { key: "{id}", id, src, thumb, alt, size, transform: z.css(), enter, onwheel: wheel }
                     if let Some(size) = size.filter(|_| kind == MediaKind::Image) {
                         PanelOverlay { key: "{id}", id, size, transform: z.css() }
                     }
                 },
             }
-            if let Some(prev) = nav.prev {
-                button { class: "stage-btn stage-prev", title: t!("post-prev-title"), aria_label: t!("post-prev"),
-                    ondoubleclick: move |e| e.stop_propagation(),
-                    onclick: move |_| onnav.call(prev),
-                    Ico { icon: Icon::ChevronLeft, size: 32 }
-                }
+            button { class: "stage-btn stage-back glass float", title: t!("post-back"), aria_label: t!("post-back"),
+                ondoubleclick: move |e| e.stop_propagation(),
+                onclick: move |_| onback.call(()),
+                Ico { icon: Icon::ArrowBack }
             }
-            if let Some(next) = nav.next {
-                button { class: "stage-btn stage-next", title: t!("post-next-title"), aria_label: t!("post-next"),
-                    ondoubleclick: move |e| e.stop_propagation(),
-                    onclick: move |_| onnav.call(next),
-                    Ico { icon: Icon::ChevronRight, size: 32 }
-                }
+            // Always there, greyed out at either end, so nothing comes and goes.
+            button { class: "stage-btn stage-prev glass float", title: t!("post-prev-title"), aria_label: t!("post-prev"),
+                disabled: nav.prev.is_none(),
+                ondoubleclick: move |e| e.stop_propagation(),
+                onclick: move |_| {
+                    if let Some(prev) = nav.prev {
+                        onnav.call(prev);
+                    }
+                },
+                Ico { icon: Icon::ChevronLeft, size: 32 }
+            }
+            button { class: "stage-btn stage-next glass float", title: t!("post-next-title"), aria_label: t!("post-next"),
+                disabled: nav.next.is_none(),
+                ondoubleclick: move |e| e.stop_propagation(),
+                onclick: move |_| {
+                    if let Some(next) = nav.next {
+                        onnav.call(next);
+                    }
+                },
+                Ico { icon: Icon::ChevronRight, size: 32 }
             }
             // Only a double click on the media itself toggles the zoom. On the
             // bar, not its buttons, so one that has just disabled itself counts.
-            div { class: "stage-tools",
+            div { class: "stage-tools glass float",
                 ondoubleclick: move |e| e.stop_propagation(),
                 if zoomable {
                     button { class: "stage-btn", title: t!("zoom-out-title"), aria_label: t!("zoom-out"),
@@ -1415,7 +1544,7 @@ fn Stage(
                     }
                     button { class: "stage-zoom", title: t!("zoom-fit-title"), aria_label: t!("zoom-reset"),
                         onclick: move |_| zoom.set(Zoom::default()),
-                        "{z.percent()}%"
+                        if z.is_zoomed() { "{z.percent()}%" } else { {t!("zoom-fit")} }
                     }
                     button { class: "stage-btn", title: t!("zoom-in-title"), aria_label: t!("zoom-in"),
                         disabled: z.scale >= crate::zoom::MAX_SCALE,
@@ -1443,12 +1572,86 @@ mod tests {
     fn sizes_the_box_before_loading() {
         assert_eq!(
             fit_style(Some((3600, 2400))),
-            "; aspect-ratio: 3600 / 2400; width: min(100%, calc(var(--fit-h) * 3600 / 2400), 3600px)"
+            "; aspect-ratio: 3600 / 2400; width: min(100%, calc(var(--fit-h) * 3600 / 2400), var(--fit-cap, 3600px))"
         );
         // Unknown or nonsense sizes leave the box to the image.
         assert_eq!(fit_style(None), "");
         assert_eq!(fit_style(Some((0, 10))), "");
         assert_eq!(fit_style(Some((10, -1))), "");
+    }
+
+    /// The rule for `selector`, up to its closing brace.
+    fn rule(selector: &str) -> &'static str {
+        let css = include_str!("../../assets/main.css");
+        let (_, rest) = css
+            .split_once(&format!("\n{selector} {{"))
+            .unwrap_or_else(|| panic!("{selector}"));
+        rest.split_once('}').map_or(rest, |(body, _)| body)
+    }
+
+    #[test]
+    fn nothing_on_the_stage_moves_with_the_picture() {
+        // The stage's size comes from the window, never from what's on it.
+        let stage = rule(".stage");
+        assert!(stage.contains("height: var(--fit-h)"));
+        assert!(!stage.contains("min-height"));
+        assert!(!stage.contains("background"));
+        for edge in [
+            ".stage-prev, .stage-next",
+            ".stage-tools",
+            ".stage-translate",
+        ] {
+            assert!(rule(edge).contains("position: absolute"), "{edge}");
+        }
+        // Holding the old height during a turn is what made it change.
+        assert!(!include_str!("../motion.rs").contains("stage.style.height"));
+        assert!(!include_str!("../motion.rs").contains("dataset.turning"));
+    }
+
+    #[test]
+    fn the_picture_keeps_its_corners_when_zoomed() {
+        // The transform scales the radius too, so it's divided back down.
+        assert!(rule(".stage.zoomed img").contains("calc(var(--r) / var(--z, 1))"));
+        assert!(Zoom::default().css().contains("--z: 1.000"));
+    }
+
+    #[test]
+    fn fullscreen_fits_the_display() {
+        // Regression: a small picture stayed at its own size in the middle.
+        assert!(fit_style(Some((200, 300))).contains("var(--fit-cap, 200px)"));
+        assert!(rule(".stage.full").contains("--fit-cap: 100%"));
+        // The page's scrollbar would take its width off the display.
+        assert!(rule("html:has(.stage.full)").contains("overflow-y: hidden"));
+    }
+
+    #[test]
+    fn fullscreen_controls_rest_and_come_back() {
+        let hidden = rule(
+            ".stage.full[data-rest] :is(.stage-prev, .stage-next, .stage-tools, .stage-translate:not(.busy))",
+        );
+        assert!(hidden.contains("opacity: 0") && hidden.contains("pointer-events: none"));
+        assert!(KEY_LISTENER.contains("'pointerdown'") && KEY_LISTENER.contains("'keydown'"));
+        assert!(KEY_LISTENER.contains("removeAttribute('data-rest')"));
+        assert!(KEY_LISTENER.contains(":focus-visible"));
+        // Regression: on a phone the button that opened fullscreen stayed `:hover`.
+        assert!(KEY_LISTENER.contains("matchMedia('(hover: hover)')"));
+        assert!(KEY_LISTENER_OFF.contains("__sbWake"));
+    }
+
+    #[test]
+    fn the_wheel_can_leave_the_picture_for_whats_below() {
+        // Regression: over a picture that fills the stage, the page wouldn't scroll.
+        assert!(KEY_LISTENER.contains("e.deltaY > 0 || scrollY > 0"));
+        assert!(KEY_LISTENER.contains("stage.matches('.full, .zoomed')"));
+        assert!(KEY_LISTENER.contains("!e.ctrlKey"));
+        assert!(KEY_LISTENER.contains("e.stopPropagation()"));
+        assert!(KEY_LISTENER_OFF.contains("__sbWheel"));
+    }
+
+    #[test]
+    fn the_glow_leaves_the_text_and_the_battery_alone() {
+        assert!(rule(".post-glow").contains("pointer-events: none"));
+        assert!(rule(r#".app[data-saver="on"] .post-glow"#).contains("display: none"));
     }
 
     #[test]

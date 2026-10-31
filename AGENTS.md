@@ -60,7 +60,7 @@ People trust StarBooru with their collection. A malformed upload, a bad query, a
 2. **Database changes are new migrations** (`apps/server/migrations/NNNN_name.sql`). Never edit an applied migration. They run automatically at startup.
 3. **Media is content-addressed and immutable.** Files are named by SHA-256. Deletion is soft (the recycle bin). Clients reach media only through signed `/media` URLs returned by the API.
 4. **The UI talks only to the API.** No server code in the app. Platform specifics, such as storage paths and window setup, go behind `cfg` in `store.rs` and `main.rs`. The web build must keep working.
-5. **Design tokens, not literals.** Colours come from the CSS role variables in `apps/app/assets/main.css`, all derived from one seed hue. Glass (blur) is used only on the bars and the sign-in card. Respect `prefers-reduced-motion`.
+5. **Design tokens, not literals.** Colours come from the CSS role variables in `apps/app/assets/main.css`, all derived from one seed hue. Glass (blur) is used only on the bars, the viewer's floating controls and the sign-in card. Respect `prefers-reduced-motion`.
 6. **Verify UI changes visually**:
    1. Build the web bundle and serve it from a local server (`docs/development.md` › Visual checks).
    2. Screenshot light and dark themes at desktop and phone (390px) width.

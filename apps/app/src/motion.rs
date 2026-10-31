@@ -333,8 +333,6 @@ window.__sbTurn ??= {
     this.past?.remove();
     this.past = null;
     this.since = performance.now();
-    delete stage.dataset.turning;
-    if (!stage.classList.contains("full")) stage.style.height = `${stage.offsetHeight}px`;
     const el = document.getElementById("stage-img");
     if (!el) return;
     const copy = el.cloneNode(false);
@@ -382,20 +380,9 @@ window.__sbTurn ??= {
   start(el) {
     el.removeAttribute("data-turn");
     this.since = 0;
-    const stage = el.closest(".stage");
     const past = this.past;
-    if (stage?.style.height) {
-      const from = stage.style.height;
-      stage.style.height = "";
-      const to = stage.offsetHeight;
-      stage.style.height = from;
-      void stage.offsetHeight;
-      stage.dataset.turning = "";
-      stage.style.height = `${to}px`;
-    }
     past?.classList.add(el.classList.contains("from-next") ? "to-next" : "to-prev");
-    const running = [...(past?.getAnimations() ?? []), ...(stage?.getAnimations() ?? [])];
-    Promise.allSettled(running.map((one) => one.finished)).then(() => {
+    Promise.allSettled((past?.getAnimations() ?? []).map((one) => one.finished)).then(() => {
       if (this.past === past && !this.since) this.end();
     });
   },
@@ -405,11 +392,6 @@ window.__sbTurn ??= {
     this.past?.remove();
     this.past = null;
     this.since = 0;
-    const stage = document.querySelector(".stage");
-    if (stage) {
-      delete stage.dataset.turning;
-      stage.style.height = "";
-    }
   },
 };
 "##;

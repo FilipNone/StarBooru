@@ -100,6 +100,7 @@ mod native {
                 } else {
                     Ico { icon: Icon::Download }
                 }
+                span { class: "bar-label", "{label}" }
             }
         }
     }
@@ -134,6 +135,7 @@ mod native {
         rsx! {
             a { class: "icon-btn", href, download: "{name}", aria_label: "{label}", title: "{label}",
                 Ico { icon: Icon::Download }
+                span { class: "bar-label", "{label}" }
             }
         }
     }

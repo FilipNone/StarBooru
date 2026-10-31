@@ -5,6 +5,7 @@ use dioxus::prelude::*;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Icon {
     Add,
+    ArrowBack,
     Article,
     Check,
     ChevronLeft,
@@ -71,6 +72,7 @@ impl Icon {
             Icon::Check => Shape::EvenOdd(
                 "M21.546 5.112a1.5 1.5 0 0 1 0 2.121L10.232 18.547a1.5 1.5 0 0 1-2.121 0L2.454 12.89a1.5 1.5 0 1 1 2.121-2.121l4.596 4.596L19.424 5.112a1.5 1.5 0 0 1 2.122 0",
             ),
+            Icon::ArrowBack => Shape::Stroke("3", "M20 12H5m6.657-6.657L5 12l6.657 6.657"),
             Icon::ChevronLeft => Shape::Stroke("3", "M14.657 17.657L9 12l5.657-5.657"),
             Icon::ChevronRight => Shape::Stroke("3", "M9.343 6.343L15 12l-5.657 5.657"),
             Icon::Close => Shape::EvenOdd(
@@ -229,8 +231,9 @@ pub fn Ico(icon: Icon, #[props(default = 24)] size: u32) -> Element {
 mod tests {
     use super::*;
 
-    const ALL: [Icon; 44] = [
+    const ALL: [Icon; 45] = [
         Icon::Add,
+        Icon::ArrowBack,
         Icon::Article,
         Icon::Check,
         Icon::ChevronLeft,

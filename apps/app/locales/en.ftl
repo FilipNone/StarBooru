@@ -550,6 +550,8 @@ tags-admins-only = Only admins can change this.
 ## Post
 
 post-in-trash = This post is in the recycle bin.
+post-actions = Post actions
+post-back = Back
 post-upvote = Upvote
 post-downvote = Downvote
 post-download = Download
@@ -581,6 +583,7 @@ post-next-title = Next (→)
 post-next = Next post
 zoom-out-title = Zoom out (−)
 zoom-out = Zoom out
+zoom-fit = Fit
 zoom-fit-title = Fit (0)
 zoom-reset = Reset zoom
 zoom-in-title = Zoom in (+)
@@ -936,6 +939,8 @@ shared-next = Next
 ## Media editor
 
 editor-open = Edit image or video
+editor-image-short = Edit image
+editor-video-short = Trim
 editor-title-image = Edit image
 editor-title-video = Trim video
 editor-tools = Image tools

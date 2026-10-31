@@ -558,6 +558,8 @@ tags-admins-only = Solo gli amministratori possono modificarlo.
 ## Post
 
 post-in-trash = Questo post è nel cestino.
+post-actions = Azioni sul post
+post-back = Indietro
 post-upvote = Voto positivo
 post-downvote = Voto negativo
 post-download = Scarica
@@ -589,6 +591,7 @@ post-next-title = Successivo (→)
 post-next = Post successivo
 zoom-out-title = Riduci (−)
 zoom-out = Riduci
+zoom-fit = Adatta
 zoom-fit-title = Adatta (0)
 zoom-reset = Ripristina lo zoom
 zoom-in-title = Ingrandisci (+)
@@ -944,6 +947,8 @@ shared-next = Successivo
 ## Media editor
 
 editor-open = Modifica immagine o video
+editor-image-short = Modifica immagine
+editor-video-short = Taglia
 editor-title-image = Modifica immagine
 editor-title-video = Taglia video
 editor-tools = Strumenti immagine

@@ -42,6 +42,7 @@ body { background: #111; }
   --glass-edge: oklch(1 0 0 / 0.6);
   --glass-line: oklch(0.2 0.04 var(--h) / 0.1);
   --stage: oklch(0.2 0.015 var(--h));
+  --glow-a: 0.42;
   /* controls over media: the stage is dark in both themes */
   --scrim: oklch(0.12 0.01 var(--h) / 0.55);
   --on-scrim: oklch(0.97 0.01 var(--h));
@@ -99,6 +100,7 @@ body { background: #111; }
   --glass-edge: oklch(1 0 0 / 0.14);
   --glass-line: oklch(1 0 0 / 0.08);
   --stage: oklch(0.12 0.01 var(--h));
+  --glow-a: 0.34;
   --shadow-1: 0 1px 2px oklch(0 0 0 / 0.3), 0 2px 8px oklch(0 0 0 / 0.2);
   --shadow-2: 0 2px 4px oklch(0 0 0 / 0.3), 0 12px 32px oklch(0 0 0 / 0.4);
 }
@@ -132,6 +134,7 @@ body { background: #111; }
   --glass-edge: oklch(1 0 0 / 0.14);
   --glass-line: oklch(1 0 0 / 0.08);
     --stage: oklch(0.12 0.01 var(--h));
+    --glow-a: 0.34;
     --shadow-1: 0 1px 2px oklch(0 0 0 / 0.3), 0 2px 8px oklch(0 0 0 / 0.2);
     --shadow-2: 0 2px 4px oklch(0 0 0 / 0.3), 0 12px 32px oklch(0 0 0 / 0.4);
   }
@@ -867,29 +870,54 @@ button.thumb { width: 100%; padding: 0; border: 0; font: inherit; color: inherit
 
 /* ---------- post ---------- */
 
-.post-layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 20px; align-items: start; }
+/* The picture stands straight on the page, with its own colours as the light
+   around it. The stage's size comes from the window alone, so the picture's shape
+   moves nothing: not the buttons on the stage, nor the bar and related posts below. */
+.post-layout {
+  display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 20px; align-items: start;
+  --post-bar-h: 60px; --post-gap: 12px; --peek: 48px;
+}
+.post-main { display: grid; gap: var(--post-gap); min-width: 0; }
+/* A picture sliding in doesn't make the window scroll sideways. */
+.content:has(.post-layout) { overflow-x: clip; }
+/* The glow's negative z-index stops here, above the canvas on `.app`. */
+.app { isolation: isolate; }
+
+.post-glow {
+  position: absolute; inset: 0 0 auto; height: 100dvh; z-index: -1; overflow: hidden; pointer-events: none;
+  mask-image: linear-gradient(#000 40%, transparent);
+}
+.glow-layer {
+  position: absolute; inset: -12%; background: center / cover no-repeat;
+  filter: blur(72px) saturate(1.6); opacity: var(--glow-a);
+  animation: fade-in var(--slow) var(--ease);
+}
+.glow-layer.still { animation: none; }
+.post-layout.full-open .post-glow { position: fixed; inset: 0; height: auto; z-index: 49; mask-image: none; background: var(--stage); }
+.post-layout.full-open .glow-layer { opacity: 0.6; }
+.app[data-saver="on"] .post-glow { display: none; }
+
 .stage {
-  display: grid; place-items: center; min-height: 320px; overflow: hidden;
-  background: var(--stage); border-radius: var(--radius-l);
-  position: sticky; top: calc(var(--bar-end) + 12px);
+  position: relative; isolation: isolate; display: grid; place-items: center;
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+  height: var(--fit-h); border-radius: var(--r);
+  --r: var(--radius-l);
   /* the media's height limit; the image box is sized from it before loading */
-  --fit-h: calc(100dvh - var(--bar-end) - 28px);
+  --fit-h: max(280px, calc(100dvh - var(--bar-end) - 16px - var(--post-gap) - var(--post-bar-h) - var(--post-gap) - var(--peek)));
 }
 .stage img, .stage video {
   display: block; max-width: 100%; max-height: var(--fit-h); object-fit: contain;
-  border-radius: inherit;
+  border-radius: inherit; box-shadow: 0 0 0 1px var(--glass-line), var(--shadow-2);
   animation: zoom-in var(--slow) var(--ease);
 }
-/* the thumbnail stands in until the image loads */
 /* While the full image loads, its thumbnail (`--thumb`) fills the box. */
 .stage img.loading { background: var(--thumb) center / 100% 100% no-repeat; }
 .stage img.from-next, .stage video.from-next { animation: from-next var(--med) var(--ease); }
 .stage img.from-prev, .stage video.from-prev { animation: from-prev var(--med) var(--ease); }
 /* Previous/next (motion.rs): the new picture waits out of sight until it can
    paint, while a copy of the old one holds its place underneath. Both then
-   move at once, and the stage changes height with them. */
+   move at once. */
 .stage img[data-turn="wait"], .stage video[data-turn="wait"] { animation: none; opacity: 0; }
-.stage[data-turning] { transition: height var(--med) var(--ease); }
 .stage img.stage-past {
   position: absolute; z-index: -1; max-width: none; max-height: none; aspect-ratio: auto;
   pointer-events: none; animation: none; transition: none;
@@ -898,29 +926,60 @@ button.thumb { width: 100%; padding: 0; border: 0; font: inherit; color: inherit
 .stage img.stage-past.to-prev { animation: to-prev var(--med) var(--ease) forwards; }
 .stage { touch-action: pan-y; user-select: none; -webkit-user-select: none; }
 .stage img { transform-origin: center; transition: transform var(--fast) var(--ease); }
-.stage.zoomed { touch-action: none; cursor: grab; }
-.stage.zoomed img { border-radius: 0; }
+.stage:not(.zoomed) img { cursor: zoom-in; }
+/* Grown past the stage, it's seen through the stage's own rounded window. */
+.stage.zoomed { overflow: hidden; touch-action: none; cursor: grab; }
+.stage.zoomed img { border-radius: calc(var(--r) / var(--z, 1)); }
 .stage.zoomed:active { cursor: grabbing; }
 .stage.dragging img { transition: none; }
-.stage.full { position: fixed; inset: 0; z-index: 50; min-height: 0; border-radius: 0; }
-.stage.full { --fit-h: 100dvh; }
-.stage.full img, .stage.full video { max-width: 100vw; }
+.stage.full {
+  position: fixed; inset: 0; z-index: 50; height: 100dvh;
+  --fit-h: 100dvh; --fit-cap: 100%;
+  /* dark in both themes, whatever the picture */
+  --glass: oklch(0.2 0.015 var(--h) / 0.62); --glass-edge: oklch(1 0 0 / 0.14); --glass-line: oklch(1 0 0 / 0.08);
+  --on-surface: oklch(0.96 0.01 var(--h)); --on-surface-2: oklch(0.86 0.015 var(--h));
+}
+.stage.full.zoomed { border-radius: 0; }
+html:has(.stage.full) { overflow-y: hidden; }
+.stage.full img, .stage.full video { max-width: 100vw; box-shadow: none; }
+/* No known size: the box fills the display and the media fits inside it. */
+.stage.full :is(img, video):not([style*="aspect-ratio"]) { width: 100%; height: 100%; }
 .stage-btn {
   display: inline-grid; place-items: center; width: 44px; height: 44px; border: 0; border-radius: 999px;
-  background: var(--scrim); color: var(--on-scrim); cursor: pointer;
-  transition: opacity var(--med) var(--ease), transform var(--fast) var(--ease-spring);
+  color: var(--on-surface); cursor: pointer;
+  transition: opacity var(--med) var(--ease), transform var(--med) var(--ease-spring), border-radius var(--med) var(--ease-spring);
 }
-.stage-btn:active:not(:disabled) { transform: scale(0.9); }
+.stage-btn:active:not(:disabled) { transform: scale(0.88); border-radius: 14px; }
 .stage-btn:disabled { opacity: 0.4; cursor: default; }
-.stage-prev, .stage-next { position: absolute; top: calc(50% - 22px); }
+@media (hover: hover) {
+  .stage-prev:hover:not(:disabled) .icon { transform: translateX(-2px); }
+  .stage-next:hover:not(:disabled) .icon { transform: translateX(2px); }
+  .stage-back:hover .icon { transform: translateX(-2px); }
+  .stage-btn .icon { transition: transform var(--med) var(--ease-spring); }
+}
+.stage-back, .stage-prev, .stage-next, .stage-tools, .stage-translate, .stage-note { z-index: 2; }
+.stage-back { position: absolute; left: 12px; top: 12px; }
+.stage-prev, .stage-next { position: absolute; top: calc(50% - 26px); width: 52px; height: 52px; }
 .stage-prev { left: 12px; }
 .stage-next { right: 12px; }
 .stage-tools {
-  position: absolute; right: 12px; bottom: 12px; display: flex; align-items: center; gap: 2px;
-  padding: 2px; border-radius: 999px; background: var(--scrim);
+  position: absolute; right: 12px; top: 12px; display: flex; align-items: center; gap: 2px;
+  padding: 2px; border-radius: 999px;
   transition: opacity var(--med) var(--ease);
 }
 .stage-tools .stage-btn { width: 40px; height: 40px; background: transparent; }
+.stage-tools .stage-btn:disabled { opacity: 0.38; }
+@media (hover: hover) {
+  .stage-tools :is(.stage-btn, .stage-zoom):hover:not(:disabled) { background: var(--glass-line); }
+}
+.stage.full .stage-back { display: none; }
+/* The translation's button sits under the tools, where it comes and goes alone. */
+.stage-translate { position: absolute; right: 12px; top: 68px; }
+.stage.full .stage-tools { top: max(12px, env(safe-area-inset-top)); }
+.stage.full .stage-translate { top: calc(max(12px, env(safe-area-inset-top)) + 56px); }
+.app[data-hand="left"] .stage-back { left: auto; right: 12px; }
+.app[data-hand="left"] .stage-tools, .app[data-hand="left"] .stage-translate { right: auto; left: 12px; }
+.stage.full[data-rest] :is(.stage-prev, .stage-next, .stage-tools, .stage-translate:not(.busy)) { opacity: 0; pointer-events: none; }
 /* translated text over the image: same cell, box and zoom as the image */
 .stage > img, .stage > video, .stage > .panel-layer { grid-area: 1 / 1; }
 .panel-layer {
@@ -937,44 +996,53 @@ button.thumb { width: 100%; padding: 0; border: 0; font: inherit; color: inherit
   font-size: clamp(8px, 1.8cqw, 22px); font-weight: 600; line-height: 1.15;
   text-align: center; overflow-wrap: anywhere; white-space: pre-line;
 }
-.stage-translate { position: absolute; left: 12px; bottom: 12px; }
-.app[data-hand="left"] .stage-translate { left: auto; right: 12px; }
 .stage-translate[aria-pressed="true"] { background: var(--primary); color: var(--on-primary); }
 .stage-translate.busy { animation: pulse 1.2s var(--ease) infinite; }
 .stage-note {
-  position: absolute; top: 12px; left: 50%; transform: translateX(-50%); max-width: calc(100% - 24px);
+  /* Under the back button and the tools, and clear of the translate button. */
+  position: absolute; top: 68px; left: 50%; transform: translateX(-50%); width: max-content; max-width: calc(100% - 136px);
   margin: 0; padding: 6px 14px; border-radius: 999px; background: var(--scrim); color: var(--on-scrim);
   font-size: 13px; text-align: center;
 }
 .stage-zoom {
-  min-width: 5ch; min-height: 40px; border: 0; border-radius: 999px; background: transparent;
-  color: var(--on-scrim); font: inherit; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; cursor: pointer;
+  /* As wide as "100%" or "Adatta", so the buttons beside it stay where they are. */
+  width: 7ch; min-height: 40px; padding: 0; border: 0; border-radius: 999px; background: transparent;
+  color: var(--on-surface); font: inherit; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; cursor: pointer;
 }
-@media (hover: hover) {
-  .stage .stage-prev, .stage .stage-next, .stage .stage-tools, .stage .stage-translate:not(.busy) { opacity: 0; }
-  .stage:hover .stage-prev, .stage:hover .stage-next, .stage:hover .stage-tools, .stage:hover .stage-translate,
-  .stage:focus-within .stage-prev, .stage:focus-within .stage-next, .stage:focus-within .stage-tools,
-  .stage:focus-within .stage-translate { opacity: 1; }
-  .stage .stage-btn:disabled { opacity: 0.4; }
+
+/* Under the picture: an opinion, what leaves with the file, and, away from the
+   rest, the one that removes it. */
+.post-bar {
+  container-type: inline-size;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px;
+  min-height: var(--post-bar-h); padding: 8px; border-radius: calc(var(--post-bar-h) / 2);
 }
-.actions { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 8px 12px; }
-.vote, .row-actions { display: flex; align-items: center; gap: 4px; }
-.row-actions { margin-left: auto; }
-/* Smaller buttons keep the actions on one row: beside the media on desktop,
-   and on a phone. */
-.actions .row-actions { gap: 0; }
-.actions .icon-btn { width: 40px; height: 40px; }
-@media (min-width: 901px) {
-  .actions .icon-btn { width: 36px; height: 36px; }
+.post-bar .icon-btn { color: var(--on-surface); transition: transform var(--med) var(--ease-spring), background-color var(--fast) var(--ease), color var(--fast) var(--ease), border-radius var(--med) var(--ease-spring); }
+.post-bar .icon-btn:active:not(:disabled) { border-radius: 14px; }
+.vote { display: flex; align-items: center; border-radius: 999px; background: var(--surface-3); }
+.post-bar .vote .icon-btn.on { border-radius: 14px; background: var(--primary); color: var(--on-primary); }
+.bar-acts { display: flex; align-items: center; gap: 4px; }
+.bar-delete { margin-left: auto; }
+.bar-label { display: none; }
+@container (min-width: 620px) {
+  .bar-acts .icon-btn { display: inline-flex; align-items: center; gap: 8px; width: auto; padding: 0 16px 0 12px; font: inherit; text-decoration: none; }
+  .bar-acts .bar-label { display: inline; font-size: 14px; font-weight: 600; line-height: 1; }
 }
+/* The narrowest phones: all of it still on one row. */
+@media (max-width: 360px) {
+  .post-bar { gap: 4px 8px; }
+  .post-bar .icon-btn { width: 40px; }
+  .bar-acts { gap: 0; }
+}
+.post-main .banner { margin: 0; }
 .score { min-width: 3ch; text-align: center; font-weight: 700; font-variant-numeric: tabular-nums; }
 .meta { display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; margin: 0; font-size: 14px; }
 .meta dt { color: var(--on-surface-2); }
 .meta dd { margin: 0; }
 .sample-note { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
 .sample-note .hint { margin: 0; flex: 1 1 180px; font-size: 13px; }
-.ocr-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
-.ocr-head .card-title { margin: 0; }
+.card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; min-height: 36px; }
+.card-head .card-title { margin: 0; }
 .ocr-text { margin: 0; font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--on-surface); }
 .ocr-text.folded { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 6; line-clamp: 6; overflow: hidden; }
 .ocr-note { margin: 6px 0 0; }
@@ -1006,14 +1074,30 @@ button.thumb { width: 100%; padding: 0; border: 0; font: inherit; color: inherit
 .ai-api { display: grid; gap: 12px; }
 .ai-api-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; font-size: 14px; }
 .edit .field:last-of-type { margin-bottom: 20px; }
-.related-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 6px; }
-.related-grid .thumb { border-radius: min(var(--tile-radius), var(--radius-s)); }
+/* Just under the bar, the row of a window's first screen that says there's more. */
+.related { container-type: inline-size; margin-top: 4px; }
+.related .card-title { margin: 0 0 10px 8px; }
+.related-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
+.related-grid .thumb { border-radius: min(var(--tile-radius), var(--radius-m)); }
+@container (max-width: 620px) {
+  .related-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+/* On a phone, one row to run a thumb along, so the tags stay close. */
+@media (max-width: 760px) {
+  .related-grid {
+    display: flex; overflow-x: auto; scroll-snap-type: x proximity; scrollbar-width: none;
+    margin-inline: calc(var(--pad-x) * -1); padding-inline: var(--pad-x); scroll-padding-inline: var(--pad-x);
+  }
+  .related-grid .thumb { flex: 0 0 96px; scroll-snap-align: start; }
+}
 
 @media (max-width: 900px) {
-  .post-layout { grid-template-columns: 1fr; }
-  /* Relative, not sticky: the arrows and tools stay on the media. */
-  .stage { position: relative; top: auto; min-height: 200px; border-radius: var(--radius-m); }
-  .stage { --fit-h: 62dvh; }
+  .post-layout { grid-template-columns: minmax(0, 1fr); }
+  .stage { --r: var(--radius-l); --fit-h: clamp(240px, 58dvh, 760px); }
+}
+/* A window too short to spare the room: the picture comes first. */
+@media (max-height: 640px) {
+  .post-layout { --peek: 0px; }
 }
 
 /* Left hand: the viewer's panel and zoom tools on the left. */
@@ -1021,7 +1105,6 @@ button.thumb { width: 100%; padding: 0; border: 0; font: inherit; color: inherit
   .app[data-hand="left"] .post-layout { grid-template-columns: 360px minmax(0, 1fr); }
   .app[data-hand="left"] .post-layout > aside { order: -1; }
 }
-.app[data-hand="left"] .stage-tools { right: auto; left: 12px; }
 
 /* ---------- recycle bin ---------- */
 

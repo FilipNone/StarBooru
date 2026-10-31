@@ -110,8 +110,8 @@ impl Zoom {
 
     pub fn css(&self) -> String {
         format!(
-            "transform: translate({:.1}px, {:.1}px) scale({:.3})",
-            self.x, self.y, self.scale
+            "transform: translate({:.1}px, {:.1}px) scale({:.3}); --z: {:.3}",
+            self.x, self.y, self.scale, self.scale
         )
     }
 
