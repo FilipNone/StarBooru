@@ -135,3 +135,12 @@ fn App() -> Element {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn pressing_something_draws_no_box_around_it() {
+        let css = include_str!("../assets/main.css");
+        assert!(css.contains("html { -webkit-tap-highlight-color: transparent; }"));
+    }
+}
