@@ -448,18 +448,20 @@ input[type="range"] { width: 100%; accent-color: var(--primary); margin-top: 12p
   display: grid; gap: var(--tile-gap);
   grid-template-columns: repeat(auto-fill, minmax(min(168px, 30vw), 1fr));
 }
-/* The gallery's layout (layout.rs): the script works out each tile's column
-   and how far down it starts in tile widths, and this does the pixels. */
+/* The gallery's layout (layout.rs): the script works out each tile's place and
+   size as so many tile widths and so many gaps, and this does the pixels. */
 .masonry-box { container-type: inline-size; }
 .masonry {
   position: relative;
   --tile: calc((100cqw - (var(--columns) - 1) * var(--tile-gap)) / var(--columns));
-  height: calc(var(--height) * var(--tile) + (var(--rows) - 1) * var(--tile-gap));
+  height: calc(var(--height) * var(--tile) + var(--height-gaps) * var(--tile-gap));
 }
 .masonry .thumb {
-  position: absolute; aspect-ratio: auto; width: var(--tile); height: calc(var(--ratio) * var(--tile));
-  left: calc(var(--column) * (var(--tile) + var(--tile-gap)));
-  top: calc(var(--top) * var(--tile) + var(--row) * var(--tile-gap));
+  position: absolute; aspect-ratio: auto;
+  left: calc(var(--x) * var(--tile) + var(--x-gaps) * var(--tile-gap));
+  top: calc(var(--y) * var(--tile) + var(--y-gaps) * var(--tile-gap));
+  width: calc(var(--w) * var(--tile) + var(--w-gaps) * var(--tile-gap));
+  height: calc(var(--h) * var(--tile) + var(--h-gaps) * var(--tile-gap));
 }
 .app[data-tiles="flush"] .page.gallery { max-width: none; }
 .app[data-tiles="flush"] .masonry-box { margin-inline: calc(var(--pad-x) * -1); }
@@ -467,7 +469,7 @@ input[type="range"] { width: 100%; accent-color: var(--primary); margin-top: 12p
    each one reaches a pixel under the next instead. */
 .app[data-tiles="flush"] .masonry { overflow: clip; }
 .app[data-tiles="flush"] .masonry .thumb {
-  width: calc(var(--tile) + 1px); height: calc(var(--ratio) * var(--tile) + 1px);
+  width: calc(var(--w) * var(--tile) + 1px); height: calc(var(--h) * var(--tile) + 1px);
 }
 .app[data-tiles="flush"] .masonry .thumb-media { inset: -1px; }
 .thumb {

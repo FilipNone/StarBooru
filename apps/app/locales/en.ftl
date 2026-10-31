@@ -586,6 +586,7 @@ view-columns = { $count ->
     [one] 1 column
    *[other] { $count } columns
 }
+view-per-row = About { $count } per row
 view-columns-auto = Automatic
 gallery-stop-selecting = Stop selecting
 gallery-select = Select posts

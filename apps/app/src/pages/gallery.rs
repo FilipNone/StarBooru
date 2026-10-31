@@ -77,6 +77,7 @@ impl Grid {
 
     fn place(self, list: &[Post]) -> layout::Layout {
         layout::place(
+            self.view,
             list.iter()
                 .map(|p| layout::tile_ratio(self.view, p.width, p.height)),
             self.columns,
@@ -89,11 +90,12 @@ impl Grid {
 fn tile_box(list: &[Post], id: i64) -> Option<(f64, f64)> {
     let grid = Grid::now();
     let index = list.iter().position(|p| p.id == id)?;
-    let placed = grid.place(list.get(..=index)?);
-    let place = placed.tiles.last()?;
+    // The whole list, as what comes after a tile can settle the height of its row.
+    let placed = grid.place(list);
+    let place = placed.tiles.get(index)?;
     Some((
-        place.top_px(grid.tile, grid.gap),
-        place.height_px(grid.tile),
+        place.top.px(grid.tile, grid.gap),
+        place.height.px(grid.tile, grid.gap),
     ))
 }
 
@@ -543,7 +545,7 @@ pub fn Gallery(q: String) -> Element {
     use_effect(move || {
         let (_, to) = near();
         let Grid { gap, tile, .. } = grid();
-        let end = tiles.read().height_px(tile, gap);
+        let end = tiles.read().height.px(tile, gap);
         if tile > 0.0
             && to >= end
             && generation() > 0
@@ -795,7 +797,7 @@ pub fn Gallery(q: String) -> Element {
                 },
                 div {
                     class: "masonry",
-                    style: "--columns: {columns}; --height: {placed.height:.4}; --rows: {placed.rows}",
+                    style: "--columns: {columns}; --height: {placed.height.tiles:.5}; --height-gaps: {placed.height.gaps:.5}",
                     for (index, post, place) in shown {
                         Thumb {
                             key: "{post.id}",
@@ -1278,7 +1280,15 @@ fn ViewMenu(width: f64, gap: f64) -> Element {
                         }
                     }
                     div { class: "view-row",
-                        label { class: "muted", r#for: "view-columns", {t!("view-columns", count = columns)} }
+                        label {
+                            class: "muted",
+                            r#for: "view-columns",
+                            if view == GalleryView::StaggeredLandscape {
+                                {t!("view-per-row", count = columns)}
+                            } else {
+                                {t!("view-columns", count = columns)}
+                            }
+                        }
                         input {
                             id: "view-columns",
                             r#type: "range",
@@ -1341,8 +1351,16 @@ pub(super) fn Thumb(
     let mut style = format!("--delay: {delay}ms");
     if let Some(p) = place {
         style.push_str(&format!(
-            "; --column: {}; --top: {:.4}; --row: {}; --ratio: {:.4}",
-            p.column, p.top, p.row, p.ratio
+            "; --x: {:.5}; --x-gaps: {:.5}; --y: {:.5}; --y-gaps: {:.5}\
+             ; --w: {:.5}; --w-gaps: {:.5}; --h: {:.5}; --h-gaps: {:.5}",
+            p.left.tiles,
+            p.left.gaps,
+            p.top.tiles,
+            p.top.gaps,
+            p.width.tiles,
+            p.width.gaps,
+            p.height.tiles,
+            p.height.gaps,
         ));
     }
     let alt = post.tags.join(" ");

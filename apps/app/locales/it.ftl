@@ -594,6 +594,7 @@ view-columns = { $count ->
     [one] 1 colonna
    *[other] { $count } colonne
 }
+view-per-row = Circa { $count } per riga
 view-columns-auto = Automatico
 gallery-stop-selecting = Termina la selezione
 gallery-select = Seleziona i post
