@@ -25,6 +25,11 @@ use crate::probe::Tools;
 use crate::similar::{self, Fingerprint};
 
 pub const THUMB_SIZE: u32 = 512;
+/// A picture more than twice as long as it is wide would come out of
+/// `THUMB_SIZE` too narrow to look sharp on a tile, so it gets at least this
+/// across, up to `THUMB_MAX_LONG` along.
+const THUMB_MIN_SHORT: u32 = 384;
+const THUMB_MAX_LONG: u32 = 3072;
 /// How much of a stored image is read for its EXIF date, which sits near
 /// the start.
 const MAX_EXIF_READ: u64 = 64 << 20;
@@ -383,6 +388,41 @@ impl Storage {
         })
     }
 
+    /// Makes a stored original's thumbnail again, in place of the one there,
+    /// for posts whose thumbnail came out too small. `false` when the original
+    /// is gone or can't be read; only disk errors fail. Call from a blocking
+    /// thread.
+    pub fn remake_thumb(&self, sha_hex: &str, ext: &str, kind: MediaKind) -> AppResult<bool> {
+        let original = self
+            .original_path(sha_hex, ext)
+            .ok_or_else(|| AppError::internal("bad storage path"))?;
+        let decodable = FORMATS.iter().any(|(_, e, _, d)| *e == ext && *d);
+        let img = if decodable {
+            let bytes = match std::fs::read(&original) {
+                Ok(b) => b,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+                Err(e) => return Err(AppError::internal(e)),
+            };
+            decode(&bytes).ok()
+        } else {
+            self.tools.as_ref().and_then(|tools| {
+                let frame = tools.probe(&original, kind == MediaKind::Video).frame?;
+                decode(&frame).ok()
+            })
+        };
+        let Some(jpeg) = img.and_then(|img| make_thumbnail(&img).ok()) else {
+            return Ok(false);
+        };
+        let path = self
+            .path_for_file(
+                Variant::Thumb,
+                &Self::file_name(Variant::Thumb, sha_hex, ext),
+            )
+            .ok_or_else(|| AppError::internal("bad storage path"))?;
+        self.replace_atomic(&path, &jpeg)?;
+        Ok(true)
+    }
+
     /// The date a stored original carries; `None` when it has none, is gone
     /// or can't be read as media. Only disk errors fail. Videos need the
     /// tools. Call from a blocking thread.
@@ -482,6 +522,10 @@ impl Storage {
         if dest.exists() {
             return Ok(()); // content-addressed: same name, same bytes
         }
+        self.replace_atomic(dest, bytes)
+    }
+
+    fn replace_atomic(&self, dest: &Path, bytes: &[u8]) -> std::io::Result<()> {
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -575,10 +619,22 @@ fn icc_profile(bytes: &[u8]) -> Option<Vec<u8>> {
         .flatten()
 }
 
-/// Fits the image in `THUMB_SIZE`² (never enlarging it), flattens
-/// transparency onto white, JPEG.
+/// The square a thumbnail of a picture this size fits in.
+pub fn thumb_side(width: u32, height: u32) -> u32 {
+    let (long, short) = (width.max(height), width.min(height));
+    if short == 0 || long <= short.saturating_mul(2) {
+        return THUMB_SIZE;
+    }
+    let side = u64::from(long) * u64::from(THUMB_MIN_SHORT) / u64::from(short);
+    u32::try_from(side)
+        .unwrap_or(u32::MAX)
+        .clamp(THUMB_SIZE, THUMB_MAX_LONG)
+}
+
+/// Fits the image in `thumb_side`² (never enlarging it), flattens transparency
+/// onto white, JPEG.
 fn make_thumbnail(img: &DynamicImage) -> AppResult<Vec<u8>> {
-    fit_jpeg(img, THUMB_SIZE, FilterKind::Fast)
+    fit_jpeg(img, thumb_side(img.width(), img.height()), FilterKind::Fast)
 }
 
 /// How [`fit_jpeg`] scales down.
@@ -767,6 +823,69 @@ mod tests {
         assert_eq!((decoded.width(), decoded.height()), (20, 40));
     }
 
+    #[test]
+    fn long_pictures_get_room_for_a_sharp_thumbnail() {
+        // Ordinary shapes fit in the usual square.
+        assert_eq!(thumb_side(6000, 4000), THUMB_SIZE);
+        assert_eq!(thumb_side(4000, 6000), THUMB_SIZE);
+        assert_eq!(thumb_side(2000, 1000), THUMB_SIZE);
+        assert_eq!(thumb_side(100, 100), THUMB_SIZE);
+        // Long ones get enough across, whichever way round.
+        assert_eq!(thumb_side(630, 4096), 2496);
+        assert_eq!(thumb_side(4096, 630), 2496);
+        assert_eq!(thumb_side(800, 6000), 2880);
+        // A very long one stops, so its file stays a thumbnail's.
+        assert_eq!(thumb_side(100, 60_000), THUMB_MAX_LONG);
+        // Nothing to overflow or divide by.
+        assert_eq!(thumb_side(0, 100), THUMB_SIZE);
+        assert_eq!(thumb_side(0, 0), THUMB_SIZE);
+        assert_eq!(thumb_side(u32::MAX, 1), THUMB_MAX_LONG);
+        assert_eq!(thumb_side(u32::MAX, u32::MAX), THUMB_SIZE);
+    }
+
+    #[test]
+    fn a_long_picture_keeps_its_width_in_the_thumbnail() {
+        let img = DynamicImage::ImageRgb8(image::RgbImage::new(630, 4096));
+        let thumb = decode(&make_thumbnail(&img).unwrap()).unwrap();
+        assert_eq!((thumb.width(), thumb.height()), (384, 2496));
+        // A small one isn't enlarged.
+        let img = DynamicImage::ImageRgb8(image::RgbImage::new(100, 400));
+        let thumb = decode(&make_thumbnail(&img).unwrap()).unwrap();
+        assert_eq!((thumb.width(), thumb.height()), (100, 400));
+        // An ordinary one stays as it was.
+        let img = DynamicImage::ImageRgb8(image::RgbImage::new(4000, 6000));
+        let thumb = decode(&make_thumbnail(&img).unwrap()).unwrap();
+        assert_eq!((thumb.width(), thumb.height()), (341, 512));
+    }
+
+    #[tokio::test]
+    async fn remaking_a_thumbnail_replaces_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(dir.path()).await.unwrap();
+        let info = storage.ingest(&png_bytes(630, 4096)).unwrap();
+        let sha = hex::encode(info.sha256);
+        let thumb = storage
+            .path_for_file(
+                Variant::Thumb,
+                &Storage::file_name(Variant::Thumb, &sha, "png"),
+            )
+            .unwrap();
+        // As it was made before.
+        let old = DynamicImage::ImageRgb8(image::RgbImage::new(79, 512));
+        old.save_with_format(&thumb, image::ImageFormat::Jpeg)
+            .unwrap();
+        assert!(storage.remake_thumb(&sha, "png", MediaKind::Image).unwrap());
+        let t = image::open(&thumb).unwrap();
+        assert_eq!((t.width(), t.height()), (384, 2496));
+        // Nothing to make it from.
+        let none = "0".repeat(64);
+        assert!(
+            !storage
+                .remake_thumb(&none, "png", MediaKind::Image)
+                .unwrap()
+        );
+    }
+
     #[tokio::test]
     async fn ingests_png_and_thumbnails() {
         let dir = tempfile::tempdir().unwrap();
@@ -786,7 +905,8 @@ mod tests {
             )
             .unwrap();
         let t = image::open(thumb).unwrap();
-        assert_eq!((t.width(), t.height()), (512, 150));
+        // Long and thin: what fits in 512 would look soft.
+        assert_eq!((t.width(), t.height()), (1024, 300));
         // Same bytes again: idempotent.
         assert!(storage.ingest(&png_bytes(1024, 300)).is_ok());
 

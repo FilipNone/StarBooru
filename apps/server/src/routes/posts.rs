@@ -1312,6 +1312,63 @@ pub async fn backfill_hashes(state: AppState) {
     }
 }
 
+/// At startup: new thumbnails for long pictures whose old one came out too
+/// small to look sharp. What can't be read is tried again next start. A post
+/// with a sharper thumbnail hasn't been edited, so `updated_at` stays.
+pub async fn backfill_thumbs(state: AppState) {
+    let mut after = 0i64;
+    let mut done = 0u64;
+    loop {
+        let batch: Result<Vec<BackfillRow>, _> = sqlx::query_as(
+            "SELECT id, sha256, ext, kind FROM posts \
+             WHERE thumb_stale AND id > $1 ORDER BY id LIMIT 50",
+        )
+        .bind(after)
+        .fetch_all(&state.db)
+        .await;
+        let batch = match batch {
+            Ok(b) if !b.is_empty() => b,
+            Ok(_) => break,
+            Err(e) => {
+                warn!("thumbnail backfill stopped: {e}");
+                return;
+            }
+        };
+        for (id, sha, ext, kind) in batch {
+            after = id;
+            let kind = MediaKind::from_db(kind).unwrap_or(MediaKind::Image);
+            let sha_hex = hex::encode(sha);
+            let st = state.clone();
+            let made =
+                tokio::task::spawn_blocking(move || st.storage.remake_thumb(&sha_hex, &ext, kind))
+                    .await;
+            match made {
+                Ok(Ok(true)) => {}
+                Ok(Ok(false)) => continue,
+                Ok(Err(e)) => {
+                    warn!("thumbnail backfill: post {id}: {e}");
+                    continue;
+                }
+                Err(e) => {
+                    warn!("thumbnail backfill: post {id}: {e}");
+                    continue;
+                }
+            }
+            let updated = sqlx::query("UPDATE posts SET thumb_stale = false WHERE id = $1")
+                .bind(id)
+                .execute(&state.db)
+                .await;
+            match updated {
+                Ok(_) => done += 1,
+                Err(e) => warn!("thumbnail backfill: post {id}: {e}"),
+            }
+        }
+    }
+    if done > 0 {
+        tracing::info!("thumbnail backfill: {done} posts");
+    }
+}
+
 /// At startup: the colours of posts not looked at yet (uploaded before colour
 /// search existed, or whose thumbnail came later). A thumbnail that can't be
 /// read is tried again next start. A post that gains colours hasn't been
@@ -2003,6 +2060,94 @@ mod tests {
         assert!(r.status.is_success(), "{:?}", r.status);
         assert_eq!(found(&app, &t, "color:red").await, Vec::<i64>::new());
         assert_eq!(found(&app, &t, "color:red+status:deleted").await, vec![red]);
+    }
+
+    #[tokio::test]
+    async fn backfill_remakes_small_thumbnails_of_long_pictures() {
+        let Some(app) = testing::app().await else {
+            return;
+        };
+        let t = app.register("admin").await;
+        let r = app
+            .upload(&t, &testing::noise_png(630, 4096, 41), &[("tags", "")])
+            .await;
+        assert!(r.status.is_success(), "{:?}", r.status);
+        let long = r.json()["id"].as_i64().unwrap();
+        let ordinary = app.upload_png(&t, 42, "").await;
+        // A new upload needs no second go.
+        let stale = |id: i64| {
+            sqlx::query_scalar::<_, bool>("SELECT thumb_stale FROM posts WHERE id = $1")
+                .bind(id)
+                .fetch_one(app.db())
+        };
+        assert!(!stale(long).await.unwrap());
+        assert!(!stale(ordinary).await.unwrap());
+        // As it was left by an earlier version.
+        let (sha, before): (Vec<u8>, chrono::DateTime<chrono::Utc>) =
+            sqlx::query_as("SELECT sha256, updated_at FROM posts WHERE id = $1")
+                .bind(long)
+                .fetch_one(app.db())
+                .await
+                .unwrap();
+        let thumb = app
+            .state
+            .storage
+            .path_for_file(
+                crate::storage::Variant::Thumb,
+                &crate::storage::Storage::file_name(
+                    crate::storage::Variant::Thumb,
+                    &hex::encode(&sha),
+                    "png",
+                ),
+            )
+            .unwrap();
+        image::DynamicImage::ImageRgb8(image::RgbImage::new(79, 512))
+            .save_with_format(&thumb, image::ImageFormat::Jpeg)
+            .unwrap();
+        sqlx::query("UPDATE posts SET thumb_stale = true WHERE id = $1")
+            .bind(long)
+            .execute(app.db())
+            .await
+            .unwrap();
+
+        super::backfill_thumbs(app.state.clone()).await;
+
+        let made = image::open(&thumb).unwrap();
+        assert_eq!((made.width(), made.height()), (384, 2496));
+        assert!(!stale(long).await.unwrap());
+        let after: chrono::DateTime<chrono::Utc> =
+            sqlx::query_scalar("SELECT updated_at FROM posts WHERE id = $1")
+                .bind(long)
+                .fetch_one(app.db())
+                .await
+                .unwrap();
+        assert_eq!(after, before, "not an edit");
+    }
+
+    #[tokio::test]
+    async fn the_migration_marks_only_long_pictures_with_small_thumbnails() {
+        let Some(app) = testing::app().await else {
+            return;
+        };
+        let t = app.register("admin").await;
+        let id = app.upload_png(&t, 43, "").await;
+        // The condition from the migration that marks posts for the backfill.
+        let marks = |width: i32, height: i32, has_thumb: bool| {
+            sqlx::query_scalar::<_, bool>(
+                "SELECT $3 AND GREATEST($1::int, $2::int) > 2 * LEAST($1::int, $2::int) \
+                 AND GREATEST($1::int, $2::int) > 512 FROM posts WHERE id = $4",
+            )
+            .bind(width)
+            .bind(height)
+            .bind(has_thumb)
+            .bind(id)
+            .fetch_one(app.db())
+        };
+        assert!(marks(630, 4096, true).await.unwrap());
+        assert!(marks(4096, 630, true).await.unwrap());
+        assert!(!marks(630, 4096, false).await.unwrap());
+        assert!(!marks(4000, 6000, true).await.unwrap());
+        assert!(!marks(100, 400, true).await.unwrap());
     }
 
     #[tokio::test]

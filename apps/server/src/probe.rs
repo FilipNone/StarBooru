@@ -16,6 +16,8 @@ use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use tracing::warn;
 
+use crate::storage::thumb_side;
+
 const TIMEOUT: Duration = Duration::from_secs(30);
 /// Trimming copies the whole clip, which can take longer than a probe.
 const TRIM_TIMEOUT: Duration = Duration::from_secs(180);
@@ -25,9 +27,10 @@ const ENCODE_TIMEOUT: Duration = Duration::from_secs(900);
 /// re-encoded instead.
 const TRIM_SLACK_MS: i64 = 500;
 const MAX_PROBE_OUTPUT: u64 = 1 << 20;
-/// A 1024 px PNG frame is far below this.
+/// A frame's PNG is far below this, even the longest.
 const MAX_FRAME_OUTPUT: u64 = 32 << 20;
-/// Longest side of the frame handed to the thumbnailer.
+/// Longest side of the frame handed to the thumbnailer, unless the picture is
+/// long enough for a thumbnail that needs more.
 const FRAME_SIZE: u32 = 1024;
 
 static MISSING_WARNED: AtomicBool = AtomicBool::new(false);
@@ -48,7 +51,7 @@ pub struct Probed {
     pub has_audio: Option<bool>,
     /// The container's creation time, when it has a believable one.
     pub file_date: Option<DateTime<Utc>>,
-    /// A PNG still, at most `FRAME_SIZE` px on its longest side.
+    /// A PNG still, big enough for a thumbnail.
     pub frame: Option<Vec<u8>>,
 }
 
@@ -101,7 +104,7 @@ impl Tools {
             (true, Some(ms)) => (ms / 10).min(5_000),
             _ => 0,
         };
-        out.frame = self.frame(path, at);
+        out.frame = self.frame(path, at, frame_size(out.width, out.height));
         out
     }
 
@@ -125,9 +128,9 @@ impl Tools {
         parse_probe(&json)
     }
 
-    fn frame(&self, path: &Path, at_ms: i64) -> Option<Vec<u8>> {
+    fn frame(&self, path: &Path, at_ms: i64, size: u32) -> Option<Vec<u8>> {
         let scale = format!(
-            "scale=w='min({FRAME_SIZE},iw)':h='min({FRAME_SIZE},ih)':force_original_aspect_ratio=decrease"
+            "scale=w='min({size},iw)':h='min({size},ih)':force_original_aspect_ratio=decrease"
         );
         let mut cmd = Command::new(&self.ffmpeg);
         cmd.args([
@@ -155,6 +158,14 @@ impl Tools {
         ]);
         let png = run(&mut cmd, MAX_FRAME_OUTPUT, TIMEOUT)?;
         (!png.is_empty()).then_some(png)
+    }
+}
+
+/// The longest side of the frame to grab, for a picture of this size if known.
+fn frame_size(width: Option<i32>, height: Option<i32>) -> u32 {
+    match (width.map(u32::try_from), height.map(u32::try_from)) {
+        (Some(Ok(w)), Some(Ok(h))) => FRAME_SIZE.max(thumb_side(w, h)),
+        _ => FRAME_SIZE,
     }
 }
 
@@ -362,6 +373,15 @@ fn run(cmd: &mut Command, max_out: u64, timeout: Duration) -> Option<Vec<u8>> {
 #[cfg(test)]
 pub mod tests {
     use super::*;
+
+    #[test]
+    fn long_pictures_get_a_bigger_frame() {
+        assert_eq!(frame_size(Some(1920), Some(1080)), FRAME_SIZE);
+        assert_eq!(frame_size(Some(630), Some(4096)), 2496);
+        // Unknown or nonsense sizes get the usual one.
+        assert_eq!(frame_size(None, None), FRAME_SIZE);
+        assert_eq!(frame_size(Some(-1), Some(4096)), FRAME_SIZE);
+    }
 
     /// The tools on `PATH`, or `None` (and the test is skipped) without them.
     pub fn tools() -> Option<Tools> {

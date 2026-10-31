@@ -183,7 +183,10 @@ mod native {
         });
         // Trim once at start, in case the limit was lowered.
         use_hook(|| {
-            spawn(async { trim().await });
+            spawn(async {
+                forget_old_thumbs().await;
+                trim().await;
+            });
         });
     }
 
@@ -307,6 +310,27 @@ mod native {
     }
 
     /// Deletes the least recently used files until the cache fits its limit.
+    /// Files never go stale by their content, but the server can make a better
+    /// thumbnail of the same picture. Raising this lets go of the ones kept so far.
+    const THUMBS: &str = "2";
+
+    /// Empties the thumbnails if they are from before `THUMBS`.
+    pub(super) fn forget_thumbs_before(root: &Path, current: &str) {
+        let mark = root.join("thumbs");
+        if std::fs::read_to_string(&mark).is_ok_and(|seen| seen == current) {
+            return;
+        }
+        let _ = std::fs::remove_dir_all(root.join("thumb"));
+        if std::fs::create_dir_all(root).is_ok() {
+            let _ = std::fs::write(mark, current);
+        }
+    }
+
+    async fn forget_old_thumbs() {
+        let Some(root) = dir() else { return };
+        let _ = tokio::task::spawn_blocking(move || forget_thumbs_before(root, THUMBS)).await;
+    }
+
     async fn trim() {
         let (Some(root), limit) = (dir(), limit()) else {
             return;
@@ -353,6 +377,30 @@ mod native {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(any(feature = "desktop", feature = "mobile"))]
+    #[test]
+    fn old_thumbnails_go_once_and_the_rest_stay() {
+        let root = std::env::temp_dir().join(format!("sb-cache-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let file = |variant: &str| root.join(variant).join("file.jpg");
+        let put = |variant: &str| {
+            std::fs::create_dir_all(root.join(variant)).unwrap();
+            std::fs::write(file(variant), b"x").unwrap();
+        };
+        put("thumb");
+        put("sample");
+        native::forget_thumbs_before(&root, "2");
+        assert!(!file("thumb").exists());
+        assert!(file("sample").exists());
+        // Kept since then: they're fine, until the next change.
+        put("thumb");
+        native::forget_thumbs_before(&root, "2");
+        assert!(file("thumb").exists());
+        native::forget_thumbs_before(&root, "3");
+        assert!(!file("thumb").exists());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 
     const SHA: &str = "e04fd6110d750482f0a5cdbcba6ee9113004e1abc9a976a45cc9c1df5b9d4baf";
 
