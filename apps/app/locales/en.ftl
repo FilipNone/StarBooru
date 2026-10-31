@@ -53,7 +53,26 @@ nav-explore = Explore
 nav-tags = Tags
 nav-upload = Upload
 nav-settings = Settings
-search-placeholder = Search tags, e.g. blue_sky -cloud rating:g
+nav-settings-tab = Settings
+search-placeholder = Search tags, e.g. ishtar_(fate) rating:g
+demo-tag = Posts with this tag
+demo-tag-all = Posts with every tag listed
+demo-tag-not = A minus leaves a tag out
+demo-figure = One person has all of these
+demo-rating = Only this rating
+demo-rating-any = Any of these ratings
+demo-rating-not = Any rating but explicit
+demo-type = Only videos
+demo-date = From March 2024
+demo-date-range = From 2023 to the end of 2024
+demo-date-age = Less than 7 days old
+demo-size = Wider than 1920 pixels
+demo-ratio = Width over height is 16:9
+demo-color = Has this colour
+demo-text = This word is written in the picture
+demo-order-score = Highest score first
+demo-order-random = A new shuffle every time
+demo-combined = Put them all together
 search-label = Search tags
 
 ## Sign-in
@@ -989,7 +1008,7 @@ download-no-folder = no Downloads folder found
 ## Hand (tablet rail, viewer panel and tools)
 
 settings-hand = Hand
-settings-hand-hint = Puts the side navigation on tablets, and the viewer's panel and zoom tools, on the side of the hand you use.
+settings-hand-hint = Puts the side navigation on tablets and laptops, and the viewer's panel and zoom tools, on the side of the hand you use.
 hand-either = Either
 hand-left = Left
 hand-right = Right

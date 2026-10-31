@@ -1,10 +1,17 @@
-//! App frame: top bar with search, navigation (top on wide screens, bottom
-//! bar on phones). Shows the sign-in screen when there is no session.
+//! App frame: floating capsules for the brand and the search, and a slider for
+//! the navigation (top on wide screens, a rail in between, bottom on phones).
+//! Shows the sign-in screen when there is no session.
+
+use std::cell::Cell;
+use std::cmp::Ordering;
+use std::mem::discriminant;
+use std::rc::Rc;
 
 use dioxus::prelude::*;
 use starbooru_core::Tag;
 
 use super::login::Login;
+use super::search_demo::SearchDemo;
 use crate::Route;
 use crate::activity::{self, Activity};
 use crate::brand::{Mark, Wordmark};
@@ -27,20 +34,16 @@ pub fn Shell() -> Element {
         }
     });
     rsx! {
-        header { class: "topbar glass",
-            Link { class: "brand", aria_label: "StarBooru", to: Route::Gallery { q: String::new() },
+        header { class: "topbar",
+            Link { class: "brand glass float", aria_label: "StarBooru", to: Route::Gallery { q: String::new() },
                 Mark { height: 30, compact: true }
                 Wordmark { height: 19 }
             }
             SearchBox { route: route.clone() }
-            nav { class: "nav-top", aria_label: t!("nav-main"),
-                NavItems { route: route.clone() }
-            }
+            NavSlider { place: "nav-top", route: route.clone() }
         }
         main { class: "content", Outlet::<Route> {} }
-        nav { class: "nav-bottom glass", aria_label: t!("nav-main"),
-            NavItems { route }
-        }
+        NavSlider { place: "nav-bottom", route }
         Snackbar {}
         Activity {}
     }
@@ -96,9 +99,23 @@ fn Snackbar() -> Element {
     }
 }
 
+/// The tab a page is under, so the slider always says where you are.
+fn tab_of(route: &Route) -> Route {
+    match route {
+        Route::PostView { .. } => Route::Gallery { q: String::new() },
+        Route::TagPage { .. } => Route::Tags {},
+        Route::Boorus {} => Route::Upload {},
+        Route::Trash {} | Route::Duplicates {} | Route::Help {} | Route::Admin {} => {
+            Route::Settings {}
+        }
+        other => other.clone(),
+    }
+}
+
+/// `place` is the class that says where this copy of the navigation shows.
 #[component]
-fn NavItems(route: Route) -> Element {
-    let items = [
+fn NavSlider(place: &'static str, route: Route) -> Element {
+    let items: Vec<_> = [
         (
             Route::Gallery {
                 q: store::last_search(),
@@ -113,21 +130,45 @@ fn NavItems(route: Route) -> Element {
         ),
         (Route::Tags {}, Icon::Label, t!("nav-tags")),
         (Route::Upload {}, Icon::Upload, t!("nav-upload")),
-        (Route::Settings {}, Icon::Tune, t!("nav-settings")),
-    ];
+        (Route::Settings {}, Icon::Tune, t!("nav-settings-tab")),
+    ]
+    .into_iter()
+    .filter(|(to, ..)| !matches!(to, Route::Upload {}) || store::can_upload())
+    .collect();
+    let tab = discriminant(&tab_of(&route));
+    let here = items.iter().position(|(to, ..)| discriminant(to) == tab);
+    // Where the thumb stands and the way it last went, which says which of its
+    // edges leads. With no tab selected it keeps its place, out of sight.
+    let last = use_hook(|| Rc::new(Cell::new((here.unwrap_or(0), "next"))));
+    let (was, way) = last.get();
+    let at = here.unwrap_or(was);
+    let way = match at.cmp(&was) {
+        Ordering::Greater => "next",
+        Ordering::Less => "back",
+        Ordering::Equal => way,
+    };
+    last.set((at, way));
+    let cells = items.len();
     // Uploads and imports still going, shown on the Upload item.
     let pending = activity::pending();
     let note = t!("activity-pending", count = pending);
     rsx! {
-        for (to, icon, label) in items.into_iter().filter(|(to, ..)| !matches!(to, Route::Upload {}) || store::can_upload()) {
-            NavLink {
-                key: "{label}",
-                active: std::mem::discriminant(&to) == std::mem::discriminant(&route),
-                badge: if matches!(to, Route::Upload {}) { pending } else { 0 },
-                note: note.clone(),
-                to,
-                icon,
-                label,
+        nav {
+            class: "{place} slider glass float",
+            aria_label: t!("nav-main"),
+            style: "--n: {cells}; --i: {at}",
+            "data-dir": way,
+            span { class: if here.is_some() { "slider-thumb" } else { "slider-thumb off" } }
+            for (i, (to, icon, label)) in items.into_iter().enumerate() {
+                NavLink {
+                    key: "{label}",
+                    active: here == Some(i),
+                    badge: if matches!(to, Route::Upload {}) { pending } else { 0 },
+                    note: note.clone(),
+                    to,
+                    icon,
+                    label,
+                }
             }
         }
     }
@@ -154,8 +195,9 @@ fn NavLink(
         Link {
             class: "nav-item{upload}{on}",
             title: if badge > 0 { note.clone() } else { String::new() },
+            aria_current: if active { "page" } else { "false" },
             to,
-            span { class: "nav-pill",
+            span { class: "nav-icon",
                 Ico { icon }
                 if badge > 0 {
                     span { class: "nav-badge", aria_hidden: "true", "{badge.min(99)}" }
@@ -245,13 +287,18 @@ fn SearchBox(route: Route) -> Element {
     let selected = active().filter(|i| *i < count);
     rsx! {
         form {
-            class: "search",
+            class: "search glass float",
             role: "search",
             onsubmit: move |e: FormEvent| {
                 e.prevent_default();
                 search(text());
             },
+            // Phones: the crown takes the search icon's place, and the way home with it.
+            Link { class: "search-home", aria_label: "StarBooru", to: Route::Gallery { q: String::new() },
+                Mark { height: 28, compact: true }
+            }
             Ico { icon: Icon::Search }
+            div { class: "search-field",
             input {
                 r#type: "search",
                 placeholder: t!("search-placeholder"),
@@ -303,6 +350,10 @@ fn SearchBox(route: Route) -> Element {
                     }
                 },
             }
+            if text.read().is_empty() {
+                SearchDemo {}
+            }
+            }
             if open {
                 ul { class: "suggestions", role: "listbox", id: "search-suggestions",
                     for (i, tag) in list.into_iter().enumerate() {
@@ -330,8 +381,49 @@ fn SearchBox(route: Route) -> Element {
 
 #[cfg(test)]
 mod tests {
-    use super::{route_query, split_word};
+    use super::{route_query, split_word, tab_of};
     use crate::Route;
+    use std::mem::discriminant;
+
+    #[test]
+    fn a_page_under_a_tab_keeps_that_tab_selected() {
+        let settings = discriminant(&Route::Settings {});
+        for page in [
+            Route::Trash {},
+            Route::Duplicates {},
+            Route::Help {},
+            Route::Admin {},
+        ] {
+            assert_eq!(discriminant(&tab_of(&page)), settings);
+        }
+        let post = Route::PostView {
+            id: 1,
+            q: String::new(),
+        };
+        assert_eq!(
+            discriminant(&tab_of(&post)),
+            discriminant(&Route::Gallery { q: String::new() })
+        );
+        assert_eq!(tab_of(&Route::TagPage { name: "a".into() }), Route::Tags {});
+        assert_eq!(tab_of(&Route::Boorus {}), Route::Upload {});
+    }
+
+    #[test]
+    fn the_search_stays_on_the_middle_of_the_window() {
+        // Equal columns either side: content can't push it off centre.
+        let css = include_str!("../../assets/main.css");
+        assert!(css.contains("grid-template-columns: var(--side) minmax(0, 1fr) var(--side)"));
+    }
+
+    #[test]
+    fn the_bars_float() {
+        let css = include_str!("../../assets/main.css");
+        let (_, topbar) = css.split_once(".topbar {").unwrap();
+        let (topbar, _) = topbar.split_once('}').unwrap();
+        assert!(topbar.contains("position: fixed"));
+        assert!(topbar.contains("pointer-events: none"));
+        assert!(!topbar.contains("border-bottom"));
+    }
 
     #[test]
     fn the_box_shows_the_routes_search_or_else_the_last() {

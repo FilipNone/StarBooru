@@ -210,7 +210,9 @@ window.__sbHero ??= {
     const grid = document.querySelector(".masonry");
     if (!grid || from?.id !== id || !this.recent(from) || this.calm()) return;
     const bar = document.querySelector(".topbar")?.getBoundingClientRect().bottom ?? 0;
-    const nav = document.querySelector(".nav-bottom")?.getBoundingClientRect().top || innerHeight;
+    const dock = document.querySelector(".nav-bottom")?.getBoundingClientRect();
+    // At the side it takes no height from the screen.
+    const nav = dock?.width > dock?.height ? dock.top : innerHeight;
     const start = grid.getBoundingClientRect().top + top;
     // Mostly out of sight: bring it into view.
     if (Math.min(start + height, nav) - Math.max(start, bar) < height / 2) {
@@ -522,6 +524,13 @@ mod tests {
         let (_, rule) = css.split_once(".stage img, .stage video {").unwrap();
         let (rule, _) = rule.split_once('}').unwrap();
         assert!(rule.contains("border-radius: inherit"));
+    }
+
+    #[test]
+    fn the_rail_at_the_side_leaves_the_whole_height() {
+        // A floating rail starts partway down the screen, which isn't a floor.
+        let (_, body) = HERO.split_once("home(id, top, height) {").unwrap();
+        assert!(body.contains("dock?.width > dock?.height"));
     }
 
     #[test]

@@ -13,6 +13,7 @@ mod library_import;
 mod login;
 mod people;
 mod post;
+mod search_demo;
 mod select;
 mod settings;
 mod share;

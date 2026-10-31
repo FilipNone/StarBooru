@@ -53,7 +53,26 @@ nav-explore = Esplora
 nav-tags = Tag
 nav-upload = Carica
 nav-settings = Impostazioni
-search-placeholder = Cerca tag, ad es. blue_sky -cloud rating:g
+nav-settings-tab = Opzioni
+search-placeholder = Cerca tag, ad es. ishtar_(fate) rating:g
+demo-tag = Post con questo tag
+demo-tag-all = Post con tutti i tag elencati
+demo-tag-not = Il meno esclude un tag
+demo-figure = Una persona li ha tutti
+demo-rating = Solo questa classificazione
+demo-rating-any = Una di queste classificazioni
+demo-rating-not = Tutto tranne l'esplicito
+demo-type = Solo video
+demo-date = Di marzo 2024
+demo-date-range = Dal 2023 alla fine del 2024
+demo-date-age = Di meno di 7 giorni fa
+demo-size = Larghi più di 1920 pixel
+demo-ratio = Larghezza su altezza 16:9
+demo-color = Ha questo colore
+demo-text = Questa parola è scritta nell'immagine
+demo-order-score = Prima il punteggio più alto
+demo-order-random = Un ordine nuovo ogni volta
+demo-combined = Tutto insieme
 search-label = Cerca tag
 
 ## Sign-in
@@ -997,7 +1016,7 @@ download-no-folder = nessuna cartella Download trovata
 ## Hand (tablet rail, viewer panel and tools)
 
 settings-hand = Mano
-settings-hand-hint = Mette la navigazione laterale sui tablet, e il pannello e gli strumenti di zoom del visualizzatore, dal lato della mano che usi.
+settings-hand-hint = Mette la navigazione laterale su tablet e portatili, e il pannello e gli strumenti di zoom del visualizzatore, dal lato della mano che usi.
 hand-either = Entrambe
 hand-left = Sinistra
 hand-right = Destra

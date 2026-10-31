@@ -156,4 +156,13 @@ mod tests {
         let css = include_str!("../assets/main.css");
         assert!(css.contains("html { -webkit-tap-highlight-color: transparent; }"));
     }
+
+    #[test]
+    fn the_glass_blurs_in_a_release_build() {
+        // Regression: with both spellings, the minifier in `dx bundle` kept only
+        // `-webkit-backdrop-filter`, and Chromium showed no blur.
+        let css = include_str!("../assets/main.css");
+        assert!(css.contains("  backdrop-filter: blur("));
+        assert!(!css.contains("-webkit-backdrop-filter"));
+    }
 }

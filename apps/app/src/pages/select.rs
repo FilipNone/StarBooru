@@ -172,7 +172,7 @@ if (!b || !l) return;
 const gap = 6, edge = 8, r = b.getBoundingClientRect();
 let floor = innerHeight - edge, ceil = edge;
 const nav = document.querySelector(".nav-bottom"), bar = document.querySelector(".topbar");
-if (nav) { const n = nav.getBoundingClientRect(); if (n.height && n.top >= r.bottom) floor = Math.min(floor, n.top - edge); }
+if (nav) { const n = nav.getBoundingClientRect(); if (n.width > n.height && n.top >= r.bottom) floor = Math.min(floor, n.top - edge); }
 if (bar) { const t = bar.getBoundingClientRect(); if (t.height && t.bottom <= r.top) ceil = Math.max(ceil, t.bottom + edge); }
 l.style.minWidth = r.width + "px";
 l.style.maxHeight = "none";
