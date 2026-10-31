@@ -9,6 +9,7 @@ mod cache;
 mod download;
 mod icons;
 mod layout;
+mod motion;
 mod oidc;
 mod pages;
 mod power;

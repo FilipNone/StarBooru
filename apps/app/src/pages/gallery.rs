@@ -17,6 +17,7 @@ use crate::Route;
 use crate::cache;
 use crate::icons::{Ico, Icon};
 use crate::layout::{self, Place, TILE_GAP};
+use crate::motion;
 use crate::power;
 use crate::store::{self, GalleryView, PREFS, Spot};
 use crate::util::{escape_attr, format_duration, rating_label, split_tag_edit};
@@ -177,8 +178,10 @@ const go = tries => {
     ? document.querySelector(`.masonry [data-post="${post}"]`)?.closest(".thumb")
     : null;
   if (tile) scrollBy({ top: tile.getBoundingClientRect().top - offset, behavior: "instant" });
-  else if (y >= 1 && tries > 0) requestAnimationFrame(() => go(tries - 1));
+  else if (y >= 1 && tries > 0) return requestAnimationFrame(() => go(tries - 1));
   else scrollTo({ top: y, behavior: "instant" });
+  // Only now do the tiles stand where a picture coming back can land (motion.rs).
+  window.__sbHero?.back();
 };
 go(5);
 "#;
@@ -208,10 +211,12 @@ fn sort_label(order: &str) -> String {
 
 #[component]
 pub fn Gallery(q: String) -> Element {
-    let mut posts = use_signal(Vec::<Post>::new);
+    // A list kept from earlier is there from the first frame, so that coming
+    // back never flashes an empty page. `restart` takes over right after.
+    let mut posts = use_signal(|| cached_list(&q).map(|l| l.posts).unwrap_or_default());
     let mut next_page = use_signal(|| 1u32);
-    let mut has_more = use_signal(|| true);
-    let mut loading = use_signal(|| false);
+    let mut has_more = use_signal(|| cached_list(&q).is_none_or(|l| l.has_more));
+    let mut loading = use_signal(|| posts.peek().is_empty());
     let mut error = use_signal(|| None::<String>);
     // Bumped on every new search so late responses for an old query are dropped.
     let mut generation = use_signal(|| 0u64);
@@ -220,7 +225,7 @@ pub fn Gallery(q: String) -> Element {
     let mut corrected = use_signal(Vec::<TagCorrection>::new);
 
     // Tiles below this index appeared with the list, and don't animate in.
-    let mut settled = use_signal(|| 0usize);
+    let mut settled = use_signal(|| posts.peek().len());
     let mut loaded_at = use_signal(Utc::now);
     // Bumped to put the page back at the remembered spot.
     let mut jump = use_signal(|| 0u64);
@@ -429,6 +434,8 @@ pub fn Gallery(q: String) -> Element {
         if let Some(spot) = store::spot(&query.peek()) {
             let eval = document::eval(JUMP_TO_SPOT);
             let _ = eval.send((spot.post, spot.offset, spot.y));
+        } else {
+            motion::back();
         }
     });
 
@@ -522,9 +529,13 @@ pub fn Gallery(q: String) -> Element {
         columns,
     );
     // A new layout moves everything, so the same tile goes back to the top.
+    let mut laid_out = use_signal(|| (columns, view, gap, width));
     use_effect(use_reactive!(|columns, view, gap, width| {
-        let _ = (columns, view, gap, width);
-        jump += 1;
+        let now = (columns, view, gap, width);
+        if *laid_out.peek() != now {
+            laid_out.set(now);
+            jump += 1;
+        }
     }));
 
     rsx! {
@@ -1185,15 +1196,8 @@ pub(super) fn Thumb(
         *OPENING.write() = Some(post.clone());
         let nav = navigator();
         let q = q.clone();
-        if !HERO_TRANSITION {
-            nav.push(Route::PostView { id, q });
-            return;
-        }
         spawn(async move {
-            let mut hero = document::eval(HERO_START);
-            let _ = hero.send(id);
-            // Navigates once the old page is captured, or at once without a transition.
-            let _ = hero.recv::<bool>().await;
+            motion::open(id).await;
             nav.push(Route::PostView { id, q });
         });
     };
@@ -1266,45 +1270,9 @@ pub(super) fn Thumb(
     }
 }
 
-/// Whether the webview can run the hero transition. WebKitGTK (the Linux
-/// desktop webview) aborts its web process inside `startViewTransition`,
-/// so there the viewer opens without it.
-const HERO_TRANSITION: bool = !cfg!(all(feature = "desktop", target_os = "linux"));
-
-/// Grows the clicked thumbnail into the viewer's image with a view
-/// transition, where the browser has them and motion isn't reduced. Sends
-/// `true` once the current page is captured (the page change must follow),
-/// or `false` at once when there is no transition.
-const HERO_START: &str = r#"
-const id = await dioxus.recv();
-const img = document.querySelector(`[data-post="${id}"] img`);
-if (!document.startViewTransition || !img || matchMedia("(prefers-reduced-motion: reduce)").matches) {
-  dioxus.send(false);
-  return;
-}
-const root = document.documentElement;
-img.style.viewTransitionName = "sb-hero";
-const t = document.startViewTransition(() => {
-  img.style.viewTransitionName = "";
-  root.classList.add("sb-hero");
-  dioxus.send(true);
-  // The viewer ends it when its image is in place; never wait long.
-  return new Promise((done) => { window.__sbHeroDone = done; setTimeout(done, 700); });
-});
-const end = () => { root.classList.remove("sb-hero"); window.__sbHeroDone = null; };
-t.finished.then(end, end);
-"#;
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn no_hero_transition_in_webkitgtk() {
-        // Regression: clicking a thumbnail crashed the Linux desktop app.
-        let linux_desktop = cfg!(all(feature = "desktop", target_os = "linux"));
-        assert_eq!(HERO_TRANSITION, !linux_desktop);
-    }
 
     fn post(id: i64) -> Post {
         serde_json::from_value(serde_json::json!({

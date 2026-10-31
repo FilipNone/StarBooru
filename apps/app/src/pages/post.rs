@@ -19,6 +19,7 @@ use crate::cache;
 use crate::download::DownloadLink;
 use crate::i18n::LANG;
 use crate::icons::{Ico, Icon};
+use crate::motion;
 use crate::power;
 use crate::store;
 use crate::util::{format_duration, human_size, rating_label};
@@ -64,10 +65,6 @@ fn browser_fullscreen(on: bool) {
 /// The post a gallery thumbnail is opening, so the viewer can show it
 /// before the server answers.
 pub static OPENING: GlobalSignal<Option<Post>> = Signal::global(|| None);
-
-/// Ends the view transition a gallery thumbnail started, once the viewer's
-/// image is in place.
-const HERO_DONE: &str = "window.__sbHeroDone?.()";
 
 #[component]
 pub fn PostView(id: i64, q: String) -> Element {
@@ -241,6 +238,7 @@ pub fn PostView(id: i64, q: String) -> Element {
     use_drop(|| {
         document::eval(KEY_LISTENER_OFF);
         browser_fullscreen(false);
+        motion::leave();
     });
 
     // Runs one mutation, then shows the post the server returns.
@@ -998,6 +996,7 @@ fn css_url(url: &str) -> String {
 /// box stands in for it.
 #[component]
 fn StageImage(
+    id: i64,
     src: String,
     thumb: Option<String>,
     alt: String,
@@ -1022,7 +1021,7 @@ fn StageImage(
             style,
             onload: move |_| loaded.set(true),
             onmounted: move |_| {
-                document::eval(HERO_DONE);
+                motion::arrive(id);
                 // A cached image can finish before the listener exists.
                 spawn(async move {
                     let complete = document::eval(
@@ -1304,11 +1303,11 @@ fn Stage(
             match kind {
                 MediaKind::Video => rsx! {
                     video { key: "{id}", class: enter, src: "{src}", controls: true, autoplay: !power::active(), r#loop: true, playsinline: true,
-                        onmounted: move |_| { document::eval(HERO_DONE); },
+                        onmounted: move |_| motion::arrive(id),
                     }
                 },
                 _ => rsx! {
-                    StageImage { key: "{id}", src, thumb, alt, size, transform: z.css(), enter }
+                    StageImage { key: "{id}", id, src, thumb, alt, size, transform: z.css(), enter }
                     if let Some(size) = size.filter(|_| kind == MediaKind::Image) {
                         PanelOverlay { key: "{id}", id, size, transform: z.css() }
                     }
