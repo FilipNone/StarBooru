@@ -231,6 +231,7 @@ const onscroll = () => {
 };
 addEventListener("scroll", onscroll, { passive: true });
 window.__sbSpot = {
+  report,
   stop() {
     clearTimeout(timer);
     removeEventListener("scroll", onscroll);
