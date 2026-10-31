@@ -25,6 +25,7 @@ tracing = "0.1"
 # dioxus-desktop moves past tao 0.34. See vendor/tao/STARBOORU.md.
 [patch.crates-io]
 tao = { path = "vendor/tao" }
+wry = { path = "vendor/wry" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

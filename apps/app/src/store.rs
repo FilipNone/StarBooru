@@ -3,7 +3,7 @@
 //! Web: `localStorage`. Desktop: `state.json` in the platform config dir.
 //! Android: `state.json` in the app's private files dir.
 
-use std::cell::RefCell;
+use std::sync::{Mutex, PoisonError};
 
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -364,36 +364,29 @@ pub fn last_search() -> String {
         .unwrap_or_default()
 }
 
-thread_local! {
-    // Reuse one HTTP client (and its connection pool) per session.
-    #[cfg_attr(
-        target_os = "android",
-        allow(clippy::missing_const_for_thread_local, reason = "false positive: it is const")
-    )]
-    static CLIENT: RefCell<Option<(String, String, Client)>> = const { RefCell::new(None) };
-}
+// Reuse one HTTP client (and its connection pool) per session, on any thread.
+static CLIENT: Mutex<Option<(String, String, Client)>> = Mutex::new(None);
 
 /// API client for the signed-in session, if any.
 pub fn client() -> Option<Client> {
     let session = SESSION.peek();
     let session = session.as_ref()?;
-    CLIENT.with_borrow_mut(|cache| {
-        if let Some((server, token, client)) = cache.as_ref()
-            && *server == session.server
-            && *token == session.token
-        {
-            return Some(client.clone());
-        }
-        let client = Client::new(&session.server)
-            .ok()?
-            .with_token(Some(session.token.clone()));
-        *cache = Some((
-            session.server.clone(),
-            session.token.clone(),
-            client.clone(),
-        ));
-        Some(client)
-    })
+    let mut cache = CLIENT.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some((server, token, client)) = cache.as_ref()
+        && *server == session.server
+        && *token == session.token
+    {
+        return Some(client.clone());
+    }
+    let client = Client::new(&session.server)
+        .ok()?
+        .with_token(Some(session.token.clone()));
+    *cache = Some((
+        session.server.clone(),
+        session.token.clone(),
+        client.clone(),
+    ));
+    Some(client)
 }
 
 pub fn sign_in(server: String, auth: AuthResponse) {

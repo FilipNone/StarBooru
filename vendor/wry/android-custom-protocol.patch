@@ -1,0 +1,102 @@
+--- a/src/android/mod.rs
++++ b/src/android/mod.rs
+@@ -25,7 +25,10 @@
+   borrow::Cow,
+   collections::HashMap,
+   os::fd::{AsFd as _, AsRawFd as _},
+-  sync::{mpsc::channel, Mutex},
++  sync::{
++    mpsc::{channel, Receiver},
++    Mutex,
++  },
+   time::Duration,
+ };
+ 
+@@ -37,6 +40,8 @@
+ 
+ static COUNTER: Counter = Counter::new();
+ const MAIN_PIPE_TIMEOUT: Duration = Duration::from_secs(10);
++/// How long a custom protocol request can wait for its response. Nothing else waits on it.
++pub(crate) const CUSTOM_PROTOCOL_TIMEOUT: Duration = Duration::from_secs(300);
+ 
+ pub struct Context<'a, 'b> {
+   pub env: &'a mut JNIEnv<'b>,
+@@ -77,7 +82,7 @@
+ 
+ define_static_handlers! {
+   IPC =  UnsafeIpc { handler: Box<dyn Fn(Request<String>)> };
+-  REQUEST_HANDLER = UnsafeRequestHandler { handler:  Box<dyn Fn(&str, Request<Vec<u8>>, bool) -> Option<HttpResponse<Cow<'static, [u8]>>>> };
++  REQUEST_HANDLER = UnsafeRequestHandler { handler:  Box<dyn Fn(&str, Request<Vec<u8>>, bool) -> Option<Receiver<HttpResponse<Cow<'static, [u8]>>>>> };
+   TITLE_CHANGE_HANDLER = UnsafeTitleHandler { handler: Box<dyn Fn(String)> };
+   URL_LOADING_OVERRIDE = UnsafeUrlLoadingOverride { handler: Box<dyn Fn(String) -> bool> };
+   ON_LOAD_HANDLER = UnsafeOnPageLoadHandler { handler: Box<dyn Fn(PageLoadEvent, String)> };
+@@ -288,11 +293,12 @@
+                   }
+                 }
+ 
+-                tx.send(response).unwrap();
++                // The request may have stopped waiting.
++                let _ = tx.send(response);
+               });
+ 
+             (custom_protocol_closure)(webview_id, request, RequestAsyncResponder { responder });
+-            return Some(rx.recv_timeout(MAIN_PIPE_TIMEOUT).unwrap());
++            return Some(rx);
+           }
+           None
+         },
+--- a/src/android/binding.rs
++++ b/src/android/binding.rs
+@@ -16,8 +16,8 @@
+ pub use ndk;
+ 
+ use super::{
+-  ASSET_LOADER_DOMAIN, EVAL_CALLBACKS, IPC, ON_LOAD_HANDLER, REQUEST_HANDLER, TITLE_CHANGE_HANDLER,
+-  URL_LOADING_OVERRIDE, WITH_ASSET_LOADER,
++  ASSET_LOADER_DOMAIN, CUSTOM_PROTOCOL_TIMEOUT, EVAL_CALLBACKS, IPC, ON_LOAD_HANDLER,
++  REQUEST_HANDLER, TITLE_CHANGE_HANDLER, URL_LOADING_OVERRIDE, WITH_ASSET_LOADER,
+ };
+ 
+ use crate::PageLoadEvent;
+@@ -106,7 +106,10 @@
+   request: JObject,
+   is_document_start_script_enabled: jboolean,
+ ) -> JniResult<jobject> {
+-  if let Some(handler) = REQUEST_HANDLER.lock().unwrap().as_ref() {
++  // The handler runs under the lock, as the code behind it isn't thread safe, but
++  // the wait for its response doesn't: a slow response would hold up every other
++  // request, and with them the page's events.
++  let pending = if let Some(handler) = REQUEST_HANDLER.lock().unwrap().as_ref() {
+     #[cfg(feature = "tracing")]
+     let span =
+       tracing::info_span!(parent: None, "wry::custom_protocol::handle", uri = tracing::field::Empty).entered();
+@@ -169,15 +172,20 @@
+     let webview_id = env.get_string(&webview_id)?;
+     let webview_id = webview_id.to_str().ok().unwrap_or_default();
+ 
+-    let response = {
+-      #[cfg(feature = "tracing")]
+-      let _span = tracing::info_span!("wry::custom_protocol::call_handler").entered();
+-      (handler.handler)(
+-        webview_id,
+-        final_request,
+-        is_document_start_script_enabled != 0,
+-      )
+-    };
++    #[cfg(feature = "tracing")]
++    let _span = tracing::info_span!("wry::custom_protocol::call_handler").entered();
++    (handler.handler)(
++      webview_id,
++      final_request,
++      is_document_start_script_enabled != 0,
++    )
++  } else {
++    None
++  };
++
++  // No response in time means a failed request, not a crash.
++  let response = pending.and_then(|rx| rx.recv_timeout(CUSTOM_PROTOCOL_TIMEOUT).ok());
++  {
+     if let Some(response) = response {
+       let status = response.status();
+       let status_code = status.as_u16() as i32;

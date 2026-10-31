@@ -9,7 +9,8 @@ Third-party assets bundled with StarBooru.
 | `apps/app/src/icons.rs` (SVG path data: `Edit`) | Solar Bold | 480 Design | https://www.figma.com/community/file/1166831539721848736 | CC BY 4.0 |
 | `apps/app/src/icons.rs` (`Upload`, redrawn in MingCute's style) | Layout from Fluent UI System Icons | Microsoft | https://github.com/microsoft/fluentui-system-icons | MIT |
 | `apps/app/src/icons.rs` (`Translate`, redrawn with thicker strokes) | Letterforms from Material Symbols Rounded | Google | https://github.com/google/material-design-icons | Apache-2.0 |
-| `vendor/tao` (Rust source, patched) | tao 0.34.8 with tao#1218 | Tauri Programme within The Commons Conservancy, the winit contributors | https://github.com/tauri-apps/tao | Apache-2.0 OR MIT |
+| `vendor/tao` (Rust source, patched) | tao 0.34.8 with tao#1218, and `_exit` on Android | Tauri Programme within The Commons Conservancy, the winit contributors | https://github.com/tauri-apps/tao | Apache-2.0 OR MIT |
+| `vendor/wry` (Rust source, patched) | wry 0.53.5, with custom protocol requests on Android that no longer wait under a lock or abort on a timeout, and a back key that asks the page | Tauri Programme within The Commons Conservancy | https://github.com/tauri-apps/wry | Apache-2.0 OR MIT |
 
 Not bundled: downloaded from Hugging Face by each server when its admin installs them, each pinned to a commit in `crates/core/src/ai_files.rs`.
 

@@ -130,7 +130,7 @@ mod native {
     use std::path::{Path, PathBuf};
     use std::sync::OnceLock;
     use std::sync::atomic::{AtomicU64, Ordering};
-    use std::time::SystemTime;
+    use std::time::{Duration, SystemTime};
 
     #[cfg(feature = "desktop")]
     use dioxus::desktop::{
@@ -143,6 +143,8 @@ mod native {
         wry::http::{HeaderValue, Response, StatusCode, header},
     };
     use dioxus::prelude::*;
+
+    use starbooru_client::Client;
 
     use super::{Entry, Key, MAX_FILE_BYTES, PREFIX, parse_key, to_evict};
     use crate::store::{self, PREFS};
@@ -176,45 +178,89 @@ mod native {
 
     /// Answers `/sbcache/…` for the page. Call once, from the root component.
     pub fn register() {
+        #[cfg(target_os = "android")]
+        let runtime = use_hook(|| tokio::runtime::Handle::try_current().ok());
         use_asset_handler(PREFIX, move |request, responder| {
             let path = request.uri().path().to_owned();
             let query = request.uri().query().unwrap_or_default().to_owned();
-            spawn(async move { answer(&path, &query, responder).await });
+            // The page's state, which a task off the page can't reach.
+            let (client, limit) = (store::client(), limit());
+            let work = respond(path, query, client, limit, responder);
+            // The page's own tasks only run once it has caught up, which it can't
+            // while it waits on a slow answer. So on Android, where the WebView
+            // waits for answers on threads of its own, they don't depend on it.
+            // Elsewhere the answer has to come from the thread of the webview.
+            #[cfg(target_os = "android")]
+            if let Some(runtime) = &runtime {
+                runtime.spawn(work);
+                return;
+            }
+            spawn(work);
         });
         // Trim once at start, in case the limit was lowered.
         use_hook(|| {
-            spawn(async {
+            let limit = limit();
+            spawn(async move {
                 forget_old_thumbs().await;
-                trim().await;
+                trim(limit).await;
             });
         });
     }
 
-    async fn answer(path: &str, query: &str, responder: RequestAsyncResponder) {
+    async fn respond(
+        path: String,
+        query: String,
+        client: Option<Client>,
+        limit: u64,
+        responder: RequestAsyncResponder,
+    ) {
+        responder.respond(answer(&path, &query, client, limit).await);
+    }
+
+    /// How long a download can take before the page is told it failed. Each one
+    /// holds up a thread the WebView waits on, and there are many thumbnails on a
+    /// screen, so one that isn't coming shouldn't keep it for long. Still well
+    /// over what a slow connection needs, as a thumbnail given up on stays blank.
+    fn patience(variant: &str) -> Duration {
+        Duration::from_secs(match variant {
+            "thumb" => 60,
+            "sample" => 120,
+            _ => 240,
+        })
+    }
+
+    pub(super) async fn answer(
+        path: &str,
+        query: &str,
+        client: Option<Client>,
+        limit: u64,
+    ) -> Response<Vec<u8>> {
         let key = path
             .trim_start_matches('/')
             .strip_prefix(PREFIX)
             .and_then(|p| parse_key(p.trim_start_matches('/')));
         let (Some(key), Some(root)) = (key, dir()) else {
-            return responder.respond(status(StatusCode::NOT_FOUND));
+            return status(StatusCode::NOT_FOUND);
         };
         let file = root.join(key.variant).join(key.file);
         if let Ok(bytes) = tokio::fs::read(&file).await {
             touch(file);
-            return responder.respond(found(&key, bytes));
+            return found(&key, bytes);
         }
-        let Some(client) = store::client() else {
-            return responder.respond(status(StatusCode::UNAUTHORIZED));
+        let Some(client) = client else {
+            return status(StatusCode::UNAUTHORIZED);
         };
         let media = format!("/media/{}/{}?{query}", key.variant, key.file);
-        match client.media_bytes(&media, MAX_FILE_BYTES).await {
-            Ok(bytes) => {
-                if limit() > 0 {
-                    keep(file, bytes.clone());
+        let download = client.media_bytes(&media, MAX_FILE_BYTES);
+        match tokio::time::timeout(patience(key.variant), download).await {
+            Ok(Ok(bytes)) => {
+                if limit > 0 {
+                    keep(file, bytes.clone(), limit);
                 }
-                responder.respond(found(&key, bytes));
+                found(&key, bytes)
             }
-            Err(_) => responder.respond(status(StatusCode::BAD_GATEWAY)),
+            Ok(Err(_)) => status(StatusCode::BAD_GATEWAY),
+            Err(_) => status(StatusCode::GATEWAY_TIMEOUT),
         }
     }
 
@@ -248,9 +294,9 @@ mod native {
 
     /// Writes a downloaded file (whole, through a temporary name) and trims
     /// once enough has been written since the last trim.
-    fn keep(file: PathBuf, bytes: Vec<u8>) {
+    fn keep(file: PathBuf, bytes: Vec<u8>, limit: u64) {
         let len = bytes.len() as u64;
-        spawn(async move {
+        tokio::spawn(async move {
             let n = TMP.fetch_add(1, Ordering::Relaxed);
             let tmp = file.with_extension(format!("{n}.part"));
             let written = match file.parent() {
@@ -274,9 +320,9 @@ mod native {
             let since = WRITTEN
                 .fetch_add(len, Ordering::Relaxed)
                 .saturating_add(len);
-            if since > limit() / 20 {
+            if since > limit / 20 {
                 WRITTEN.store(0, Ordering::Relaxed);
-                trim().await;
+                trim(limit).await;
             }
         });
     }
@@ -331,8 +377,8 @@ mod native {
         let _ = tokio::task::spawn_blocking(move || forget_thumbs_before(root, THUMBS)).await;
     }
 
-    async fn trim() {
-        let (Some(root), limit) = (dir(), limit()) else {
+    async fn trim(limit: u64) {
+        let Some(root) = dir() else {
             return;
         };
         let _ = tokio::task::spawn_blocking(move || {
@@ -400,6 +446,18 @@ mod tests {
         native::forget_thumbs_before(&root, "3");
         assert!(!file("thumb").exists());
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    // On Android answers run off the page, so they must need nothing of it: no
+    // Dioxus runtime is running here, and reading the prefs without one panics.
+    #[cfg(any(feature = "desktop", feature = "mobile"))]
+    #[tokio::test]
+    async fn an_answer_needs_nothing_of_the_page() {
+        let path = format!("/{PREFIX}/thumb/{SHA}.jpg");
+        let answer = native::answer(&path, "", None, 1 << 20).await;
+        assert_eq!(answer.status(), 401);
+        let answer = native::answer("/sbcache/nothing", "", None, 0).await;
+        assert_eq!(answer.status(), 404);
     }
 
     const SHA: &str = "e04fd6110d750482f0a5cdbcba6ee9113004e1abc9a976a45cc9c1df5b9d4baf";
