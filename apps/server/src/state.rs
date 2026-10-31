@@ -7,7 +7,7 @@ use tracing::warn;
 
 use crate::backup::Backups;
 use crate::config::Config;
-use crate::fetch::Fetcher;
+use crate::fetch::{Fetcher, Reach};
 use crate::local_ai::LocalAi;
 use crate::media::Signer;
 use crate::ocr::Ocr;
@@ -26,6 +26,9 @@ pub struct Inner {
     pub signer: Signer,
     /// URL import; `None` when it is off or the HTTP client failed to start.
     pub fetcher: Option<Fetcher>,
+    /// Reaches private addresses too, for what an administrator asks: a site to
+    /// import a library from is usually on the same network. Off with `fetcher`.
+    pub trusted_fetcher: Option<Fetcher>,
     /// Sign-in and sign-up limits.
     pub guards: Guards,
     pub backups: Backups,
@@ -35,6 +38,8 @@ pub struct Inner {
     pub ocr: Option<Ocr>,
     /// Woken when background imports are queued.
     pub imports: tokio::sync::Notify,
+    /// Woken when a library import is queued.
+    pub library_imports: tokio::sync::Notify,
     /// The built-in AI models and the process that runs them.
     pub local_ai: LocalAi,
     pub started_at: DateTime<Utc>,
@@ -60,6 +65,7 @@ impl AppState {
                     None
                 }
             });
+        let trusted_fetcher = fetcher.as_ref().and_then(|_| Fetcher::new(Reach::Any).ok());
         let ocr = config.ocr.clone().filter(Ocr::available);
         let local_ai = LocalAi::new(config.ai.worker.clone(), &config.data_dir);
         Self(Arc::new(Inner {
@@ -68,11 +74,13 @@ impl AppState {
             storage,
             signer,
             fetcher,
+            trusted_fetcher,
             guards: Guards::default(),
             backups,
             oidc,
             ocr,
             imports: tokio::sync::Notify::new(),
+            library_imports: tokio::sync::Notify::new(),
             local_ai,
             started_at: Utc::now(),
         }))

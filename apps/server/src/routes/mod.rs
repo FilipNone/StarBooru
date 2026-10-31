@@ -11,6 +11,7 @@ mod explore;
 mod figures;
 mod imports;
 mod keys;
+mod library;
 mod oidc;
 mod posts;
 mod remote;
@@ -21,6 +22,7 @@ mod trash;
 
 pub use autotag::backfill_meta_tags;
 pub use imports::run_imports;
+pub use library::run_library_imports;
 pub use posts::{
     backfill_colors, backfill_file_dates, backfill_hashes, backfill_media, backfill_samples,
     backfill_thumbs,
@@ -131,6 +133,15 @@ pub fn router(state: AppState) -> Router {
                 .delete(imports::clear),
         )
         .route("/imports/{id}", axum::routing::delete(imports::delete))
+        .route("/library-imports", get(library::list).post(library::create))
+        .route("/library-imports/check", post(library::check))
+        .route(
+            "/library-imports/{id}",
+            axum::routing::delete(library::delete),
+        )
+        .route("/library-imports/{id}/stop", post(library::stop))
+        .route("/library-imports/{id}/retry", post(library::retry))
+        .route("/library-imports/{id}/failures", get(library::failures))
         .route("/remote/search", post(remote::search))
         .route("/posts/bulk", post(posts::bulk))
         .route("/posts/{id}/neighbors", get(posts::neighbors))

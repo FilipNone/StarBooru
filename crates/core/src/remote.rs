@@ -182,24 +182,33 @@ pub enum RemoteError {
     TooLong,
 }
 
+/// A site's address without a trailing slash, when it is http or https and
+/// has neither credentials nor a query.
+pub fn clean_base(raw: &str) -> Result<String, RemoteError> {
+    let base = raw.trim().trim_end_matches('/');
+    let rest = base
+        .strip_prefix("https://")
+        .or_else(|| base.strip_prefix("http://"))
+        .ok_or(RemoteError::BadBase)?;
+    let host = rest.split('/').next().unwrap_or_default();
+    if host.is_empty()
+        || host.contains('@')
+        || rest.contains(['?', '#'])
+        || rest.chars().any(|c| c.is_whitespace() || c.is_control())
+    {
+        return Err(RemoteError::BadBase);
+    }
+    if base.len() > MAX_REMOTE_FIELD {
+        return Err(RemoteError::TooLong);
+    }
+    Ok(base.to_owned())
+}
+
 impl RemoteSearch {
     /// Checks the request and trims it: the address without a trailing
     /// slash, and empty credentials as none.
     pub fn clean(mut self) -> Result<RemoteSearch, RemoteError> {
-        let base = self.base.trim().trim_end_matches('/');
-        let rest = base
-            .strip_prefix("https://")
-            .or_else(|| base.strip_prefix("http://"))
-            .ok_or(RemoteError::BadBase)?;
-        let host = rest.split('/').next().unwrap_or_default();
-        if host.is_empty()
-            || host.contains('@')
-            || rest.contains(['?', '#'])
-            || rest.chars().any(|c| c.is_whitespace() || c.is_control())
-        {
-            return Err(RemoteError::BadBase);
-        }
-        self.base = base.to_owned();
+        self.base = clean_base(&self.base)?;
         if !(1..=MAX_REMOTE_PAGE).contains(&self.page) {
             return Err(RemoteError::BadPage);
         }
@@ -207,12 +216,7 @@ impl RemoteSearch {
         let filled = |s: Option<String>| s.map(|s| s.trim().to_owned()).filter(|s| !s.is_empty());
         self.login = filled(self.login);
         self.api_key = filled(self.api_key);
-        let fields = [
-            Some(&self.base),
-            Some(&self.tags),
-            self.login.as_ref(),
-            self.api_key.as_ref(),
-        ];
+        let fields = [Some(&self.tags), self.login.as_ref(), self.api_key.as_ref()];
         if fields
             .into_iter()
             .flatten()

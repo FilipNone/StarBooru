@@ -19,6 +19,7 @@ mod remote;
 mod routes;
 mod settings;
 mod similar;
+mod sources;
 mod state;
 mod storage;
 #[cfg(test)]
@@ -80,6 +81,7 @@ async fn run() -> Result<(), StartupError> {
     tokio::spawn(routes::auto_purge(state.clone()));
     tokio::spawn(backup::auto_backup(state.clone()));
     tokio::spawn(routes::run_imports(state.clone()));
+    tokio::spawn(routes::run_library_imports(state.clone()));
     tokio::spawn(local_ai::run(state.clone()));
     let backfill = state.clone();
     tokio::spawn(async move {

@@ -15,6 +15,7 @@ use starbooru_core::{
 
 use crate::auth::AuthUser;
 use crate::error::{AppError, AppResult};
+use crate::sources::Rule;
 use crate::state::AppState;
 
 const MAX_TAG_LIMIT: u32 = 100;
@@ -749,6 +750,108 @@ async fn alias_into(
     .execute(&mut **tx)
     .await?;
     Ok(())
+}
+
+/// Adds a page of another site's rules. Nothing here is overruled: a name that
+/// is already a tag or an alias stays what it is, a tag keeps its parent, and a
+/// rule that would loop or that names something invalid is left out. Returns how
+/// many were added.
+pub(super) async fn import_rules(state: &AppState, rules: &[Rule]) -> AppResult<u64> {
+    let mut tx = state.db.begin().await?;
+    lock_tag_graph(&mut tx).await?;
+    let mut added = 0;
+    for rule in rules {
+        let new = match rule {
+            Rule::Alias { tag, alias } => import_alias(&mut tx, tag, alias).await?,
+            Rule::Implies { tag, implied } => import_implication(&mut tx, tag, implied).await?,
+            Rule::Parent { tag, parent } => import_parent(&mut tx, tag, parent).await?,
+        };
+        added += u64::from(new);
+    }
+    tx.commit().await?;
+    Ok(added)
+}
+
+async fn import_alias(
+    tx: &mut Transaction<'_, Postgres>,
+    tag: &str,
+    alias: &str,
+) -> AppResult<bool> {
+    let (Ok(_), Ok(alias)) = (normalize_tag(tag), normalize_tag(alias)) else {
+        return Ok(false);
+    };
+    let alias = split_category(&alias).1;
+    let target = find_or_create(tx, tag).await?;
+    let taken: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM tags WHERE name = $1) \
+             OR EXISTS (SELECT 1 FROM tag_aliases WHERE alias = $1)",
+    )
+    .bind(alias)
+    .fetch_one(&mut **tx)
+    .await?;
+    if taken {
+        return Ok(false);
+    }
+    let inserted = sqlx::query(
+        "INSERT INTO tag_aliases (alias, tag_id) VALUES ($1, $2) ON CONFLICT (alias) DO NOTHING",
+    )
+    .bind(alias)
+    .bind(target.0)
+    .execute(&mut **tx)
+    .await?
+    .rows_affected();
+    Ok(inserted > 0)
+}
+
+async fn import_implication(
+    tx: &mut Transaction<'_, Postgres>,
+    tag: &str,
+    implied: &str,
+) -> AppResult<bool> {
+    if normalize_tag(tag).is_err() || normalize_tag(implied).is_err() {
+        return Ok(false);
+    }
+    let tag = find_or_create(tx, tag).await?;
+    let implied = find_or_create(tx, implied).await?;
+    if tag.0 == implied.0 || closure(tx, implied.0).await?.contains(&tag.0) {
+        return Ok(false);
+    }
+    let inserted = sqlx::query(
+        "INSERT INTO tag_implications (tag_id, implied_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+    )
+    .bind(tag.0)
+    .bind(implied.0)
+    .execute(&mut **tx)
+    .await?
+    .rows_affected();
+    if inserted > 0 {
+        apply_implications(tx, tag.0).await?;
+    }
+    Ok(inserted > 0)
+}
+
+async fn import_parent(
+    tx: &mut Transaction<'_, Postgres>,
+    tag: &str,
+    parent: &str,
+) -> AppResult<bool> {
+    if normalize_tag(tag).is_err() || normalize_tag(parent).is_err() {
+        return Ok(false);
+    }
+    let tag = find_or_create(tx, tag).await?;
+    let parent = find_or_create(tx, parent).await?;
+    let current: Option<i64> = sqlx::query_scalar("SELECT parent_id FROM tags WHERE id = $1")
+        .bind(tag.0)
+        .fetch_one(&mut **tx)
+        .await?;
+    if current.is_some() {
+        return Ok(false);
+    }
+    match set_parent(tx, &tag, Some(&parent)).await {
+        Ok(()) => Ok(true),
+        Err(AppError::Conflict { .. }) => Ok(false),
+        Err(e) => Err(e),
+    }
 }
 
 /// `DELETE /tags/{name}/aliases/{alias}` (admin).

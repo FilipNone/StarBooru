@@ -34,6 +34,8 @@ The server writes `pg_dump` archives (custom format) of the database to `STARBOO
 
 Admins download and delete backups on the same page and change the schedule there. Archives hold every account's password hash, so only admins signed in to the app can reach them (API keys can't).
 
+A backup taken while a library import is waiting or running also holds the key to the other site, as it's kept until the import ends.
+
 A backup holds the database only. The media files are immutable and named by their hash, so copying the data folder (or the `media` volume) is all they need.
 
 The image ships the PostgreSQL 17 client. `pg_dump` must be at least as new as the database server, so update the image too if you move the `db` service to a newer PostgreSQL. Elsewhere, install the client or point `STARBOORU_PG_DUMP` at it.
@@ -89,7 +91,7 @@ Admins can change the name, open registration, the recycle-bin days and the back
 | `STARBOORU_FFPROBE` | `ffprobe` | ffprobe, for video size and length |
 | `STARBOORU_OCR` | `true` | Read text in still images with tesseract (installed in the image), for `text:` search and the viewer's *Text in image*. Runs on the server only; no image leaves it. `off` turns it off; a path picks another tesseract. Without tesseract it is quietly off (logged once at start). Older posts are read in the background at each start. |
 | `STARBOORU_OCR_LANGS` | `eng` (`eng+jpn+jpn_vert` in `docker-compose.yml`) | tesseract languages, joined with `+`, e.g. `eng+ita`. The image has English and Japanese (`jpn` across, `jpn_vert` down, for manga); fewer languages read faster. For another language add its package (`tesseract-ocr-ita`) in the `Dockerfile` first. |
-| `STARBOORU_URL_IMPORT` | `on` | Import from URL: `on` (public addresses only), `private` (also private-network addresses, e.g. a NAS; anyone with an account can then make the server fetch from your LAN), `off` |
+| `STARBOORU_URL_IMPORT` | `on` | Import from URL: `on` (public addresses only), `private` (also private-network addresses, e.g. a NAS; anyone with an account can then make the server fetch from your LAN), `off`. Library imports follow it, except that an admin's can always reach the server's own network; `off` turns them off for everyone too. |
 | `STARBOORU_AI_URL` | unset | Base URL of an OpenAI-compatible API, such as `https://openrouter.ai/api/v1`, `https://api.openai.com/v1`, `https://generativelanguage.googleapis.com/v1beta/openai` or a local server's own (`http://192.168.1.5:11434/v1`). What a new install's tools start with; each tool can have its own in Administration › Server › AI. Thumbnails of posts, and the text of images being translated, are sent to it. |
 | `STARBOORU_AI_MODEL` | unset | The API's model, such as `google/gemini-2.5-flash-lite` or `gpt-4o-mini` |
 | `STARBOORU_AI_KEY` | unset | API key, sent as a bearer token and only to this address. Never shown to clients or logged. |
@@ -171,6 +173,24 @@ OCR is what finds text in images, for `text:` search and the viewer's *Text in i
 - To translate new uploads automatically, set *Translate new comics to* (Administration › Server › AI) or `STARBOORU_AI_TRANSLATE_TO`. A new image is translated after OCR finds text in it, one at a time, so OCR has to be on. Older posts aren't translated in bulk.
 - **Local:** a detector finds the text, Manga OCR reads Japanese and tesseract reads the rest, and the translator writes it. Nothing leaves the server. Korean and Chinese depend on the tesseract languages installed.
 - **API:** the page goes to the model (fit in 1536 px), so it must read images and the provider sees the page.
+
+## Importing a library from another booru
+
+Settings › Import from another booru moves a whole library from szurubooru, Shimmie2, Danbooru, Stash, Blombooru, Monbooru or LANBooru: every post with its tags, rating, source, date and your likes, plus aliases, implications, and pools or albums as tags. The other site has to be running, and the StarBooru server has to be able to reach it. A file that's already here merges into its post, so importing twice is safe.
+
+| From | What it needs on that side |
+|---|---|
+| szurubooru | User name and a login token, or you get what guests can see. |
+| Shimmie2 | The Ouroboros API extension turned on, and an API key if guests can't see everything. Pools can't come across (no API), nor aliases of several words. |
+| Danbooru | User name and API key, or you get what guests can see and no favourites. Only favourites become likes. |
+| Stash | The API key, if it has one. No safety ratings, so every post gets the rating you choose. Performers become characters, studios, directors and photographers artists, groups copyrights, and galleries a tag. |
+| Blombooru | An admin's API key for aliases and implications. Tag-pattern implications can't come across. |
+| Monbooru | A token with read access, if the site uses them. Every gallery comes across. Aliases can't (its API doesn't say which tag one stands for). |
+| LANBooru | Nothing: its reads are open. It has no aliases, implications or albums. |
+
+**Stays behind everywhere:** comments, other users and their accounts, notes on images, titles and descriptions, site-wide scores and the order inside pools. StarBooru has no place for them. szurubooru's YouTube posts are skipped, as they have no file. Files over `STARBOORU_MAX_UPLOAD_MB` or in a format StarBooru refuses are listed as failed, and *Import again* tries them after you've raised the limit.
+
+**Who can import what:** an admin can import from the server's own network and brings aliases and implications. Anyone else reaches what `STARBOORU_URL_IMPORT` allows and brings posts only.
 
 ## Plain Docker Compose
 

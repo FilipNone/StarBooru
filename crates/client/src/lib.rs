@@ -13,11 +13,12 @@ use starbooru_core::{
     API_PREFIX, AdminUser, AliasRequest, ApiError, ApiKey, AuthResponse, Backup, BackupSchedule,
     Backups, BulkEdit, BulkResult, CreatedApiKey, Credentials, DismissDuplicates, Duplicates,
     Explore, Figure, FiguresUpdate, Identity, ImplicationRequest, ImportBatch, ImportJob,
-    ImportRequest, MediaEdit, Neighbors, NewApiKey, NewShare, OidcBegin, OidcFinish, OidcStart,
-    PasswordChange, PasswordReset, Post, PostPage, PostUpdate, PurgeResult, Rating, RelatedPosts,
-    RemotePage, RemoteSearch, ResolveDuplicates, RevokeResult, SaveSearchRequest, SavedSearch,
-    ServerInfo, ServerSettings, ServerStats, SessionInfo, Share, SharedView, SignInMethods, Tag,
-    TagCorrection, TagDetail, TagOrder, TagUpdate, Usage, User, UserUpdate, VoteRequest,
+    ImportRequest, LibraryCheck, LibraryFailure, LibraryImport, LibraryRetry, LibrarySite,
+    MediaEdit, Neighbors, NewApiKey, NewShare, OidcBegin, OidcFinish, OidcStart, PasswordChange,
+    PasswordReset, Post, PostPage, PostUpdate, PurgeResult, Rating, RelatedPosts, RemotePage,
+    RemoteSearch, ResolveDuplicates, RevokeResult, SaveSearchRequest, SavedSearch, ServerInfo,
+    ServerSettings, ServerStats, SessionInfo, Share, SharedView, SignInMethods, Tag, TagCorrection,
+    TagDetail, TagOrder, TagUpdate, Usage, User, UserUpdate, VoteRequest,
 };
 use starbooru_core::{
     AiAdminStatus, AiGeneralUpdate, AiStatus, AiTestResult, AiTool, AiToolUpdate, PanelTranslation,
@@ -632,6 +633,51 @@ impl Client {
     /// a result with [`Client::import_url`].
     pub async fn remote_search(&self, search: &RemoteSearch) -> Result<RemotePage> {
         self.json(Method::POST, "/remote/search", search).await
+    }
+
+    /// Reads a site's first page to see that it answers and how much it has.
+    pub async fn check_library(&self, site: &LibrarySite) -> Result<LibraryCheck> {
+        self.json(Method::POST, "/library-imports/check", site)
+            .await
+    }
+
+    /// Starts moving a whole library over; it goes on when this app is closed.
+    pub async fn start_library_import(&self, site: &LibrarySite) -> Result<LibraryImport> {
+        self.json(Method::POST, "/library-imports", site).await
+    }
+
+    /// The signed-in user's library imports, newest first.
+    pub async fn library_imports(&self) -> Result<Vec<LibraryImport>> {
+        Self::send(self.request(Method::GET, "/library-imports")?).await
+    }
+
+    /// Stops an import at the post it has reached.
+    pub async fn stop_library_import(&self, id: i64) -> Result<LibraryImport> {
+        let path = format!("/library-imports/{id}/stop");
+        Self::send(self.request(Method::POST, &path)?).await
+    }
+
+    /// Reads the site again, downloading what's missing or failed. An import
+    /// doesn't keep its key once it ends, so the key comes along again.
+    pub async fn retry_library_import(
+        &self,
+        id: i64,
+        account: &LibraryRetry,
+    ) -> Result<LibraryImport> {
+        let path = format!("/library-imports/{id}/retry");
+        self.json(Method::POST, &path, account).await
+    }
+
+    /// Forgets a finished import. The posts it brought stay.
+    pub async fn delete_library_import(&self, id: i64) -> Result<()> {
+        let path = format!("/library-imports/{id}");
+        Self::send_empty(self.request(Method::DELETE, &path)?).await
+    }
+
+    /// The posts an import couldn't bring, with the reason for each.
+    pub async fn library_failures(&self, id: i64) -> Result<Vec<LibraryFailure>> {
+        let path = format!("/library-imports/{id}/failures");
+        Self::send(self.request(Method::GET, &path)?).await
     }
 
     /// The signed-in user's saved searches, by name.

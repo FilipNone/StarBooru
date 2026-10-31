@@ -15,6 +15,7 @@ pub mod edit;
 pub mod figure;
 pub mod filter;
 pub mod keys;
+pub mod library;
 pub mod local_ai;
 pub mod model;
 pub mod oidc;
@@ -47,6 +48,10 @@ pub use figure::{
     Slot, clean_figures, cosplay_name, cosplay_tag, count_tags, is_count_tag, required_tags,
 };
 pub use keys::clean_api_key;
+pub use library::{
+    LibraryCheck, LibraryError, LibraryFailure, LibraryImport, LibraryPhase, LibraryRetry,
+    LibrarySite, LibrarySource, LibraryState, MAX_ACTIVE_LIBRARY_IMPORTS, clean_credentials,
+};
 pub use local_ai::{Gpu, GpuKind, Hardware};
 pub use model::*;
 pub use oidc::{Identity, OidcBegin, OidcError, OidcFinish, OidcStart, SignInMethods};

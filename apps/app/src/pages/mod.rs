@@ -9,6 +9,7 @@ mod explore;
 mod gallery;
 mod help;
 mod legal;
+mod library_import;
 mod login;
 mod people;
 mod post;

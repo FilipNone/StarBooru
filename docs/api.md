@@ -269,6 +269,27 @@ The server downloads each address on its own, so an import goes on when every ap
 
 `ImportJob` is `{id, url, source, tags, rating, state, post_id, error, created_at, finished_at}`. `state` is `queued`, `running`, `done` (`post_id` is the new post), `duplicate` (the file was already here; `error` says which post) or `failed` (`error` says why, e.g. the site answered 404, the file is over the upload limit, the storage limit, a disabled account). File uploads (`POST /posts`) are sent by the app, so they stop when it closes.
 
+## Library imports
+
+Moves a whole library from another self-hosted booru. The server walks that site by itself, one import at a time and oldest first, so an import goes on with every app closed and picks up where it was after a restart.
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| POST | `/library-imports/check` | `LibrarySite` | `LibraryCheck {total?, rules}`. Reads the first page, once. `total` is missing when the site doesn't say. `rules` says whether aliases and implications would come across. |
+| POST | `/library-imports` | `LibrarySite` | 201, `LibraryImport`, `queued`. 403 past 5 imports waiting or running per account. |
+| GET | `/library-imports` | | `LibraryImport[]`: the caller's latest 50, newest first |
+| POST | `/library-imports/{id}/stop` | | `LibraryImport`. What came across stays. |
+| POST | `/library-imports/{id}/retry` | `LibraryRetry {login?, secret?}` | `LibraryImport`, `queued`. Walks the site again, trying the failed posts and finding new ones, and skips what already came across. The key has to be given again. 409 `running` while it's going. |
+| DELETE | `/library-imports/{id}` | | 204; forgets the import, its posts stay. 409 `running` while it's going. |
+| GET | `/library-imports/{id}/failures` | | `LibraryFailure[] {remote_id, error}`, at most 500 |
+
+- `LibrarySite` is `{source, base, login?, secret?, unrated}`. `source` is `szurubooru`, `shimmie2`, `danbooru`, `stash`, `blombooru`, `monbooru` or `lanbooru`. `base` is the site's http(s) address. `unrated` is the rating for posts that come without one.
+- `login` and `secret` are sent only to that site and never returned or logged. They stay in the database only while the import is waiting or running, so a restart can go on, and are erased when it ends.
+- `LibraryImport` is `{id, source, base, state, phase, total?, imported, merged, failed, rules, note?, error?, created_at, finished_at?}`. `state` is `queued`, `running`, `done`, `stopped` or `failed`. `phase` is `rules`, `posts` or `groups`. `merged` counts files that were already here, whose tags and likes are added to the post. `note` says what was left out and `error` why it stopped; the server writes both in English.
+- An administrator's import can reach the server's own network. Anyone else's follows the rules of `POST /posts/import`. Only an administrator's import brings aliases and implications, as they apply to everyone. With URL import off, checking, starting or retrying one answers 400.
+
+Errors: 400 `bad_request` for a bad address or key, or an address the server won't reach; 502 `fetch_failed` when the site can't be reached, refuses the account or doesn't answer like that system.
+
 ## Saved searches
 
 Each user's own list; other users never see it.

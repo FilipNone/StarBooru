@@ -11,7 +11,7 @@ use sqlx::{FromRow, Postgres, QueryBuilder, Transaction};
 use starbooru_core::color::{COLOR_REACHES, EXCLUDE_REACH, cells_near, stored_hex};
 use starbooru_core::filter::SizeField;
 use starbooru_core::query::{FigureTerm, SearchQuery, SortKey};
-use starbooru_core::tag::normalize_tags;
+use starbooru_core::tag::{MAX_TAGS_PER_POST, normalize_tags};
 use starbooru_core::{
     BulkEdit, BulkResult, DEFAULT_PAGE_LIMIT, DEFAULT_RELATED_LIMIT, ImportRequest, MAX_BULK_POSTS,
     MAX_PAGE_LIMIT, MAX_RELATED_LIMIT, MediaKind, Neighbors, Post, PostPage, PostUpdate, Rating,
@@ -928,6 +928,28 @@ pub(super) async fn create_post(
     source: Option<String>,
     tags: &[String],
 ) -> AppResult<Post> {
+    match store_post(state, user_id, bytes, rating, source, tags).await? {
+        Stored::Added(id) => load(state, user_id, id).await,
+        Stored::Exists(id) => Err(duplicate(id)),
+    }
+}
+
+/// What became of a file being stored.
+pub(super) enum Stored {
+    Added(i64),
+    /// The same file is already this post (which may be in the recycle bin).
+    Exists(i64),
+}
+
+/// Stores `bytes` and inserts the post, unless the same file is already here.
+pub(super) async fn store_post(
+    state: &AppState,
+    user_id: i64,
+    bytes: Bytes,
+    rating: Rating,
+    source: Option<String>,
+    tags: &[String],
+) -> AppResult<Stored> {
     let file_size = i64::try_from(bytes.len()).map_err(AppError::internal)?;
     // Early, so a file over the limit isn't processed; checked again below.
     check_quota(&state.db, user_id, file_size).await?;
@@ -940,20 +962,157 @@ pub(super) async fn create_post(
         .fetch_optional(&state.db)
         .await?;
     if let Some(id) = existing {
-        return Err(duplicate(id));
+        return Ok(Stored::Exists(id));
     }
 
     match insert_post(state, user_id, &info, file_size, rating, source, tags).await {
         Ok(id) => {
             crate::ai::autotag_later(state, id);
             crate::ocr::spawn_scan(state, id);
-            load(state, user_id, id).await
+            Ok(Stored::Added(id))
         }
         Err(e) => {
             discard_orphan(state, &info).await;
+            // Someone else's upload of the same file got in first.
+            if matches!(
+                e,
+                AppError::Conflict {
+                    code: "duplicate",
+                    ..
+                }
+            ) {
+                let winner: Option<i64> =
+                    sqlx::query_scalar("SELECT id FROM posts WHERE sha256 = $1")
+                        .bind(info.sha256.as_slice())
+                        .fetch_optional(&state.db)
+                        .await?;
+                if let Some(id) = winner {
+                    return Ok(Stored::Exists(id));
+                }
+            }
             Err(e)
         }
     }
+}
+
+/// Adds `tags` to a post, and a source if it has none. A post in the recycle bin
+/// stays as it is: it was thrown away on purpose.
+pub(super) async fn merge_into(
+    state: &AppState,
+    post_id: i64,
+    source: Option<&str>,
+    tags: &[String],
+) -> AppResult<()> {
+    let mut tx = state.db.begin().await?;
+    let live: Option<bool> =
+        sqlx::query_scalar("SELECT deleted_at IS NULL FROM posts WHERE id = $1 FOR UPDATE")
+            .bind(post_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    if live != Some(true) {
+        return Ok(());
+    }
+    let mut names: Vec<String> = sqlx::query_scalar(
+        "SELECT t.name FROM tags t JOIN posts p ON t.id = ANY(p.tag_ids) WHERE p.id = $1",
+    )
+    .bind(post_id)
+    .fetch_all(&mut *tx)
+    .await?;
+    for tag in tags {
+        if names.len() >= MAX_TAGS_PER_POST {
+            break;
+        }
+        if !names.contains(tag) {
+            names.push(tag.clone());
+        }
+    }
+    set_tags(&mut tx, post_id, &names).await?;
+    if let Some(source) = source {
+        sqlx::query(
+            "UPDATE posts SET source = $2 WHERE id = $1 AND (source IS NULL OR source = '')",
+        )
+        .bind(post_id)
+        .bind(source)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Carries over a post's opinion from another site, unless the account has
+/// already voted here or the post is in the recycle bin.
+pub(super) async fn import_vote(
+    state: &AppState,
+    post_id: i64,
+    user_id: i64,
+    value: i16,
+) -> AppResult<()> {
+    let mut tx = state.db.begin().await?;
+    let live: Option<i64> =
+        sqlx::query_scalar("SELECT id FROM posts WHERE id = $1 AND deleted_at IS NULL FOR UPDATE")
+            .bind(post_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    if live.is_none() {
+        return Ok(());
+    }
+    let old = current_vote(&mut tx, post_id, user_id).await?;
+    if old == 0 {
+        apply_vote(&mut tx, post_id, user_id, old, value).await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
+async fn current_vote(
+    tx: &mut Transaction<'_, Postgres>,
+    post_id: i64,
+    user_id: i64,
+) -> AppResult<i16> {
+    Ok(
+        sqlx::query_scalar("SELECT value FROM post_votes WHERE post_id = $1 AND user_id = $2")
+            .bind(post_id)
+            .bind(user_id)
+            .fetch_optional(&mut **tx)
+            .await?
+            .unwrap_or(0),
+    )
+}
+
+/// Changes an account's vote from `old` to `value`, and the post's score with it.
+async fn apply_vote(
+    tx: &mut Transaction<'_, Postgres>,
+    post_id: i64,
+    user_id: i64,
+    old: i16,
+    value: i16,
+) -> AppResult<()> {
+    if value == 0 {
+        sqlx::query("DELETE FROM post_votes WHERE post_id = $1 AND user_id = $2")
+            .bind(post_id)
+            .bind(user_id)
+            .execute(&mut **tx)
+            .await?;
+    } else {
+        sqlx::query(
+            "INSERT INTO post_votes (post_id, user_id, value) VALUES ($1, $2, $3) \
+             ON CONFLICT (post_id, user_id) DO UPDATE SET value = EXCLUDED.value, \
+             voted_at = CASE WHEN post_votes.value = EXCLUDED.value \
+                             THEN post_votes.voted_at ELSE now() END",
+        )
+        .bind(post_id)
+        .bind(user_id)
+        .bind(value)
+        .execute(&mut **tx)
+        .await?;
+    }
+    sqlx::query("UPDATE posts SET score = score + $2 WHERE id = $1")
+        .bind(post_id)
+        .bind(i32::from(value) - i32::from(old))
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
 }
 
 /// Refuses a file that would take the uploader past their storage limit.
@@ -1722,37 +1881,8 @@ pub async fn vote(
             .fetch_optional(&mut *tx)
             .await?;
     exists.ok_or(AppError::NotFound)?;
-    let old: i16 =
-        sqlx::query_scalar("SELECT value FROM post_votes WHERE post_id = $1 AND user_id = $2")
-            .bind(id)
-            .bind(user.id)
-            .fetch_optional(&mut *tx)
-            .await?
-            .unwrap_or(0);
-    if req.value == 0 {
-        sqlx::query("DELETE FROM post_votes WHERE post_id = $1 AND user_id = $2")
-            .bind(id)
-            .bind(user.id)
-            .execute(&mut *tx)
-            .await?;
-    } else {
-        sqlx::query(
-            "INSERT INTO post_votes (post_id, user_id, value) VALUES ($1, $2, $3) \
-             ON CONFLICT (post_id, user_id) DO UPDATE SET value = EXCLUDED.value, \
-             voted_at = CASE WHEN post_votes.value = EXCLUDED.value \
-                             THEN post_votes.voted_at ELSE now() END",
-        )
-        .bind(id)
-        .bind(user.id)
-        .bind(req.value)
-        .execute(&mut *tx)
-        .await?;
-    }
-    sqlx::query("UPDATE posts SET score = score + $2 WHERE id = $1")
-        .bind(id)
-        .bind(i32::from(req.value) - i32::from(old))
-        .execute(&mut *tx)
-        .await?;
+    let old = current_vote(&mut tx, id, user.id).await?;
+    apply_vote(&mut tx, id, user.id, old, req.value).await?;
     tx.commit().await?;
     Ok(Json(load_full(&state, user.id, id).await?))
 }

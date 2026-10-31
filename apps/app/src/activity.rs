@@ -337,7 +337,7 @@ async fn poll() {
 }
 
 /// Waits in the browser and the webviews alike.
-async fn wait_ms(ms: u32) {
+pub(crate) async fn wait_ms(ms: u32) {
     let _ = document::eval(&format!(
         "await new Promise((r) => setTimeout(r, {ms})); return true;"
     ))

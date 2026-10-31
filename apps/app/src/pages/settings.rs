@@ -3,6 +3,7 @@ use dioxus::prelude::*;
 use starbooru_core::{Identity, Role, SessionInfo, SignInMethods, Usage};
 
 use super::api_keys::ApiKeysCard;
+use super::library_import::LibraryImportCard;
 use super::share::SharesCard;
 use super::{Choice, ErrorBanner, Select, Spinner};
 use crate::Route;
@@ -71,6 +72,8 @@ pub fn Settings() -> Element {
         });
     });
     let provider = info.read().as_ref().and_then(|i| i.as_ref()?.oidc.clone());
+    // Hidden when the server is set never to contact other sites.
+    let library_import = matches!(info.read().as_ref(), Some(Some(i)) if i.url_import);
     let has_password = methods.read().as_ref().is_none_or(|m| m.password);
     let show_methods = provider.is_some()
         || methods
@@ -232,6 +235,10 @@ pub fn Settings() -> Element {
                     span { {t!("dup-title")} }
                     span { class: "muted", {t!("settings-dup-note")} }
                 }
+            }
+
+            if session.is_some() && store::can_upload() && library_import {
+                LibraryImportCard {}
             }
 
             if session.as_ref().is_some_and(|s| s.user.role == Role::Admin) {
