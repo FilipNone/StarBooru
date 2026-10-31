@@ -650,7 +650,8 @@ fn ColorMenu(q: String) -> Element {
 }
 
 /// A post in the grid. With `selected` set (selection mode), a click
-/// toggles it instead of opening it.
+/// toggles it instead of opening it. Both modes render the same elements, so
+/// turning selection on doesn't load the thumbnails again.
 #[component]
 pub(super) fn Thumb(
     post: Post,
@@ -674,89 +675,101 @@ pub(super) fn Thumb(
     // Staggered entrance within a page of results.
     let delay = (index % PAGE_SIZE as usize) * 16;
     let alt = post.tags.join(" ");
-    let duration = post.duration_ms.and_then(format_duration);
-    let media = rsx! {
-        div {
-            class: "thumb-media",
-            "data-post": "{post.id}",
-            onpointerenter: move |e: PointerEvent| {
-                if video && e.pointer_type() == "mouse" {
-                    hovered.set(true);
-                }
-            },
-            onpointerleave: move |_| {
-                if *hovered.peek() {
-                    hovered.set(false);
-                }
-            },
-            if let Some(src) = src {
-                img { src, alt: alt.clone(), loading: "lazy", decoding: "async" }
-            } else {
-                div { class: "thumb-placeholder", Ico { icon: Icon::Play, size: 40 } }
-            }
-            if hovered() && !power::active() && let Some(src) = preview_src {
-                // Parsed HTML, because only a parsed `muted` attribute
-                // mutes the video, and browsers autoplay muted videos only.
-                div {
-                    class: "preview",
-                    aria_hidden: "true",
-                    dangerous_inner_html: "<video src=\"{escape_attr(&src)}\" muted autoplay loop playsinline preload=\"auto\"></video>",
-                }
-            }
-        }
-        match post.kind {
-            MediaKind::Video => rsx! {
-                span { class: "badge",
-                    Ico { icon: Icon::Play, size: 16 }
-                    if let Some(d) = duration { "{d}" }
-                }
-            },
-            MediaKind::Animation => rsx! { span { class: "badge", "GIF" } },
-            MediaKind::Image => rsx! {},
-        }
+    let label = if alt.is_empty() {
+        t!("post-alt", id = post.id)
+    } else {
+        alt.clone()
     };
-    if let Some(on) = selected {
-        return rsx! {
-            button {
-                class: if on { "thumb selectable on" } else { "thumb selectable" },
-                style: "--delay: {delay}ms",
-                r#type: "button",
-                aria_pressed: on,
-                aria_label: if alt.is_empty() { t!("post-alt", id = post.id) } else { alt.clone() },
-                onclick: move |e: MouseEvent| ontoggle.call((index, e.modifiers().shift())),
-                {media}
-                span { class: "check-mark", aria_hidden: "true", Ico { icon: Icon::Check, size: 20 } }
-            }
-        };
-    }
-    let nav = navigator();
+    let duration = post.duration_ms.and_then(format_duration);
     let id = post.id;
-    let open = {
+    let kind = post.kind;
+    let to = Route::PostView { id, q: q.clone() };
+    let class = match selected {
+        Some(true) => "thumb selectable on",
+        Some(false) => "thumb selectable",
+        None => "thumb",
+    };
+    let open = move || {
+        *OPENING.write() = Some(post.clone());
+        let nav = navigator();
         let q = q.clone();
-        move |_| {
-            *OPENING.write() = Some(post.clone());
-            let q = q.clone();
-            if !HERO_TRANSITION {
-                nav.push(Route::PostView { id, q });
-                return;
-            }
-            spawn(async move {
-                let mut hero = document::eval(HERO_START);
-                let _ = hero.send(id);
-                // Navigates once the old page is captured, or at once without a transition.
-                let _ = hero.recv::<bool>().await;
-                nav.push(Route::PostView { id, q });
-            });
+        if !HERO_TRANSITION {
+            nav.push(Route::PostView { id, q });
+            return;
         }
+        spawn(async move {
+            let mut hero = document::eval(HERO_START);
+            let _ = hero.send(id);
+            // Navigates once the old page is captured, or at once without a transition.
+            let _ = hero.recv::<bool>().await;
+            nav.push(Route::PostView { id, q });
+        });
     };
     rsx! {
-        Link {
-            class: "thumb",
+        a {
+            class,
             style: "--delay: {delay}ms",
-            to: Route::PostView { id, q },
-            onclick: open,
-            onclick_only: true,
-            {media}
+            href: "{to}",
+            aria_label: label,
+            role: selected.map(|_| "button"),
+            aria_pressed: selected.map(|on| on.to_string()),
+            onclick: move |e: MouseEvent| {
+                if selected.is_some() {
+                    e.prevent_default();
+                    ontoggle.call((index, e.modifiers().shift()));
+                } else if e.modifiers().is_empty() {
+                    // With a modifier the browser opens the link elsewhere.
+                    e.prevent_default();
+                    open();
+                }
+            },
+            onkeydown: move |e: KeyboardEvent| {
+                if selected.is_some() && e.key() == Key::Character(" ".to_owned()) {
+                    e.prevent_default();
+                    ontoggle.call((index, e.modifiers().shift()));
+                }
+            },
+            div {
+                class: "thumb-media",
+                "data-post": "{id}",
+                onpointerenter: move |e: PointerEvent| {
+                    if video && e.pointer_type() == "mouse" {
+                        hovered.set(true);
+                    }
+                },
+                onpointerleave: move |_| {
+                    if *hovered.peek() {
+                        hovered.set(false);
+                    }
+                },
+                if let Some(src) = src {
+                    img { src, alt, loading: "lazy", decoding: "async" }
+                } else {
+                    div { class: "thumb-placeholder", Ico { icon: Icon::Play, size: 40 } }
+                }
+                if hovered() && !power::active() && let Some(src) = preview_src {
+                    // Parsed HTML, because only a parsed `muted` attribute
+                    // mutes the video, and browsers autoplay muted videos only.
+                    div {
+                        class: "preview",
+                        aria_hidden: "true",
+                        dangerous_inner_html: "<video src=\"{escape_attr(&src)}\" muted autoplay loop playsinline preload=\"auto\"></video>",
+                    }
+                }
+            }
+            match kind {
+                MediaKind::Video => rsx! {
+                    span { class: "badge",
+                        Ico { icon: Icon::Play, size: 16 }
+                        if let Some(d) = duration { "{d}" }
+                    }
+                },
+                MediaKind::Animation => rsx! { span { class: "badge", "GIF" } },
+                MediaKind::Image => rsx! {},
+            }
+            if selected.is_some() {
+                span { class: "check-mark", aria_hidden: "true", Ico { icon: Icon::Check, size: 20 } }
+            }
         }
     }
 }
