@@ -1,7 +1,7 @@
 //! Upload: files and addresses wait here for their tags, then go to the
 //! app-wide queue (`activity`), so they keep going on other pages.
 
-use dioxus::html::FileData;
+use dioxus::html::{FileData, HasFileData};
 use dioxus::prelude::*;
 use starbooru_core::{ImportJob, JobState, Rating};
 
@@ -91,7 +91,7 @@ pub fn Upload() -> Element {
                 ondrop: move |e| {
                     e.prevent_default();
                     dragging.set(false);
-                    add(e.data_transfer().files());
+                    add(e.files());
                 },
                 Ico { icon: Icon::Upload, size: 40 }
                 strong { {t!("upload-drop")} }
