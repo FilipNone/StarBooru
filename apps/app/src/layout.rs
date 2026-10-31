@@ -24,8 +24,12 @@ const MIN_WIDE_TILE: f64 = 160.0;
 const MAX_TILE: f64 = 512.0;
 const MAX_TALL_TILE: f64 = 400.0;
 /// A tile of the mosaic can be twice as wide or more, which this keeps within
-/// its thumbnail.
+/// its thumbnail. Most are wider than a column, so a column can be narrower.
 const MAX_MOSAIC_TILE: f64 = 300.0;
+const MIN_MOSAIC_TILE: f64 = 96.0;
+/// In two columns a tile of the mosaic is half the grid or all of it: tiles can't
+/// start anywhere but the middle, and wide pictures end up in a single stack.
+const FEWEST_MOSAIC_COLUMNS: u32 = 3;
 
 /// Height over width of the fixed shapes: 2:3 and 3:2.
 const LANDSCAPE: f64 = 2.0 / 3.0;
@@ -40,7 +44,7 @@ fn tile_limits(view: GalleryView) -> (f64, f64) {
         GalleryView::Landscape | GalleryView::StaggeredLandscape => (MIN_WIDE_TILE, MAX_TILE),
         GalleryView::Square => (MIN_TILE, MAX_TILE),
         GalleryView::Portrait | GalleryView::StaggeredPortrait => (MIN_TILE, MAX_TALL_TILE),
-        GalleryView::StaggeredAll => (MIN_TILE, MAX_MOSAIC_TILE),
+        GalleryView::StaggeredAll => (MIN_MOSAIC_TILE, MAX_MOSAIC_TILE),
     }
 }
 
@@ -50,8 +54,12 @@ pub fn column_limits(width: f64, gap: f64, view: GalleryView) -> (u32, u32) {
     let (min_tile, max_tile) = tile_limits(view);
     let span = width.max(0.0) + gap;
     let fewest = (span / (max_tile + gap)).ceil().max(1.0);
-    let most = (span / (min_tile + gap)).floor().max(fewest);
-    (fewest as u32, most as u32)
+    let most = (span / (min_tile + gap)).floor().max(fewest) as u32;
+    let fewest = fewest as u32;
+    match view {
+        GalleryView::StaggeredAll => (fewest.max(FEWEST_MOSAIC_COLUMNS.min(most)), most),
+        _ => (fewest, most),
+    }
 }
 
 /// The columns to use: the user's choice if they made one, or else as many
@@ -289,12 +297,22 @@ const TALLEST_MOSAIC: f64 = 2.25;
 const LEVEL: f64 = 0.4;
 /// How much taller a tile of the mosaic gets when it would end a full row.
 const UNEVEN: f64 = 1.2;
+/// The most columns that count as few, see [`wanted_parts`].
+const FEW_MOSAIC_COLUMNS: usize = 3;
+/// How much over the tallest a tile's picture may be, on few columns.
+const CUT_ON_FEW_COLUMNS: f64 = 1.35;
 
 /// How many parts wide a tile of the mosaic would like to be: wider the wider
 /// its picture is, and now and then wider still if that doesn't make it too tall,
 /// as otherwise a collection of one shape would come out as plain columns. By
 /// place in the list, so that it stays the same as more results come.
-fn wanted_parts(ratio: f64, index: usize) -> usize {
+///
+/// A few columns are the width of a phone, where the choice is tighter. A tile
+/// two columns wide leaves one column beside it, and those two then go on as
+/// they are all the way down, so the widest get narrower now and then. And a tall
+/// picture may widen even if it then shows less of itself, or a folder of phone
+/// photos would be a plain grid.
+fn wanted_parts(ratio: f64, index: usize, columns: usize) -> usize {
     let shape = if ratio <= 0.62 {
         4
     } else if ratio <= 0.85 {
@@ -303,9 +321,19 @@ fn wanted_parts(ratio: f64, index: usize) -> usize {
         2
     };
     let scatter = (index as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 60;
+    let few = columns <= FEW_MOSAIC_COLUMNS;
+    let tallest = if few {
+        TALLEST_MOSAIC * CUT_ON_FEW_COLUMNS
+    } else {
+        TALLEST_MOSAIC
+    };
     let wider = shape + 1;
-    if scatter < 5 && wider <= 4 && ratio * wider as f64 / PARTS as f64 <= TALLEST_MOSAIC {
+    if scatter < 5 && wider <= 4 && ratio * wider as f64 / PARTS as f64 <= tallest {
         wider
+    } else if few && shape == 4 && scatter < 5 {
+        3
+    } else if few && shape == 4 && scatter < 8 {
+        2
     } else {
         shape
     }
@@ -340,7 +368,7 @@ fn mosaic(ratios: impl IntoIterator<Item = f64>, columns: u32) -> Layout {
             .count();
         // A stretch never gets narrower than a tile: a tile that would leave one
         // that narrow takes it as well, or else leaves a whole tile's width.
-        let mut taken = wanted_parts(ratio, index).min(free);
+        let mut taken = wanted_parts(ratio, index, columns).min(free);
         if free - taken == 1 {
             let wider = (taken + 1) as f64 / PARTS as f64;
             taken = if taken > PARTS && ratio * wider > TALLEST_MOSAIC {
@@ -370,14 +398,18 @@ fn mosaic(ratios: impl IntoIterator<Item = f64>, columns: u32) -> Layout {
                 off(a).total_cmp(&off(b))
             })
             .unwrap_or(natural);
-        // Not level with all the rest, as that would read as a row.
+        // Not level with all the rest, as that would read as a row. On few columns
+        // it has to be allowed: a level stretch is the only way to start again
+        // with other widths, and it's only ever a tile or two wide.
         let next = floor.plus(level).plus(GAP);
         let others = tops
             .iter()
             .enumerate()
             .filter(|(i, _)| !(start..start + taken).contains(i));
         let mut others = others.map(|(_, top)| top).peekable();
-        let closes_row = columns > 2 && others.peek().is_some() && others.all(|top| top.same(next));
+        let closes_row = columns > FEW_MOSAIC_COLUMNS
+            && others.peek().is_some()
+            && others.all(|top| top.same(next));
         let height = if closes_row {
             level.times(UNEVEN)
         } else {
@@ -791,11 +823,127 @@ mod tests {
         }
     }
 
+    /// Shapes that have nothing to do with the place in the list, as `assorted`'s
+    /// have: the same hash picks the width of a tile there.
+    fn unrelated(count: usize, seed: u64) -> Vec<f64> {
+        let mut state = seed;
+        (0..count)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                0.5 + 1.5 * (state % 1000) as f64 / 1000.0
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_phone_gets_columns_the_mosaic_can_offset() {
+        for width in [304.0, 344.0, 376.0, 400.0, 600.0] {
+            let view = GalleryView::StaggeredAll;
+            let (fewest, most) = column_limits(width, GAP, view);
+            assert!(fewest >= 3, "{width}");
+            assert!(most >= fewest, "{width}");
+            assert!(columns(width, GAP, view, None) >= 3, "{width}");
+            assert!(columns(width, GAP, view, Some(2)) >= 3, "{width}");
+            assert!(tile_width(width, GAP, fewest) >= MIN_MOSAIC_TILE, "{width}");
+        }
+        // Too narrow for that: as many as fit.
+        assert_eq!(column_limits(200.0, GAP, GalleryView::StaggeredAll), (2, 2));
+    }
+
+    /// The fewest different values of `of` in any run of `size` tiles.
+    fn fewest_in_any_window(layout: &Layout, size: usize, of: fn(&Place) -> f64) -> usize {
+        layout
+            .tiles
+            .windows(size)
+            .map(|window| {
+                let mut seen: Vec<i64> = window
+                    .iter()
+                    .map(|p| (of(p) * 1000.0).round() as i64)
+                    .collect();
+                seen.sort_unstable();
+                seen.dedup();
+                seen.len()
+            })
+            .min()
+            .unwrap_or(0)
+    }
+
+    #[test]
+    fn the_mosaic_staggers_on_a_phone_with_pictures_of_one_shape() {
+        // A folder from one camera, the portrait phone photo among them.
+        for ratio in [
+            0.5625,
+            2.0 / 3.0,
+            0.75,
+            0.8,
+            1.0,
+            1.25,
+            1.5,
+            16.0 / 9.0,
+            2.0,
+        ] {
+            let layout = mosaic(vec![ratio; 300], 3);
+            assert_stacks_exactly(&layout, 3);
+            assert!(
+                fewest_in_any_window(&layout, 20, |p| p.left.tiles) >= 3,
+                "{ratio}"
+            );
+            assert!(
+                fewest_in_any_window(&layout, 20, |p| p.width.tiles) >= 2,
+                "{ratio}"
+            );
+            for window in layout.tiles.windows(20) {
+                let halfway = window
+                    .iter()
+                    .any(|p| (p.left.tiles.fract() - 0.5).abs() < 1e-9);
+                assert!(halfway, "{ratio} runs on in whole columns");
+            }
+            assert!(layout.tiles.iter().all(|p| p.width.tiles < 2.9), "{ratio}");
+        }
+    }
+
+    #[test]
+    fn the_mosaic_staggers_on_a_phone_with_pictures_of_all_shapes() {
+        for seed in [1, 7, 42, 1999] {
+            let layout = mosaic(unrelated(600, seed), 3);
+            assert_stacks_exactly(&layout, 3);
+            assert!(layout.tiles.iter().all(|p| p.width.tiles < 2.9), "{seed}");
+            for part in layout.tiles.chunks(100) {
+                let wide = part.iter().filter(|p| p.width.tiles > 1.0).count();
+                let halfway = part
+                    .iter()
+                    .filter(|p| (p.left.tiles.fract() - 0.5).abs() < 1e-9)
+                    .count();
+                assert!(wide >= 15, "{wide} of 100 are wide, {seed}");
+                assert!(halfway >= 3, "{halfway} of 100 start halfway, {seed}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_mosaic_never_leaves_a_sliver() {
+        for columns in [2, 3, 4, 5, 9] {
+            for list in [
+                assorted(1000, 0.5, 2.0),
+                assorted(1000, 0.5, 0.9),
+                unrelated(1000, 5),
+                unrelated(1000, 77),
+            ] {
+                let layout = mosaic(list, columns);
+                for place in &layout.tiles {
+                    assert!(place.width.tiles >= 1.0, "{place:?} of {columns}");
+                }
+            }
+        }
+    }
+
     #[test]
     fn the_mosaic_widens_wide_pictures_and_keeps_shapes_close() {
-        assert_eq!(wanted_parts(0.55, 1), 4);
-        assert_eq!(wanted_parts(0.75, 1), 3);
-        assert_eq!(wanted_parts(1.5, 1), 2);
+        assert_eq!(wanted_parts(0.55, 1, 5), 4);
+        assert_eq!(wanted_parts(0.75, 1, 5), 3);
+        assert_eq!(wanted_parts(1.5, 1, 5), 2);
         let ratios = assorted(300, 0.5, 2.0);
         let layout = mosaic(ratios.iter().copied(), 5);
         for (place, ratio) in layout.tiles.iter().zip(&ratios) {
