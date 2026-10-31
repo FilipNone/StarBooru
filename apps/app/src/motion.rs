@@ -314,6 +314,140 @@ pub async fn open(id: i64) {
     let _ = eval.recv::<bool>().await;
 }
 
+/// Going to the previous or next post. A big picture takes a moment to decode,
+/// and an entrance started before it can paint is half over when it shows, on
+/// an empty stage. So a copy of the old picture stays while the new one gets
+/// ready, out of sight, and then both move at once.
+const TURN: &str = r##"
+window.__sbTurn ??= {
+  past: null, since: 0, timer: 0,
+  async hold() {
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => this.end(), 1200);
+    // Nothing new has shown yet: what's held stays.
+    if (this.since) return;
+    const stage = document.querySelector(".stage");
+    if (!stage) return;
+    this.past?.remove();
+    this.past = null;
+    this.since = performance.now();
+    delete stage.dataset.turning;
+    if (!stage.classList.contains("full")) stage.style.height = `${stage.offsetHeight}px`;
+    const el = document.getElementById("stage-img");
+    if (!el) return;
+    const copy = el.cloneNode(false);
+    copy.removeAttribute("id");
+    copy.removeAttribute("data-dioxus-id");
+    copy.removeAttribute("data-turn");
+    copy.className = el.classList.contains("loading") ? "stage-past loading" : "stage-past";
+    copy.alt = "";
+    copy.ariaHidden = "true";
+    copy.decoding = "sync";
+    const [width, height] = [el.offsetWidth, el.offsetHeight];
+    // From the middle, where a picture of any shape stands.
+    copy.style.width = `${width}px`;
+    copy.style.height = `${height}px`;
+    copy.style.left = `calc(50% - ${width / 2}px)`;
+    copy.style.top = `calc(50% - ${height / 2}px)`;
+    stage.prepend(copy);
+    this.past = copy;
+    // Paintable before the old picture goes.
+    await Promise.race([copy.decode().catch(() => {}), new Promise((done) => setTimeout(done, 60))]);
+  },
+  show(thumb) {
+    const el = document.querySelector('.stage [data-turn="wait"]');
+    if (!el) return;
+    const left = Math.max(0, 300 - (performance.now() - this.since));
+    const after = (ms) => new Promise((done) => setTimeout(done, ms));
+    const ready = el.tagName === "VIDEO"
+      ? new Promise((done) => {
+          if (el.readyState >= 2) done();
+          else el.addEventListener("loadeddata", done, { once: true });
+        })
+      : el.decode().catch(() => {});
+    // A slow one starts sooner if its thumbnail can stand in.
+    const standIn = new Image();
+    if (thumb) standIn.src = thumb;
+    const stood = thumb
+      ? standIn.decode().then(() => after(Math.min(120, left)), () => after(left))
+      : after(left);
+    Promise.race([ready, after(left), stood]).then(() => {
+      requestAnimationFrame(() => {
+        if (el.isConnected && el.dataset.turn === "wait") this.start(el);
+      });
+    });
+  },
+  start(el) {
+    el.removeAttribute("data-turn");
+    this.since = 0;
+    const stage = el.closest(".stage");
+    const past = this.past;
+    if (stage?.style.height) {
+      const from = stage.style.height;
+      stage.style.height = "";
+      const to = stage.offsetHeight;
+      stage.style.height = from;
+      void stage.offsetHeight;
+      stage.dataset.turning = "";
+      stage.style.height = `${to}px`;
+    }
+    past?.classList.add(el.classList.contains("from-next") ? "to-next" : "to-prev");
+    const running = [...(past?.getAnimations() ?? []), ...(stage?.getAnimations() ?? [])];
+    Promise.allSettled(running.map((one) => one.finished)).then(() => {
+      if (this.past === past && !this.since) this.end();
+    });
+  },
+  end() {
+    clearTimeout(this.timer);
+    document.querySelector('.stage [data-turn="wait"]')?.removeAttribute("data-turn");
+    this.past?.remove();
+    this.past = null;
+    this.since = 0;
+    const stage = document.querySelector(".stage");
+    if (stage) {
+      delete stage.dataset.turning;
+      stage.style.height = "";
+    }
+  },
+};
+"##;
+
+/// Before going to the previous or next post. Returns once the copy of the
+/// picture can stand in for it.
+pub async fn hold() {
+    let _ = document::eval(&format!(
+        "{TURN}\nawait window.__sbTurn.hold(); return true"
+    ))
+    .join::<bool>()
+    .await;
+}
+
+/// The new post's picture is on the page, out of sight.
+pub fn turn(thumb: Option<&str>) {
+    let thumb = serde_json::to_string(&thumb).unwrap_or_else(|_| "null".into());
+    document::eval(&format!("{TURN}\nwindow.__sbTurn.show({thumb});"));
+}
+
+/// Loads and decodes pictures that may show next, and keeps hold of them: an
+/// image no script holds on to is let go, decoded or not.
+pub fn ahead(urls: &[String]) {
+    let urls = serde_json::to_string(urls).unwrap_or_else(|_| "[]".into());
+    document::eval(&format!(
+        r#"window.__sbAhead ??= new Map();
+for (const url of {urls}) {{
+  if (window.__sbAhead.has(url)) continue;
+  const img = new Image();
+  img.src = url;
+  img.decode().catch(() => {{}});
+  window.__sbAhead.set(url, img);
+}}
+for (const url of [...window.__sbAhead.keys()].slice(0, -{AHEAD_KEPT})) window.__sbAhead.delete(url);"#
+    ));
+}
+
+/// Two neighbours with a picture and a thumbnail each, and the two before.
+const AHEAD_KEPT: usize = 8;
+
 /// The viewer's picture is on the page: the floating one flies to it, and the
 /// viewer keeps note of where it is for the way back.
 pub fn arrive(id: i64) {
@@ -395,6 +529,38 @@ mod tests {
         // Regression: a click within 200 ms of scrolling came back to an older spot.
         let (_, body) = HERO.split_once("open(id) {").unwrap();
         assert!(body.contains("__sbSpot?.report()"));
+    }
+
+    #[test]
+    fn a_picture_waiting_for_its_turn_has_not_started_moving() {
+        // Regression: the entrance began before the picture could paint, so it
+        // showed up partly faded, after a moment of empty stage.
+        let css = include_str!("../assets/main.css");
+        let (_, rule) = css
+            .split_once(r#".stage video[data-turn="wait"] {"#)
+            .unwrap();
+        let (rule, _) = rule.split_once('}').unwrap();
+        assert!(rule.contains("animation: none"));
+        assert!(rule.contains("opacity: 0"));
+    }
+
+    #[test]
+    fn a_turn_always_ends() {
+        // Whatever goes wrong, no picture stays out of sight.
+        let (_, hold) = TURN.split_once("async hold() {").unwrap();
+        assert!(hold.contains("setTimeout(() => this.end()"));
+        let (_, end) = TURN.split_once("  end() {").unwrap();
+        assert!(end.contains(r#"removeAttribute("data-turn")"#));
+    }
+
+    #[test]
+    fn the_old_picture_moves_when_the_new_one_does() {
+        let (_, start) = TURN.split_once("  start(el) {").unwrap();
+        let (start, _) = start.split_once("\n  },").unwrap();
+        let shown = start.find(r#"removeAttribute("data-turn")"#).unwrap();
+        let moved = start.find("classList.add(").unwrap();
+        assert!(shown < moved);
+        assert!(!TURN.contains("startViewTransition"));
     }
 
     #[test]

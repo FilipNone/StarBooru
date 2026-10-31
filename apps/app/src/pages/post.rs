@@ -80,28 +80,47 @@ pub fn PostView(id: i64, q: String) -> Element {
     let mut tag_check = use_signal(String::new);
     let mut rating = use_signal(Rating::default);
 
+    // The props as signals, for the key handler, which outlives a render.
+    let mut current = use_signal(|| (id, q.clone()));
+
     let mut handle = move |result: Result<Post, ClientError>| match result {
         Ok(p) => {
             post.set(Some(p));
             error.set(None);
         }
         Err(e) if e.is_unauthorized() => store::forget_session(),
-        Err(e) => error.set(Some(e.to_string())),
+        Err(e) => {
+            // The post before it stays while this one loads, but not if it won't.
+            if post
+                .peek()
+                .as_ref()
+                .is_some_and(|p| p.id != current.peek().0)
+            {
+                post.set(None);
+            }
+            error.set(Some(e.to_string()));
+        }
     };
 
     let reload = move |id: i64| {
         let Some(client) = store::client() else {
             return;
         };
-        spawn(async move { handle(client.post(id).await) });
+        spawn(async move {
+            let result = client.post(id).await;
+            // The user may have moved on while it loaded.
+            if current.peek().0 == id {
+                handle(result);
+            }
+        });
     };
     let mut zoom = use_signal(Zoom::default);
-    // Set once the original is wanted instead of the sample: zooming in
-    // asks for the detail only the original has.
-    let mut original = use_signal(|| false);
+    // The post whose original is wanted instead of the sample: zooming in asks
+    // for the detail only the original has.
+    let mut original = use_signal(|| None::<i64>);
     use_effect(move || {
-        if zoom().is_zoomed() && !*original.peek() {
-            original.set(true);
+        if zoom().is_zoomed() {
+            original.set(post.peek().as_ref().map(|p| p.id));
         }
     });
     let rect = use_signal(|| None::<PixelsRect>);
@@ -115,25 +134,6 @@ pub fn PostView(id: i64, q: String) -> Element {
             .await
             .ok()
     });
-    use_effect(move || {
-        let (Some(r), Some(dpr)) = (rect(), (*dpr.read()).flatten()) else {
-            return;
-        };
-        let natural = post.read().as_ref().and_then(|p| {
-            (p.kind != MediaKind::Video && p.sample_url.is_some())
-                .then_some(p.width.zip(p.height))
-                .flatten()
-        });
-        if let Some(natural) = natural
-            && !sample_is_sharp(natural, (r.width(), r.height()), dpr)
-            && !*original.peek()
-            && !power::active()
-        {
-            original.set(true);
-        }
-    });
-    // The props as signals, for the key handler, which outlives a render.
-    let mut current = use_signal(|| (id, q.clone()));
     // Neighbours fetched ahead, so previous/next shows at once.
     let mut ahead = use_signal(HashMap::<i64, Post>::new);
     // Which way the last previous/next went: `Some(true)` for next.
@@ -141,11 +141,14 @@ pub fn PostView(id: i64, q: String) -> Element {
     use_effect(use_reactive!(|id| {
         let known = ahead.peek().get(&id).cloned();
         let opening = OPENING.write().take().filter(|p| p.id == id);
-        post.set(known.or(opening));
+        // Not known yet: the post before it stays until it is, as a spinner
+        // in between would throw out the whole page.
+        if let Some(p) = known.or(opening) {
+            post.set(Some(p));
+        }
         editing.set(false);
         media_editing.set(false);
         zoom.set(Zoom::default());
-        original.set(false);
         reload(id);
     }));
     use_effect(use_reactive!(|id, q| current.set((id, q))));
@@ -175,11 +178,12 @@ pub fn PostView(id: i64, q: String) -> Element {
             let client = client.clone();
             spawn(async move {
                 if let Ok(p) = client.post(near).await {
-                    if p.kind != MediaKind::Video {
-                        let url = stage_url(&client, &p, false);
-                        let url = serde_json::to_string(&url).unwrap_or_default();
-                        document::eval(&format!("new Image().src = {url}"));
-                    }
+                    let shown = (p.kind != MediaKind::Video).then(|| {
+                        let dpr = (*dpr.peek()).flatten();
+                        stage_url(&client, &p, needs_original(&p, *rect.peek(), dpr))
+                    });
+                    let thumb = p.thumb_url.as_deref().map(|u| cache::url(&client, u));
+                    motion::ahead(&shown.into_iter().chain(thumb).collect::<Vec<_>>());
                     ahead.write().insert(near, p);
                 }
             });
@@ -190,21 +194,27 @@ pub fn PostView(id: i64, q: String) -> Element {
         let client = store::client()?;
         client.info().await.ok().map(|i| i.video_editing)
     });
-    let mut go = move |to: Option<i64>| {
-        if let Some(id) = to {
-            let n = (*neighbors.peek()).flatten().unwrap_or_default();
-            entered.set(Some(n.prev != Some(id)));
+    let go = move |to: Option<i64>| {
+        // The neighbours can still be the last post's.
+        let Some(id) = to.filter(|to| *to != current.peek().0) else {
+            return;
+        };
+        let n = (*neighbors.peek()).flatten().unwrap_or_default();
+        let next = n.prev != Some(id);
+        spawn(async move {
+            motion::hold().await;
+            entered.set(Some(next));
             let q = current.peek().1.clone();
             // Replace, so Back returns to the gallery rather than through every post.
             navigator().replace(Route::PostView { id, q });
-        }
+        });
     };
     let mut set_full = move |on: bool| {
         full.set(on);
         browser_fullscreen(on);
     };
     let mut start_edit = move || {
-        if let Some(p) = post.peek().as_ref() {
+        if let Some(p) = post.peek().as_ref().filter(|p| p.id == current.peek().0) {
             tag_text.set(p.tags.join(" "));
             rating.set(p.rating);
             editing.set(true);
@@ -244,7 +254,8 @@ pub fn PostView(id: i64, q: String) -> Element {
 
     // Runs one mutation, then shows the post the server returns.
     let mut act = move |op: Op| {
-        if busy() {
+        // What's on the page is still the post before this one.
+        if busy() || post.peek().as_ref().is_some_and(|p| p.id != id) {
             return;
         }
         let Some(client) = store::client() else {
@@ -291,13 +302,17 @@ pub fn PostView(id: i64, q: String) -> Element {
     let client = store::client();
     let abs = |u: &str| client.as_ref().map(|c| c.absolute(u)).unwrap_or_default();
     let file_url = abs(&p.file_url);
+    let shown_id = p.id;
+    // Right from the first render, as changing it later loads the picture twice.
+    let show_original =
+        original() == Some(p.id) || needs_original(&p, rect(), (*dpr.read()).flatten());
     let sample = p
         .sample_url
         .as_deref()
-        .filter(|_| !original() && !store::PREFS.read().originals);
+        .filter(|_| !show_original && !store::PREFS.read().originals);
     let src = client
         .as_ref()
-        .map(|c| stage_url(c, &p, original()))
+        .map(|c| stage_url(c, &p, show_original))
         .unwrap_or_default();
     let thumb = p
         .thumb_url
@@ -490,7 +505,7 @@ pub fn PostView(id: i64, q: String) -> Element {
                     if sample.is_some() {
                         div { class: "sample-note",
                             p { class: "muted hint", {t!("post-sample-note")} }
-                            button { class: "btn text", onclick: move |_| original.set(true), {t!("post-show-original")} }
+                            button { class: "btn text", onclick: move |_| original.set(Some(shown_id)), {t!("post-show-original")} }
                         }
                     }
                 }
@@ -952,6 +967,20 @@ fn sample_is_sharp(natural: (i32, i32), stage: (f64, f64), dpr: f64) -> bool {
     sample >= shown
 }
 
+/// Whether the stage (when measured) shows more device pixels of this post
+/// than its sample has: fullscreen on a big or dense screen.
+fn needs_original(p: &Post, stage: Option<PixelsRect>, dpr: Option<f64>) -> bool {
+    let (Some(stage), Some(dpr)) = (stage, dpr) else {
+        return false;
+    };
+    p.kind != MediaKind::Video
+        && p.sample_url.is_some()
+        && !power::active()
+        && p.width
+            .zip(p.height)
+            .is_some_and(|size| !sample_is_sharp(size, (stage.width(), stage.height()), dpr))
+}
+
 /// The stage's `src`. Images come through the media cache, except
 /// originals too big to keep; videos stream from the server.
 fn stage_url(client: &Client, p: &Post, original: bool) -> String {
@@ -1016,6 +1045,9 @@ fn StageImage(
     enter: &'static str,
 ) -> Element {
     let mut loaded = use_signal(|| false);
+    // For this picture's whole time on the stage: another entrance starting on
+    // it would be a second one, while the next post is on its way.
+    let enter = use_hook(|| enter);
     let mut style = transform;
     style.push_str(&fit_style(size));
     if let Some(t) = thumb.as_deref() {
@@ -1026,9 +1058,11 @@ fn StageImage(
         img {
             id: "stage-img",
             class: if loaded() { "{enter}" } else { "{enter} loading" },
+            "data-turn": (!enter.is_empty()).then_some("wait"),
             src: "{src}",
             alt: "{alt}",
             draggable: "false",
+            decoding: "async",
             style,
             onload: move |_| {
                 spawn(async move {
@@ -1038,6 +1072,9 @@ fn StageImage(
             },
             onmounted: move |_| {
                 motion::arrive(id);
+                if !enter.is_empty() {
+                    motion::turn(thumb.as_deref());
+                }
                 // A cached image can finish before the listener exists.
                 spawn(async move {
                     let complete = document::eval(
@@ -1050,6 +1087,30 @@ fn StageImage(
                         loaded.set(true);
                     }
                 });
+            },
+        }
+    }
+}
+
+/// The viewer's video.
+#[component]
+fn StageVideo(id: i64, src: String, thumb: Option<String>, enter: &'static str) -> Element {
+    // As for the image: one entrance.
+    let enter = use_hook(|| enter);
+    rsx! {
+        video {
+            class: enter,
+            "data-turn": (!enter.is_empty()).then_some("wait"),
+            src: "{src}",
+            controls: true,
+            autoplay: !power::active(),
+            r#loop: true,
+            playsinline: true,
+            onmounted: move |_| {
+                motion::arrive(id);
+                if !enter.is_empty() {
+                    motion::turn(thumb.as_deref());
+                }
             },
         }
     }
@@ -1319,9 +1380,7 @@ fn Stage(
             },
             match kind {
                 MediaKind::Video => rsx! {
-                    video { key: "{id}", class: enter, src: "{src}", controls: true, autoplay: !power::active(), r#loop: true, playsinline: true,
-                        onmounted: move |_| motion::arrive(id),
-                    }
+                    StageVideo { key: "{id}", id, src, thumb, enter }
                 },
                 _ => rsx! {
                     StageImage { key: "{id}", id, src, thumb, alt, size, transform: z.css(), enter }
