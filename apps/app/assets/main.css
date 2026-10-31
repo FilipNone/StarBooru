@@ -390,7 +390,7 @@ input[type="range"] { width: 100%; accent-color: var(--primary); margin-top: 12p
 
 .nav-bottom { display: none; }
 
-.content { padding: 20px 16px 48px; }
+.content { --pad-x: 16px; padding: 20px var(--pad-x) 48px; }
 .page { max-width: 1600px; margin: 0 auto; animation: fade-up var(--med) var(--ease); }
 .page.narrow { max-width: 720px; }
 .center-page { display: grid; place-items: center; min-height: 50vh; padding: 16px; }
@@ -411,7 +411,7 @@ input[type="range"] { width: 100%; accent-color: var(--primary); margin-top: 12p
   }
   .nav-bottom .nav-item { flex: 1 1 0; min-width: 0; flex-direction: column; gap: 4px; padding: 4px 0; font-size: 12px; }
   .nav-bottom .nav-pill { width: 56px; }
-  .content { padding: 12px 8px 112px; }
+  .content { --pad-x: 8px; padding: 12px var(--pad-x) 112px; }
   .page-title { font-size: 22px; }
 }
 
@@ -441,13 +441,38 @@ input[type="range"] { width: 100%; accent-color: var(--primary); margin-top: 12p
 
 /* ---------- gallery ---------- */
 
+/* `--tile-gap` is also TILE_GAP in layout.rs. */
+.app { --tile-gap: 8px; --tile-radius: var(--radius-m); }
+.app[data-tiles="flush"] { --tile-gap: 0px; --tile-radius: 0px; }
 .grid {
-  display: grid; gap: 8px;
+  display: grid; gap: var(--tile-gap);
   grid-template-columns: repeat(auto-fill, minmax(min(168px, 30vw), 1fr));
 }
+/* The gallery's layout (layout.rs): the script works out each tile's column
+   and how far down it starts in tile widths, and this does the pixels. */
+.masonry-box { container-type: inline-size; }
+.masonry {
+  position: relative;
+  --tile: calc((100cqw - (var(--columns) - 1) * var(--tile-gap)) / var(--columns));
+  height: calc(var(--height) * var(--tile) + (var(--rows) - 1) * var(--tile-gap));
+}
+.masonry .thumb {
+  position: absolute; aspect-ratio: auto; width: var(--tile); height: calc(var(--ratio) * var(--tile));
+  left: calc(var(--column) * (var(--tile) + var(--tile-gap)));
+  top: calc(var(--top) * var(--tile) + var(--row) * var(--tile-gap));
+}
+.app[data-tiles="flush"] .page.gallery { max-width: none; }
+.app[data-tiles="flush"] .masonry-box { margin-inline: calc(var(--pad-x) * -1); }
+/* Tiles at fractional sizes round apart at some zooms, leaving a hairline;
+   each one reaches a pixel under the next instead. */
+.app[data-tiles="flush"] .masonry { overflow: clip; }
+.app[data-tiles="flush"] .masonry .thumb {
+  width: calc(var(--tile) + 1px); height: calc(var(--ratio) * var(--tile) + 1px);
+}
+.app[data-tiles="flush"] .masonry .thumb-media { inset: -1px; }
 .thumb {
   position: relative; display: block; aspect-ratio: 1; overflow: hidden;
-  border-radius: var(--radius-m); background: var(--surface-2);
+  border-radius: var(--tile-radius); background: var(--surface-2);
   animation: pop-in var(--slow) var(--ease-spring) both; animation-delay: var(--delay, 0ms);
 }
 .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; transition: filter var(--fast) var(--ease); }
@@ -467,6 +492,7 @@ input[type="range"] { width: 100%; accent-color: var(--primary); margin-top: 12p
   min-height: 24px; font-variant-numeric: tabular-nums; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 700;
   background: oklch(0 0 0 / 0.65); color: white;
 }
+.page.gallery { animation: none; }
 .gallery .page-head { margin-bottom: 12px; }
 .gallery .page-head .page-title { margin: 0; }
 .gallery .page-head .tag-info, .gallery .page-head .save-search { margin-left: -8px; }
@@ -476,21 +502,34 @@ input[type="range"] { width: 100%; accent-color: var(--primary); margin-top: 12p
 .saved-searches .chip { gap: 6px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .saved-searches .chip svg { flex: none; color: var(--primary); }
 .sort { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; font-size: 14px; }
+@media (max-width: 760px) {
+  .sort > .muted { display: none; }
+}
 
 /* colour search (pages/gallery.rs). The wheel and swatches show the colours
    they search for, so these are the one place with literal colours. */
-.color-pick { position: relative; display: inline-flex; }
+.color-pick, .view-pick { position: relative; display: inline-flex; }
 .color-toggle { position: relative; }
 .color-dot {
   position: absolute; right: 5px; bottom: 5px; width: 10px; height: 10px; border-radius: 50%;
   border: 1px solid var(--outline);
 }
-.color-menu {
+.color-menu, .view-menu {
   position: absolute; top: calc(100% + 6px); right: 0; z-index: 31;
   display: grid; justify-items: center; gap: 12px; padding: 12px;
   border-radius: var(--radius-m); background: var(--surface); color: var(--on-surface);
   border: 1px solid oklch(from var(--outline) l c h / 0.4); box-shadow: var(--shadow-2);
   animation: drop-in var(--med) var(--ease); transform-origin: top right;
+}
+/* gallery layout menu (pages/gallery.rs) */
+.view-menu { justify-items: stretch; width: min(380px, calc(100vw - 32px)); font-size: 14px; }
+.view-menu .segmented { display: flex; align-self: stretch; }
+.view-menu .seg { flex: 1 1 0; min-width: 0; padding: 0 6px; font-size: 13px; white-space: normal; line-height: 1.2; }
+.view-row { display: grid; gap: 6px; }
+.view-row .btn { justify-self: end; }
+.view-row input[type="range"] { width: 100%; }
+@media (max-width: 760px) {
+  .view-menu { position: fixed; top: 72px; left: 8px; right: 8px; width: auto; }
 }
 .color-wheel {
   width: 176px; height: 176px; border-radius: 50%; cursor: crosshair;
@@ -560,6 +599,7 @@ input[type="range"] { width: 100%; accent-color: var(--primary); margin-top: 12p
 .gallery .page-head .select-toggle { margin-left: -4px; }
 
 /* selection mode */
+.masonry-box.selecting { padding-bottom: 112px; }
 .grid.selecting { padding-bottom: 112px; }
 button.thumb { width: 100%; padding: 0; border: 0; font: inherit; color: inherit; cursor: pointer; }
 .thumb.selectable .thumb-media { transition: inset var(--med) var(--ease-spring), border-radius var(--med) var(--ease); overflow: hidden; }
@@ -602,7 +642,7 @@ button.thumb { width: 100%; padding: 0; border: 0; font: inherit; color: inherit
   .bulk-bar .btn.tonal { flex: none; width: 48px; padding: 0; }
   .bulk-bar .btn[type="submit"] { flex: 2 1 0; }
   .bulk-label { display: none; }
-  .grid.selecting { padding-bottom: 180px; }
+  .grid.selecting, .masonry-box.selecting { padding-bottom: 180px; }
 }
 .sentinel { display: grid; place-items: center; padding: 32px 0; }
 
@@ -822,7 +862,7 @@ button.thumb { width: 100%; padding: 0; border: 0; font: inherit; color: inherit
 .ai-api-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; font-size: 14px; }
 .edit .field:last-of-type { margin-bottom: 20px; }
 .related-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 6px; }
-.related-grid .thumb { border-radius: var(--radius-s); }
+.related-grid .thumb { border-radius: min(var(--tile-radius), var(--radius-s)); }
 
 @media (max-width: 900px) {
   .post-layout { grid-template-columns: 1fr; }

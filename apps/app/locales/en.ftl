@@ -573,6 +573,19 @@ fullscreen = Fullscreen
 ## Gallery
 
 gallery-tag-info = About this tag
+view-title = Gallery layout
+view-shape = Tile shape
+view-square = Square
+view-landscape = Landscape
+view-portrait = Portrait
+view-staggered = Staggered
+view-staggered-by = Staggered shapes
+view-everything = Everything
+view-columns = { $count ->
+    [one] 1 column
+   *[other] { $count } columns
+}
+view-columns-auto = Automatic
 gallery-stop-selecting = Stop selecting
 gallery-select = Select posts
 gallery-syntax = Search syntax
@@ -952,6 +965,8 @@ post-panels-hide = Hide the translation
 post-panels-none = No text found to translate.
 settings-originals = Always open originals in the viewer
 settings-originals-hint = Big images otherwise open as a smaller copy, which loads faster and uses less data. The original still opens when you zoom in, or when the screen has more pixels than the copy.
+settings-flush = Remove the spaces and rounded corners between images
+settings-flush-hint = Thumbnails sit edge to edge, with square corners.
 
 ## Media cache (desktop and Android)
 

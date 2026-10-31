@@ -205,6 +205,15 @@ pub fn Settings() -> Element {
                     span { {t!("settings-originals")} }
                 }
                 p { class: "muted hint", {t!("settings-originals-hint")} }
+                label { class: "check",
+                    input {
+                        r#type: "checkbox",
+                        checked: prefs.flush_tiles,
+                        onchange: move |e| PREFS.write().flush_tiles = e.checked(),
+                    }
+                    span { {t!("settings-flush")} }
+                }
+                p { class: "muted hint", {t!("settings-flush-hint")} }
             }
 
             if cache::AVAILABLE {

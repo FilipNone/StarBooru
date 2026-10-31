@@ -115,6 +115,61 @@ impl Hand {
     }
 }
 
+/// The shape of the gallery's tiles. Staggered tiles keep the picture's own
+/// proportions, within the limits in `layout.rs`: portrait ones are at least
+/// square, landscape ones at most square, and `StaggeredAll` takes both.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum GalleryView {
+    Square,
+    Landscape,
+    Portrait,
+    StaggeredLandscape,
+    StaggeredAll,
+    /// As on Pinterest. Also what an unknown value (from a newer version)
+    /// reads as.
+    #[default]
+    #[serde(other)]
+    StaggeredPortrait,
+}
+
+impl GalleryView {
+    pub const FIXED: [GalleryView; 3] = [
+        GalleryView::Square,
+        GalleryView::Landscape,
+        GalleryView::Portrait,
+    ];
+    pub const STAGGERED: [GalleryView; 3] = [
+        GalleryView::StaggeredPortrait,
+        GalleryView::StaggeredLandscape,
+        GalleryView::StaggeredAll,
+    ];
+
+    pub fn is_staggered(self) -> bool {
+        Self::STAGGERED.contains(&self)
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            GalleryView::Square => "square",
+            GalleryView::Landscape => "landscape",
+            GalleryView::Portrait => "portrait",
+            GalleryView::StaggeredLandscape => "staggered-landscape",
+            GalleryView::StaggeredAll => "staggered-all",
+            GalleryView::StaggeredPortrait => "staggered-portrait",
+        }
+    }
+
+    pub fn label(self) -> String {
+        match self {
+            GalleryView::Square => t!("view-square"),
+            GalleryView::Landscape | GalleryView::StaggeredLandscape => t!("view-landscape"),
+            GalleryView::Portrait | GalleryView::StaggeredPortrait => t!("view-portrait"),
+            GalleryView::StaggeredAll => t!("view-everything"),
+        }
+    }
+}
+
 /// Another booru the user searched from StarBooru, with their account
 /// there, if any. The account is kept here like the session token.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -148,6 +203,11 @@ pub struct Prefs {
     pub battery_saver: Saver,
     /// Other boorus searched, the latest first.
     pub boorus: Vec<SavedBooru>,
+    pub gallery_view: GalleryView,
+    /// Columns in the gallery; `None` aims for a set tile width.
+    pub gallery_columns: Option<u8>,
+    /// No space between thumbnails and no rounded corners.
+    pub flush_tiles: bool,
 }
 
 impl Default for Prefs {
@@ -163,6 +223,9 @@ impl Default for Prefs {
             hand: Hand::Either,
             battery_saver: Saver::Auto,
             boorus: Vec::new(),
+            gallery_view: GalleryView::default(),
+            gallery_columns: None,
+            flush_tiles: false,
         }
     }
 }
@@ -340,5 +403,23 @@ mod tests {
         // An unknown hand from a newer version falls back rather than failing.
         let prefs: Prefs = serde_json::from_str(r#"{"hand":"both","theme":"light"}"#).unwrap();
         assert_eq!((prefs.hand, prefs.theme), (Hand::Either, Theme::Light));
+    }
+
+    #[test]
+    fn gallery_prefs_default_and_round_trip() {
+        let prefs: Prefs = serde_json::from_str(r#"{"theme":"dark"}"#).unwrap();
+        assert_eq!(prefs.gallery_view, GalleryView::StaggeredPortrait);
+        assert_eq!(prefs.gallery_columns, None);
+        assert!(!prefs.flush_tiles);
+        for view in GalleryView::FIXED.into_iter().chain(GalleryView::STAGGERED) {
+            let json = format!(r#"{{"gallery_view":"{}"}}"#, view.as_str());
+            let prefs: Prefs = serde_json::from_str(&json).unwrap();
+            assert_eq!(prefs.gallery_view, view);
+        }
+        // An unknown view from a newer version falls back rather than failing.
+        let prefs: Prefs =
+            serde_json::from_str(r#"{"gallery_view":"hexagons","gallery_columns":4}"#).unwrap();
+        assert_eq!(prefs.gallery_view, GalleryView::StaggeredPortrait);
+        assert_eq!(prefs.gallery_columns, Some(4));
     }
 }

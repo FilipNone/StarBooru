@@ -14,13 +14,30 @@ use super::{Choice, CorrectionBanner, ErrorBanner, Select, Spinner};
 use crate::Route;
 use crate::cache;
 use crate::icons::{Ico, Icon};
+use crate::layout::{self, Place, TILE_GAP};
 use crate::power;
-use crate::store;
+use crate::store::{self, GalleryView, PREFS};
 use crate::util::{escape_attr, format_duration, rating_label, split_tag_edit};
 
 const PAGE_SIZE: u32 = 60;
 /// The colour wheel's width in pixels, as in `main.css`.
 const WHEEL_SIZE: f64 = 176.0;
+
+/// Width of the gallery's grid in pixels, kept so coming back to the page
+/// lays it out right away.
+static GRID_WIDTH: GlobalSignal<f64> = Signal::global(|| 0.0);
+
+/// Reports the grid's width now and whenever it changes.
+const WATCH_WIDTH: &str = r#"
+const box = document.querySelector(".masonry-box");
+if (box) {
+  const seen = new ResizeObserver(() => {
+    if (box.isConnected) dioxus.send(box.clientWidth);
+    else seen.disconnect();
+  });
+  seen.observe(box);
+}
+"#;
 
 /// Sort menu entries: `order:` values.
 const SORTS: [&str; 11] = [
@@ -173,6 +190,20 @@ pub fn Gallery(q: String) -> Element {
     let single_tag = (!title.is_empty() && !title.contains([' ', ':']) && !title.starts_with('-'))
         .then(|| title.clone());
     let is_empty = posts.read().is_empty() && !loading() && error().is_none() && !has_more();
+    let (view, chosen, gap) = {
+        let prefs = PREFS.read();
+        let gap = if prefs.flush_tiles { 0.0 } else { TILE_GAP };
+        (prefs.gallery_view, prefs.gallery_columns, gap)
+    };
+    let width = GRID_WIDTH();
+    let columns = layout::columns(width, gap, view, chosen);
+    let tiles = layout::place(
+        posts
+            .read()
+            .iter()
+            .map(|p| layout::tile_ratio(view, p.width, p.height)),
+        columns,
+    );
 
     rsx! {
         div { class: "page gallery",
@@ -191,6 +222,7 @@ pub fn Gallery(q: String) -> Element {
                 }
                 SortMenu { q: q.clone() }
                 ColorMenu { q: q.clone() }
+                ViewMenu { width, gap }
                 button {
                     class: if selecting() { "icon-btn select-toggle on" } else { "icon-btn select-toggle" },
                     title: if selecting() { t!("gallery-stop-selecting") } else { t!("gallery-select") },
@@ -242,15 +274,31 @@ pub fn Gallery(q: String) -> Element {
                     }
                 }
             }
-            div { class: if selecting() { "grid selecting" } else { "grid" },
-                for (index, post) in posts.read().iter().enumerate() {
-                    Thumb {
-                        key: "{post.id}",
-                        post: post.clone(),
-                        index,
-                        q: q.clone(),
-                        selected: selecting().then(|| selected.read().contains(&post.id)),
-                        ontoggle: toggle,
+            div {
+                class: if selecting() { "masonry-box selecting" } else { "masonry-box" },
+                onmounted: move |_| {
+                    spawn(async move {
+                        let mut watch = document::eval(WATCH_WIDTH);
+                        while let Ok(seen) = watch.recv::<f64>().await {
+                            if *GRID_WIDTH.peek() != seen {
+                                *GRID_WIDTH.write() = seen;
+                            }
+                        }
+                    });
+                },
+                div {
+                    class: "masonry",
+                    style: "--columns: {columns}; --height: {tiles.height:.4}; --rows: {tiles.rows}",
+                    for (index, (post, place)) in posts.read().iter().zip(&tiles.tiles).enumerate() {
+                        Thumb {
+                            key: "{post.id}",
+                            post: post.clone(),
+                            index,
+                            q: q.clone(),
+                            selected: selecting().then(|| selected.read().contains(&post.id)),
+                            ontoggle: toggle,
+                            place: *place,
+                        }
                     }
                 }
             }
@@ -649,9 +697,117 @@ fn ColorMenu(q: String) -> Element {
     }
 }
 
+/// How the gallery's tiles look: shape and number of columns. The limits
+/// follow the grid's width, so the slider only offers sizes that work here.
+#[component]
+fn ViewMenu(width: f64, gap: f64) -> Element {
+    let mut open = use_signal(|| false);
+    let (view, chosen) = {
+        let prefs = PREFS.read();
+        (prefs.gallery_view, prefs.gallery_columns)
+    };
+    let (fewest, most) = layout::column_limits(width, gap, view);
+    let columns = layout::columns(width, gap, view, chosen);
+    let set_view = |next: GalleryView| PREFS.write().gallery_view = next;
+    rsx! {
+        div {
+            class: "view-pick",
+            onkeydown: move |e: KeyboardEvent| {
+                if open() && e.key() == Key::Escape {
+                    e.stop_propagation();
+                    open.set(false);
+                }
+            },
+            button {
+                r#type: "button",
+                class: "icon-btn view-toggle",
+                title: t!("view-title"),
+                aria_label: t!("view-title"),
+                aria_haspopup: "dialog",
+                aria_expanded: if open() { "true" } else { "false" },
+                onclick: move |_| open.toggle(),
+                Ico { icon: Icon::Layout }
+            }
+            if open() {
+                div { class: "select-backdrop", onclick: move |_| open.set(false) }
+                div { class: "view-menu", role: "dialog", aria_label: t!("view-title"),
+                    div { class: "segmented", role: "radiogroup", aria_label: t!("view-shape"),
+                        for shape in GalleryView::FIXED {
+                            button {
+                                key: "{shape.as_str()}",
+                                r#type: "button",
+                                role: "radio",
+                                aria_checked: if view == shape { "true" } else { "false" },
+                                class: if view == shape { "seg on" } else { "seg" },
+                                onclick: move |_| set_view(shape),
+                                {shape.label()}
+                            }
+                        }
+                        button {
+                            r#type: "button",
+                            role: "radio",
+                            aria_checked: if view.is_staggered() { "true" } else { "false" },
+                            class: if view.is_staggered() { "seg on" } else { "seg" },
+                            onclick: move |_| {
+                                if !view.is_staggered() {
+                                    set_view(GalleryView::default());
+                                }
+                            },
+                            {t!("view-staggered")}
+                        }
+                    }
+                    if view.is_staggered() {
+                        div { class: "view-row",
+                            span { class: "muted", {t!("view-staggered-by")} }
+                            div { class: "segmented", role: "radiogroup", aria_label: t!("view-staggered-by"),
+                                for shape in GalleryView::STAGGERED {
+                                    button {
+                                        key: "{shape.as_str()}",
+                                        r#type: "button",
+                                        role: "radio",
+                                        aria_checked: if view == shape { "true" } else { "false" },
+                                        class: if view == shape { "seg on" } else { "seg" },
+                                        onclick: move |_| set_view(shape),
+                                        {shape.label()}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    div { class: "view-row",
+                        label { class: "muted", r#for: "view-columns", {t!("view-columns", count = columns)} }
+                        input {
+                            id: "view-columns",
+                            r#type: "range",
+                            min: "{fewest}",
+                            max: "{most}",
+                            step: "1",
+                            disabled: fewest == most,
+                            value: "{columns}",
+                            oninput: move |e| {
+                                if let Ok(n) = e.value().parse::<u8>() {
+                                    PREFS.write().gallery_columns = Some(n);
+                                }
+                            },
+                        }
+                        button {
+                            r#type: "button",
+                            class: "btn text small",
+                            aria_pressed: if chosen.is_none() { "true" } else { "false" },
+                            onclick: move |_| PREFS.write().gallery_columns = None,
+                            {t!("view-columns-auto")}
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// A post in the grid. With `selected` set (selection mode), a click
 /// toggles it instead of opening it. Both modes render the same elements, so
-/// turning selection on doesn't load the thumbnails again.
+/// turning selection on doesn't load the thumbnails again. `place` is its
+/// spot in the gallery's layout; other grids leave it out.
 #[component]
 pub(super) fn Thumb(
     post: Post,
@@ -659,6 +815,7 @@ pub(super) fn Thumb(
     q: String,
     selected: Option<bool>,
     ontoggle: EventHandler<(usize, bool)>,
+    place: Option<Place>,
 ) -> Element {
     let client = store::client();
     let src = post
@@ -674,6 +831,13 @@ pub(super) fn Thumb(
     let mut hovered = use_signal(|| false);
     // Staggered entrance within a page of results.
     let delay = (index % PAGE_SIZE as usize) * 16;
+    let mut style = format!("--delay: {delay}ms");
+    if let Some(p) = place {
+        style.push_str(&format!(
+            "; --column: {}; --top: {:.4}; --row: {}; --ratio: {:.4}",
+            p.column, p.top, p.row, p.ratio
+        ));
+    }
     let alt = post.tags.join(" ");
     let label = if alt.is_empty() {
         t!("post-alt", id = post.id)
@@ -708,7 +872,7 @@ pub(super) fn Thumb(
     rsx! {
         a {
             class,
-            style: "--delay: {delay}ms",
+            style,
             href: "{to}",
             aria_label: label,
             role: selected.map(|_| "button"),

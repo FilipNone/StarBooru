@@ -8,6 +8,7 @@ mod activity;
 mod cache;
 mod download;
 mod icons;
+mod layout;
 mod oidc;
 mod pages;
 mod power;
@@ -124,6 +125,7 @@ fn App() -> Element {
             lang,
             "data-theme": prefs.theme.as_str(),
             "data-hand": prefs.hand.as_str(),
+            "data-tiles": if prefs.flush_tiles { "flush" } else { "spaced" },
             "data-saver": if power::active() { "on" } else { "off" },
             style: "--seed-hue: {system::seed_hue(&prefs)}",
             Router::<Route> {}

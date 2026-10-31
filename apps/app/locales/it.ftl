@@ -581,6 +581,19 @@ fullscreen = Schermo intero
 ## Gallery
 
 gallery-tag-info = Informazioni su questo tag
+view-title = Disposizione della galleria
+view-shape = Forma delle miniature
+view-square = Quadrate
+view-landscape = Orizzontali
+view-portrait = Verticali
+view-staggered = Sfalsate
+view-staggered-by = Forme sfalsate
+view-everything = Tutte
+view-columns = { $count ->
+    [one] 1 colonna
+   *[other] { $count } colonne
+}
+view-columns-auto = Automatico
 gallery-stop-selecting = Termina la selezione
 gallery-select = Seleziona i post
 gallery-syntax = Sintassi di ricerca
@@ -960,6 +973,8 @@ post-panels-hide = Nascondi la traduzione
 post-panels-none = Nessun testo da tradurre.
 settings-originals = Apri sempre gli originali nel visualizzatore
 settings-originals-hint = Altrimenti le immagini grandi si aprono come copia più leggera, più veloce e con meno dati. L’originale si apre comunque quando ingrandisci, o quando lo schermo ha più pixel della copia.
+settings-flush = Togli gli spazi e gli angoli arrotondati tra le immagini
+settings-flush-hint = Le miniature stanno una accanto all’altra, con gli angoli squadrati.
 
 ## Media cache (desktop and Android)
 
