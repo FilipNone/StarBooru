@@ -4,11 +4,10 @@ Third-party assets bundled with StarBooru.
 
 | Path | Title | Author | Source | License |
 |---|---|---|---|---|
-| `apps/app/src/icons.rs` (SVG path data, most icons), `tools/vscode-starbooru/media/star.svg` | MingCute Icon (fill) | MingCute Design | https://github.com/Richard9394/MingCute | Apache-2.0 |
+| `apps/app/src/icons.rs` (SVG path data, most icons; `Search` changed to an open lens with a highlight), `tools/vscode-starbooru/media/star.svg` | MingCute Icon (fill) | MingCute Design | https://github.com/Richard9394/MingCute | Apache-2.0 |
 | `apps/app/src/icons.rs` (SVG path data: `Tune`, `ThumbUp`, `ThumbDown`) | Material Symbols Rounded | Google | https://github.com/google/material-design-icons | Apache-2.0 |
 | `apps/app/src/icons.rs` (SVG path data: `Edit`) | Solar Bold | 480 Design | https://www.figma.com/community/file/1166831539721848736 | CC BY 4.0 |
 | `apps/app/src/icons.rs` (`Upload`, redrawn in MingCute's style) | Layout from Fluent UI System Icons | Microsoft | https://github.com/microsoft/fluentui-system-icons | MIT |
-| `apps/app/src/icons.rs` (`Search`, redrawn as a solid shape) | Proportions from Framework7 Icons | Vladimir Kharlampidi | https://github.com/framework7io/framework7-icons | MIT |
 | `apps/app/src/icons.rs` (`Translate`, redrawn with thicker strokes) | Letterforms from Material Symbols Rounded | Google | https://github.com/google/material-design-icons | Apache-2.0 |
 | `vendor/tao` (Rust source, patched) | tao 0.34.8 with tao#1218 | Tauri Programme within The Commons Conservancy, the winit contributors | https://github.com/tauri-apps/tao | Apache-2.0 OR MIT |
 
