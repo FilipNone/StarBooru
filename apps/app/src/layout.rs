@@ -1,7 +1,8 @@
 //! How the gallery lays out its tiles: how many columns fit, how tall a tile
 //! is and where it goes. Heights are multiples of a tile's width, so the
 //! pixels are left to the CSS (`.masonry` in `main.css`) and a window that
-//! resizes within the same column count needs no new layout.
+//! resizes within the same column count needs no new layout. The same sums in
+//! pixels say which tiles are near the screen without measuring anything.
 
 use crate::store::GalleryView;
 
@@ -60,6 +61,12 @@ pub fn columns(width: f64, gap: f64, view: GalleryView, chosen: Option<u8>) -> u
     wanted.clamp(fewest, most)
 }
 
+/// A tile's width in pixels, with `columns` in a grid `width` pixels wide.
+pub fn tile_width(width: f64, gap: f64, columns: u32) -> f64 {
+    let columns = f64::from(columns.max(1));
+    ((width - gap * (columns - 1.0)) / columns).max(0.0)
+}
+
 /// A tile's height over its width.
 pub fn tile_ratio(view: GalleryView, width: Option<i32>, height: Option<i32>) -> f64 {
     let natural = match (width, height) {
@@ -86,12 +93,48 @@ pub struct Place {
     pub ratio: f64,
 }
 
+impl Place {
+    /// How far down the grid it starts, in pixels.
+    pub fn top_px(&self, tile: f64, gap: f64) -> f64 {
+        self.top * tile + f64::from(self.row) * gap
+    }
+
+    pub fn height_px(&self, tile: f64) -> f64 {
+        self.ratio * tile
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Layout {
     pub tiles: Vec<Place>,
     /// The tallest column, in the units of `Place`.
     pub height: f64,
     pub rows: u32,
+}
+
+impl Layout {
+    /// The grid's height in pixels.
+    pub fn height_px(&self, tile: f64, gap: f64) -> f64 {
+        self.height * tile + f64::from(self.rows.saturating_sub(1)) * gap
+    }
+
+    /// The tiles that reach into `from..to`, pixels from the top of the grid,
+    /// in list order. None while the grid has no size, as every tile would
+    /// stand at the top.
+    pub fn within(&self, tile: f64, gap: f64, from: f64, to: f64) -> Vec<usize> {
+        if tile <= 0.0 {
+            return Vec::new();
+        }
+        self.tiles
+            .iter()
+            .enumerate()
+            .filter(|(_, place)| {
+                let top = place.top_px(tile, gap);
+                top < to && top + place.height_px(tile) > from
+            })
+            .map(|(index, _)| index)
+            .collect()
+    }
 }
 
 /// Puts each tile in the shortest column so far, the leftmost if they tie. A
@@ -256,6 +299,53 @@ mod tests {
         let more = [1.1, 1.9, 1.3];
         let all = place(first.iter().chain(&more).copied(), 3);
         assert_eq!(all.tiles.get(..5), Some(&place(first, 3).tiles[..]));
+    }
+
+    #[test]
+    fn pixels_match_the_css() {
+        assert_eq!(tile_width(1248.0, 8.0, 5), 243.2);
+        assert_eq!(tile_width(1000.0, 0.0, 4), 250.0);
+        assert_eq!(tile_width(0.0, 8.0, 5), 0.0, "a grid not measured yet");
+        assert_eq!(tile_width(100.0, 8.0, 0), 100.0);
+        let layout = place([1.5, 1.0, 1.0, 2.0], 2);
+        let last = layout.tiles[3];
+        assert_eq!((last.column, last.row, last.top), (0, 1, 1.5));
+        assert_eq!(last.top_px(100.0, 8.0), 158.0);
+        assert_eq!(last.height_px(100.0), 200.0);
+        assert_eq!(layout.height_px(100.0, 8.0), 358.0);
+        assert_eq!(Layout::default().height_px(100.0, 8.0), 0.0);
+    }
+
+    #[test]
+    fn only_tiles_reaching_into_the_range_are_near() {
+        // Two columns of squares 100 tall, 8 apart: rows start at 0, 108, 216…
+        let layout = place([1.0; 40], 2);
+        let near = |from, to| layout.within(100.0, 8.0, from, to);
+        assert_eq!(near(0.0, 100.0), [0, 1]);
+        assert_eq!(near(-500.0, 1.0), [0, 1]);
+        assert_eq!(near(150.0, 300.0), [2, 3, 4, 5]);
+        assert!(near(100.0, 108.0).is_empty(), "just the gap");
+        assert_eq!(near(2000.0, 2100.0), [36, 37, 38, 39]);
+        assert!(near(9000.0, 9500.0).is_empty(), "past the end");
+    }
+
+    #[test]
+    fn a_long_list_only_ever_has_a_few_tiles_near() {
+        let layout = place((0..100_000).map(|i| 1.0 + f64::from(i % 5) / 5.0), 5);
+        let tile = 243.2;
+        let end = layout.height_px(tile, TILE_GAP);
+        // Four screens of 800 pixels, anywhere in the grid.
+        for top in [0.0, end / 3.0, end / 2.0, end - 3200.0] {
+            let count = layout.within(tile, TILE_GAP, top, top + 3200.0).len();
+            assert!((30..=90).contains(&count), "{count} at {top}");
+        }
+    }
+
+    #[test]
+    fn a_grid_not_measured_yet_has_nothing_near() {
+        // Every tile would count as near, and a long list would all go on the page.
+        let layout = place([1.0; 100], 3);
+        assert!(layout.within(0.0, 8.0, -100.0, 3000.0).is_empty());
     }
 
     #[test]

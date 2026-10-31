@@ -21,7 +21,7 @@ use crate::icons::{Ico, Icon};
 use crate::layout::{self, Place, TILE_GAP};
 use crate::motion;
 use crate::power;
-use crate::store::{self, GalleryView, PREFS, Spot};
+use crate::store::{self, GalleryView, PREFS, Prefs, Spot};
 use crate::util::{escape_attr, format_duration, rating_label, split_tag_edit};
 
 const PAGE_SIZE: u32 = 60;
@@ -37,12 +37,80 @@ const WATCH_WIDTH: &str = r#"
 const box = document.querySelector(".masonry-box");
 if (box) {
   const seen = new ResizeObserver(() => {
-    if (box.isConnected) dioxus.send(box.clientWidth);
+    // The exact width: a rounded one adds up to a visible error far down the grid.
+    if (box.isConnected) dioxus.send(box.getBoundingClientRect().width);
     else seen.disconnect();
   });
   seen.observe(box);
 }
 "#;
+
+/// The grid's measurements as they are now.
+#[derive(Clone, Copy, PartialEq)]
+struct Grid {
+    view: GalleryView,
+    columns: u32,
+    gap: f64,
+    width: f64,
+    /// A tile's width in pixels.
+    tile: f64,
+}
+
+impl Grid {
+    fn new(prefs: &Prefs, width: f64) -> Self {
+        let gap = if prefs.flush_tiles { 0.0 } else { TILE_GAP };
+        let view = prefs.gallery_view;
+        let columns = layout::columns(width, gap, view, prefs.gallery_columns);
+        let tile = layout::tile_width(width, gap, columns);
+        Self {
+            view,
+            columns,
+            gap,
+            width,
+            tile,
+        }
+    }
+
+    fn now() -> Self {
+        Self::new(&PREFS.peek(), *GRID_WIDTH.peek())
+    }
+
+    fn place(self, list: &[Post]) -> layout::Layout {
+        layout::place(
+            list.iter()
+                .map(|p| layout::tile_ratio(self.view, p.width, p.height)),
+            self.columns,
+        )
+    }
+}
+
+/// Where a post's tile is in pixels: its top, from the top of the grid, and
+/// its height.
+fn tile_box(list: &[Post], id: i64) -> Option<(f64, f64)> {
+    let grid = Grid::now();
+    let index = list.iter().position(|p| p.id == id)?;
+    let placed = grid.place(list.get(..=index)?);
+    let place = placed.tiles.last()?;
+    Some((
+        place.top_px(grid.tile, grid.gap),
+        place.height_px(grid.tile),
+    ))
+}
+
+/// How far around the top of the screen tiles go on the page, until the page
+/// has reported how tall the screen is (`WATCH_NEAR`).
+const FIRST_NEAR: (f64, f64) = (1500.0, 3000.0);
+
+/// The part of the grid to put on the page for going back to a spot, so the
+/// pictures above it don't start loading first.
+fn near_spot(list: &[Post], spot: Option<&Spot>) -> (f64, f64) {
+    let top = spot.filter(|s| s.y >= 1.0).map_or(0.0, |s| {
+        s.post
+            .and_then(|id| tile_box(list, id))
+            .map_or(s.y, |(top, _)| top - s.offset)
+    });
+    (top - FIRST_NEAR.0, top + FIRST_NEAR.1)
+}
 
 /// Results kept while the app runs, so coming back to a search shows it as it
 /// was without loading it again.
@@ -98,8 +166,8 @@ pub(super) fn forget_lists() {
 /// Restoring a long list asks for this many pages of results at a time.
 const RESTORE_PAGES: u32 = 3;
 /// How many posts going back to a spot will load, before it settles for the
-/// scroll position.
-const MAX_RESTORE: usize = 6000;
+/// scroll position. Only their details: pictures load near the screen.
+const MAX_RESTORE: usize = 100_000;
 
 /// `order:random` comes out different each time, so it has no spot to go back to.
 fn is_random(q: &str) -> bool {
@@ -171,17 +239,70 @@ window.__sbSpot = {
 "#;
 const WATCH_SCROLL_OFF: &str = "window.__sbSpot?.stop(); window.__sbSpot = null;";
 
+/// Reports which part of the grid to keep on the page, in pixels from its top:
+/// the screen and a screen and a half either way, so pictures are there before
+/// they scroll into view. Quiet until the screen gets within three quarters of
+/// a screen of the edge of what it last reported. Browsers go on downloading a
+/// picture taken off the page, which after a fast scroll keeps the ones on the
+/// screen waiting behind hundreds of others, so it cancels those.
+const WATCH_NEAR: &str = r#"
+window.__sbNear?.stop();
+let held = null;
+let frame = 0;
+const gone = new MutationObserver((changes) => {
+  for (const change of changes) {
+    for (const node of change.removedNodes) {
+      if (node.nodeType !== 1) continue;
+      for (const img of node.querySelectorAll("img")) {
+        if (!img.complete) img.removeAttribute("src");
+      }
+    }
+  }
+});
+const box = document.querySelector(".masonry");
+if (box) gone.observe(box, { childList: true });
+const check = (force) => {
+  frame = 0;
+  const grid = document.querySelector(".masonry");
+  if (!grid) return;
+  const top = -grid.getBoundingClientRect().top;
+  const tall = innerHeight;
+  if (force || !held || top - tall * 0.75 < held[0] || top + tall * 1.75 > held[1]) {
+    held = [top - tall * 1.5, top + tall * 2.5];
+    dioxus.send(held);
+  }
+};
+const soon = () => {
+  frame ||= requestAnimationFrame(() => check(false));
+};
+addEventListener("scroll", soon, { passive: true });
+addEventListener("resize", soon);
+window.__sbNear = {
+  check,
+  stop() {
+    cancelAnimationFrame(frame);
+    gone.disconnect();
+    removeEventListener("scroll", soon);
+    removeEventListener("resize", soon);
+  },
+};
+check(true);
+"#;
+const WATCH_NEAR_OFF: &str = "window.__sbNear?.stop(); window.__sbNear = null;";
+
 /// Puts a remembered tile back where it was on the screen, or failing that,
-/// the scroll position. The tile may land a frame after the list does.
+/// the scroll position. The list may land a frame after this. It works from the
+/// layout, as the tile itself isn't on the page until the screen gets near it.
 const JUMP_TO_SPOT: &str = r#"
-const [post, offset, y] = await dioxus.recv();
+const [top, offset, y, home] = await dioxus.recv();
 const go = tries => {
-  const tile = y >= 1 && post != null
-    ? document.querySelector(`.masonry [data-post="${post}"]`)?.closest(".thumb")
-    : null;
-  if (tile) scrollBy({ top: tile.getBoundingClientRect().top - offset, behavior: "instant" });
-  else if (y >= 1 && tries > 0) return requestAnimationFrame(() => go(tries - 1));
+  const grid = document.querySelector(".masonry")?.getBoundingClientRect();
+  const anchored = grid && y >= 1 && top != null;
+  if (anchored && top > grid.height && tries > 0) return requestAnimationFrame(() => go(tries - 1));
+  if (anchored) scrollBy({ top: grid.top + top - offset, behavior: "instant" });
   else scrollTo({ top: y, behavior: "instant" });
+  if (home) window.__sbHero?.home(...home);
+  window.__sbNear?.check(true);
   // Only now do the tiles stand where a picture coming back can land (motion.rs).
   window.__sbHero?.back();
 };
@@ -226,11 +347,17 @@ pub fn Gallery(q: String) -> Element {
     // Unknown tags the search corrected.
     let mut corrected = use_signal(Vec::<TagCorrection>::new);
 
-    // Tiles below this index appeared with the list, and don't animate in.
+    // Tiles below this index aren't new, and don't animate in. Only the ones
+    // that land on the page along with new results are.
     let mut settled = use_signal(|| posts.peek().len());
+    use_effect(move || settled.set(posts.read().len()));
     let mut loaded_at = use_signal(Utc::now);
     // Bumped to put the page back at the remembered spot.
     let mut jump = use_signal(|| 0u64);
+    // The part of the grid on the page, in pixels from its top (`WATCH_NEAR`).
+    let mut near = use_signal(|| near_spot(&posts.peek(), store::spot(&q).as_ref()));
+    let grid = use_memo(|| Grid::new(&PREFS.read(), GRID_WIDTH()));
+    let tiles = use_memo(move || grid().place(&posts.read()));
 
     let keep = move || {
         keep_list(List {
@@ -327,6 +454,9 @@ pub fn Gallery(q: String) -> Element {
             }
             loading.set(false);
             settled.set(found.len());
+            if failure.is_none() {
+                near.set(near_spot(&found, Some(&spot)));
+            }
             posts.set(found);
             corrected.set(fixed);
             next_page.set(page);
@@ -379,6 +509,7 @@ pub fn Gallery(q: String) -> Element {
         error.set(None);
         if let Some(list) = cached_list(&q) {
             settled.set(list.posts.len());
+            near.set(near_spot(&list.posts, store::spot(&q).as_ref()));
             posts.set(list.posts);
             corrected.set(list.corrected);
             next_page.set(list.next_page);
@@ -406,6 +537,22 @@ pub fn Gallery(q: String) -> Element {
         reload();
         restart(q);
     }));
+
+    // More of the list comes before the user gets to the end of it.
+    use_effect(move || {
+        let (_, to) = near();
+        let Grid { gap, tile, .. } = grid();
+        let end = tiles.read().height_px(tile, gap);
+        if tile > 0.0
+            && to >= end
+            && generation() > 0
+            && has_more()
+            && !loading()
+            && error.read().is_none()
+        {
+            load_more();
+        }
+    });
 
     // What finishes uploading while the user stays here shows up here.
     let finished = use_memo(activity::finished_count);
@@ -439,17 +586,21 @@ pub fn Gallery(q: String) -> Element {
     });
     use_drop(|| {
         document::eval(WATCH_SCROLL_OFF);
+        document::eval(WATCH_NEAR_OFF);
     });
     use_effect(move || {
         if jump() == 0 {
             return;
         }
-        if let Some(spot) = store::spot(&query.peek()) {
-            let eval = document::eval(JUMP_TO_SPOT);
-            let _ = eval.send((spot.post, spot.offset, spot.y));
-        } else {
-            motion::back();
-        }
+        let list = posts.peek();
+        let spot = store::spot(&query.peek());
+        let (post, offset, y) = spot.map_or((None, 0.0, 0.0), |s| (s.post, s.offset, s.y));
+        let top = post.and_then(|id| tile_box(&list, id)).map(|(top, _)| top);
+        // The viewer may have moved on since, to a post far from the spot.
+        let home = motion::shown()
+            .and_then(|id| tile_box(&list, id).map(|(top, height)| (id, top, height)));
+        let eval = document::eval(JUMP_TO_SPOT);
+        let _ = eval.send((top, offset, y, home));
     });
 
     // Selection mode for mass edits. `anchor` is the last thumb clicked, for
@@ -527,29 +678,30 @@ pub fn Gallery(q: String) -> Element {
     let single_tag = (!title.is_empty() && !title.contains([' ', ':']) && !title.starts_with('-'))
         .then(|| title.clone());
     let is_empty = posts.read().is_empty() && !loading() && error().is_none() && !has_more();
-    let (view, chosen, gap) = {
-        let prefs = PREFS.read();
-        let gap = if prefs.flush_tiles { 0.0 } else { TILE_GAP };
-        (prefs.gallery_view, prefs.gallery_columns, gap)
-    };
-    let width = GRID_WIDTH();
-    let columns = layout::columns(width, gap, view, chosen);
-    let tiles = layout::place(
-        posts
-            .read()
-            .iter()
-            .map(|p| layout::tile_ratio(view, p.width, p.height)),
+    let Grid {
         columns,
-    );
+        gap,
+        width,
+        tile,
+        ..
+    } = grid();
     // A new layout moves everything, so the same tile goes back to the top.
-    let mut laid_out = use_signal(|| (columns, view, gap, width));
-    use_effect(use_reactive!(|columns, view, gap, width| {
-        let now = (columns, view, gap, width);
+    let mut laid_out = use_signal(|| *grid.peek());
+    use_effect(move || {
+        let now = grid();
         if *laid_out.peek() != now {
             laid_out.set(now);
             jump += 1;
         }
-    }));
+    });
+    let placed = tiles.read();
+    let list = posts.read();
+    let (from, to) = near();
+    let shown: Vec<_> = placed
+        .within(tile, gap, from, to)
+        .into_iter()
+        .filter_map(|index| Some((index, list.get(index)?, *placed.tiles.get(index)?)))
+        .collect();
 
     rsx! {
         div { class: "page gallery",
@@ -633,11 +785,17 @@ pub fn Gallery(q: String) -> Element {
                             }
                         }
                     });
+                    spawn(async move {
+                        let mut watch = document::eval(WATCH_NEAR);
+                        while let Ok(seen) = watch.recv::<(f64, f64)>().await {
+                            near.set(seen);
+                        }
+                    });
                 },
                 div {
                     class: "masonry",
-                    style: "--columns: {columns}; --height: {tiles.height:.4}; --rows: {tiles.rows}",
-                    for (index, (post, place)) in posts.read().iter().zip(&tiles.tiles).enumerate() {
+                    style: "--columns: {columns}; --height: {placed.height:.4}; --rows: {placed.rows}",
+                    for (index, post, place) in shown {
                         Thumb {
                             key: "{post.id}",
                             post: post.clone(),
@@ -645,20 +803,14 @@ pub fn Gallery(q: String) -> Element {
                             q: q.clone(),
                             selected: selecting().then(|| selected.read().contains(&post.id)),
                             ontoggle: toggle,
-                            place: *place,
+                            place,
                             still: index < settled(),
                         }
                     }
                 }
             }
             if has_more() && error().is_none() {
-                div {
-                    class: "sentinel",
-                    onvisible: move |e| {
-                        if e.is_intersecting().unwrap_or(false) {
-                            load_more();
-                        }
-                    },
+                div { class: "sentinel",
                     if loading() {
                         Spinner {}
                     } else {
@@ -1158,7 +1310,8 @@ fn ViewMenu(width: f64, gap: f64) -> Element {
 /// toggles it instead of opening it. Both modes render the same elements, so
 /// turning selection on doesn't load the thumbnails again. `place` is its
 /// spot in the gallery's layout; other grids leave it out. `still` skips the
-/// entrance, for a tile that isn't new to the user.
+/// entrance, for a tile that isn't new to the user; only its value when the
+/// tile appears counts, so that a later change can't cut the entrance short.
 #[component]
 pub(super) fn Thumb(
     post: Post,
@@ -1169,6 +1322,7 @@ pub(super) fn Thumb(
     place: Option<Place>,
     #[props(default)] still: bool,
 ) -> Element {
+    let still = use_hook(|| still);
     let client = store::client();
     let src = post
         .thumb_url
@@ -1255,7 +1409,8 @@ pub(super) fn Thumb(
                     }
                 },
                 if let Some(src) = src {
-                    img { src, alt, loading: "lazy", decoding: "async" }
+                    // The gallery only puts tiles near the screen on the page.
+                    img { src, alt, loading: if place.is_some() { "eager" } else { "lazy" }, decoding: "async" }
                 } else {
                     div { class: "thumb-placeholder", Ico { icon: Icon::Play, size: 40 } }
                 }

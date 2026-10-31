@@ -123,6 +123,20 @@ window.__sbHero ??= {
     clearTimeout(this.veil);
     this.veil = setTimeout(() => this.unveil(), 400);
   },
+  // The gallery only has tiles near the screen on the page, and the viewer may
+  // have moved far from where it was: the tile's place comes from the layout.
+  home(id, top, height) {
+    const from = this.stage;
+    const grid = document.querySelector(".masonry");
+    if (!grid || from?.id !== id || !from.at || performance.now() - from.at > 1500 || this.calm()) return;
+    const bar = document.querySelector(".topbar")?.getBoundingClientRect().bottom ?? 0;
+    const nav = document.querySelector(".nav-bottom")?.getBoundingClientRect().top || innerHeight;
+    const start = grid.getBoundingClientRect().top + top;
+    // Mostly out of sight: bring it into view.
+    if (Math.min(start + height, nav) - Math.max(start, bar) < height / 2) {
+      scrollBy({ top: start - (innerHeight - height) / 2, behavior: "instant" });
+    }
+  },
   back() {
     const from = this.stage;
     if (!from?.at || performance.now() - from.at > 1500) return;
@@ -135,14 +149,7 @@ window.__sbHero ??= {
         else this.unveil();
         return;
       }
-      const bar = document.querySelector(".topbar")?.getBoundingClientRect().bottom ?? 0;
-      const nav = document.querySelector(".nav-bottom")?.getBoundingClientRect().top || innerHeight;
-      let box = tile.getBoundingClientRect();
-      // Mostly out of sight, after moving on in the viewer: bring it into view.
-      if (Math.min(box.bottom, nav) - Math.max(box.top, bar) < box.height / 2) {
-        scrollBy({ top: box.top - (innerHeight - box.height) / 2, behavior: "instant" });
-        box = tile.getBoundingClientRect();
-      }
+      const box = tile.getBoundingClientRect();
       const media = tile.querySelector(".thumb-media");
       const thumb = media?.querySelector("img")?.currentSrc;
       const src = from.src || thumb;
@@ -157,10 +164,17 @@ window.__sbHero ??= {
       document.documentElement.classList.add("sb-hero-back");
       this.fly(box, getComputedStyle(tile).borderRadius);
     };
-    go(10);
+    go(30);
   },
 };
 "##;
+
+/// The post last on the viewer's stage, the one a picture flies back from.
+static SHOWN: GlobalSignal<Option<i64>> = Signal::global(|| None);
+
+pub fn shown() -> Option<i64> {
+    *SHOWN.peek()
+}
 
 /// How far the Upload tab's centre is from the middle of the window, where a
 /// sheet sits. Nothing to measure means no distance.
@@ -207,17 +221,13 @@ pub async fn open(id: i64) {
 /// The viewer's picture is on the page: the floating one flies to it, and the
 /// viewer keeps note of where it is for the way back.
 pub fn arrive(id: i64) {
+    *SHOWN.write() = Some(id);
     document::eval(&format!("{HERO}\nwindow.__sbHero.arrive({id});"));
 }
 
 /// The viewer is going away.
 pub fn leave() {
     document::eval(&format!("{HERO}\nwindow.__sbHero.leave();"));
-}
-
-/// The gallery is showing again: the picture just left flies back to its tile.
-pub fn back() {
-    document::eval(&format!("{HERO}\nwindow.__sbHero.back();"));
 }
 
 #[cfg(test)]
