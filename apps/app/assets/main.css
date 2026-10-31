@@ -60,6 +60,7 @@ body { background: #111; }
   --fast: 150ms;
   --med: 250ms;
   --slow: 420ms;
+  --fade: 640ms;
 
   font-family: "Roboto Flex", Roboto, "Segoe UI Variable", "Segoe UI", system-ui, -apple-system,
     "Noto Sans", sans-serif;
@@ -887,14 +888,15 @@ button.thumb { width: 100%; padding: 0; border: 0; font: inherit; color: inherit
   position: absolute; inset: 0 0 auto; height: 100dvh; z-index: -1; overflow: hidden; pointer-events: none;
   mask-image: linear-gradient(#000 40%, transparent);
 }
+/* Already blurred when drawn (motion.rs), so only opacity moves: one layer fades
+   out as the other fades in. */
 .glow-layer {
-  position: absolute; inset: -12%; background: center / cover no-repeat;
-  filter: blur(72px) saturate(1.6); opacity: var(--glow-a);
-  animation: fade-in var(--slow) var(--ease);
+  position: absolute; left: -12%; top: -12%; width: 124%; height: 124%;
+  opacity: 0; transition: opacity var(--fade) ease-in-out;
 }
-.glow-layer.still { animation: none; }
+.glow-layer.on { opacity: var(--glow-a); }
 .post-layout.full-open .post-glow { position: fixed; inset: 0; height: auto; z-index: 49; mask-image: none; background: var(--stage); }
-.post-layout.full-open .glow-layer { opacity: 0.6; }
+.post-layout.full-open .glow-layer.on { opacity: 0.6; }
 .app[data-saver="on"] .post-glow { display: none; }
 
 .stage {
@@ -914,6 +916,8 @@ button.thumb { width: 100%; padding: 0; border: 0; font: inherit; color: inherit
 .stage img.loading { background: var(--thumb) center / 100% 100% no-repeat; }
 .stage img.from-next, .stage video.from-next { animation: from-next var(--med) var(--ease); }
 .stage img.from-prev, .stage video.from-prev { animation: from-prev var(--med) var(--ease); }
+/* Flipping through: the pictures just follow one another. */
+.stage img.quick, .stage video.quick { animation: none; }
 /* Previous/next (motion.rs): the new picture waits out of sight until it can
    paint, while a copy of the old one holds its place underneath. Both then
    move at once. */
@@ -925,7 +929,7 @@ button.thumb { width: 100%; padding: 0; border: 0; font: inherit; color: inherit
 .stage img.stage-past.to-next { animation: to-next var(--med) var(--ease) forwards; }
 .stage img.stage-past.to-prev { animation: to-prev var(--med) var(--ease) forwards; }
 .stage { touch-action: pan-y; user-select: none; -webkit-user-select: none; }
-.stage img { transform-origin: center; transition: transform var(--fast) var(--ease); }
+.stage img { transform-origin: center; transition: transform var(--fast) var(--ease), border-radius var(--fast) var(--ease); }
 .stage:not(.zoomed) img { cursor: zoom-in; }
 /* Grown past the stage, it's seen through the stage's own rounded window. */
 .stage.zoomed { overflow: hidden; touch-action: none; cursor: grab; }
@@ -1347,7 +1351,7 @@ html.sb-hero .stage img, html.sb-hero .stage video { visibility: hidden; }
 .page.post-layout { animation-name: fade-in; }
 html.sb-hero-leaving .page.gallery { opacity: 0; }
 html.sb-hero-back .page.gallery { animation: fade-in var(--med) var(--ease); }
-.hero-past { position: fixed; inset: 0; z-index: 8; overflow: hidden; pointer-events: none; background: var(--canvas); }
+.hero-past { position: fixed; inset: 0; z-index: 7; overflow: hidden; pointer-events: none; background: var(--canvas); }
 .hero-past .page { position: absolute; margin: 0; }
 .hero-past * { animation: none !important; transition: none !important; }
 @keyframes drift { to { transform: translate(4%, -3%) rotate(8deg); } }

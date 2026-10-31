@@ -5,8 +5,8 @@
 
 use dioxus::prelude::*;
 
-/// The values are spelled out: the copy hangs off `<body>`, outside `.app` and
-/// its motion tokens.
+/// The copy flies over the page and under the bars, as `.hero-past` lies under
+/// it. Its flight's values are spelled out, as the script has no use for tokens.
 const HERO: &str = r##"
 window.__sbHero ??= {
   ghost: null, hidden: null, flying: false, holding: false, past: null, stage: null, timer: 0, veil: 0, unwatch: null,
@@ -41,14 +41,14 @@ window.__sbHero ??= {
     ghost.setAttribute("aria-hidden", "true");
     ghost.src = src;
     Object.assign(ghost.style, {
-      position: "fixed", zIndex: "60", margin: "0", pointerEvents: "none", objectFit: "cover",
+      position: "fixed", zIndex: "8", margin: "0", pointerEvents: "none", objectFit: "cover",
       left: `${box.left}px`, top: `${box.top}px`, width: `${box.width}px`, height: `${box.height}px`,
       borderRadius: radius,
     });
     if (under) {
       ghost.style.background = `center / cover no-repeat url(${JSON.stringify(under)})`;
     }
-    document.body.append(ghost);
+    (document.querySelector(".app") ?? document.body).append(ghost);
     this.ghost = ghost;
     this.timer = setTimeout(() => this.clear(), 1500);
   },
@@ -136,7 +136,10 @@ window.__sbHero ??= {
     const img = document.querySelector(`[data-post="${id}"] img`);
     if (this.calm() || !img?.complete || !img.naturalWidth) return;
     const tile = img.closest(".thumb");
-    this.float(img.currentSrc || img.src, tile.getBoundingClientRect(), getComputedStyle(tile).borderRadius);
+    const box = tile.getBoundingClientRect();
+    // History can open a post whose tile has scrolled out of sight.
+    if (box.bottom <= 0 || box.top >= innerHeight) return;
+    this.float(img.currentSrc || img.src, box, getComputedStyle(tile).borderRadius);
     this.linger(id, tile);
     document.documentElement.classList.add("sb-hero");
   },
@@ -267,6 +270,22 @@ window.__sbHero ??= {
 };
 "##;
 
+/// The browser's own forward and back open a post without a click on its tile.
+/// By `popstate` the router has already taken the gallery away, but while the
+/// gallery is being dropped it's all still on the page.
+const BY_HISTORY: &str = r##"
+const id = location.pathname.match(/\/post\/(\d+)\/?$/)?.[1];
+if (id && !window.__sbHero.ghost && document.querySelector(`.masonry [data-post="${id}"]`)) {
+  window.__sbHero.open(Number(id));
+}
+"##;
+
+/// The gallery is going. Whatever took it to a post without a click on the tile,
+/// the picture lifts off just the same. Call before the gallery's other farewells.
+pub fn leaving_gallery() {
+    document::eval(&format!("{HERO}\n{BY_HISTORY}"));
+}
+
 /// The post last on the viewer's stage, the one a picture flies back from.
 static SHOWN: GlobalSignal<Option<i64>> = Signal::global(|| None);
 
@@ -359,7 +378,11 @@ window.__sbTurn ??= {
     if (!el) return;
     const left = Math.max(0, 300 - (performance.now() - this.since));
     const after = (ms) => new Promise((done) => setTimeout(done, ms));
-    const ready = el.tagName === "VIDEO"
+    const quick = el.classList.contains("quick");
+    const ready = quick
+      // Flipping through: only the thumbnail is coming for now.
+      ? after(left)
+      : el.tagName === "VIDEO"
       ? new Promise((done) => {
           if (el.readyState >= 2) done();
           else el.addEventListener("loadeddata", done, { once: true });
@@ -378,6 +401,10 @@ window.__sbTurn ??= {
     });
   },
   start(el) {
+    if (el.classList.contains("quick")) {
+      this.end();
+      return;
+    }
     el.removeAttribute("data-turn");
     this.since = 0;
     const past = this.past;
@@ -395,6 +422,103 @@ window.__sbTurn ??= {
   },
 };
 "##;
+
+/// The light behind the viewer. The picture is smudged once onto a tiny canvas,
+/// which costs one drawing where a CSS blur would cost every frame of the fade,
+/// and only opacity moves after that. One fade runs at a time and then goes on to
+/// the latest picture, so flipping through costs no more than a slow drift of
+/// colour, and a picture only starts to fade in once it can paint.
+const GLOW: &str = r##"
+window.__sbGlow ??= {
+  wanted: null, busy: false,
+  want(url) {
+    this.wanted = url;
+    if (!this.busy && !document.querySelector('.app[data-saver="on"]')) this.run();
+  },
+  paint(el, img) {
+    const box = el.getBoundingClientRect();
+    const aspect = box.width > 0 && box.height > 0 ? box.width / box.height : 1;
+    const size = (long) => aspect >= 1
+      ? [long, Math.max(2, Math.round(long / aspect))]
+      : [Math.max(2, Math.round(long * aspect)), long];
+    const scene = (long) => {
+      const canvas = document.createElement("canvas");
+      [canvas.width, canvas.height] = size(long);
+      return canvas;
+    };
+    const [w, h] = [img.naturalWidth, img.naturalHeight];
+    const tiny = scene(24);
+    const copy = scene(24);
+    const middle = scene(64);
+    const crop = Math.min(w / middle.width, h / middle.height);
+    const [cw, ch] = [middle.width * crop, middle.height * crop];
+    const down = middle.getContext("2d");
+    const small = tiny.getContext("2d");
+    const held = copy.getContext("2d");
+    const out = el.getContext("2d");
+    if (!down || !small || !held || !out) return false;
+    down.imageSmoothingQuality = small.imageSmoothingQuality = out.imageSmoothingQuality = "high";
+    down.drawImage(img, (w - cw) / 2, (h - ch) / 2, cw, ch, 0, 0, middle.width, middle.height);
+    small.drawImage(middle, 0, 0, tiny.width, tiny.height);
+    // More colour, where the picture has any: the grey between two colours would
+    // turn into a third if this came after they're mixed. It can't add any to
+    // what's transparent.
+    small.globalCompositeOperation = "saturation";
+    small.globalAlpha = 0.4;
+    small.fillStyle = "#f00";
+    small.fillRect(0, 0, tiny.width, tiny.height);
+    small.globalCompositeOperation = "destination-in";
+    small.globalAlpha = 1;
+    small.drawImage(middle, 0, 0, tiny.width, tiny.height);
+    small.globalCompositeOperation = "source-over";
+    // Averaged with copies of itself all around, or scaling up shows its grid.
+    for (const r of [3, 2, 1]) {
+      held.clearRect(0, 0, copy.width, copy.height);
+      held.drawImage(tiny, 0, 0);
+      let seen = 1;
+      for (const [x, y] of [[r, 0], [-r, 0], [0, r], [0, -r], [r, r], [-r, -r], [r, -r], [-r, r]]) {
+        small.globalAlpha = 1 / ++seen;
+        small.drawImage(copy, x, y);
+      }
+    }
+    small.globalAlpha = 1;
+    [el.width, el.height] = size(96);
+    out.drawImage(tiny, 0, 0, el.width, el.height);
+    return true;
+  },
+  async run() {
+    this.busy = true;
+    const after = (ms) => new Promise((done) => setTimeout(done, ms));
+    while (true) {
+      const url = this.wanted;
+      const root = document.querySelector(".post-glow");
+      if (!url || !root || root.querySelector(".on")?.dataset.url === url) break;
+      const img = new Image();
+      img.src = url;
+      const ok = await Promise.race([img.decode().then(() => true, () => false), after(3000).then(() => false)]);
+      if (!ok) {
+        if (url === this.wanted) break;
+        continue;
+      }
+      if (!root.isConnected) continue;
+      const front = root.querySelector(".on");
+      const back = [...root.querySelectorAll(".glow-layer")].find((layer) => layer !== front);
+      if (!back || !this.paint(back, img)) break;
+      back.dataset.url = url;
+      back.classList.add("on");
+      front?.classList.remove("on");
+      await Promise.race([Promise.allSettled(back.getAnimations().map((one) => one.finished)), after(1000)]);
+    }
+    this.busy = false;
+  },
+};
+"##;
+
+/// The picture the light behind the viewer should come from.
+pub fn glow(url: Option<&str>) {
+    let url = serde_json::to_string(&url).unwrap_or_else(|_| "null".into());
+    document::eval(&format!("{GLOW}\nwindow.__sbGlow.want({url});"));
+}
 
 /// Before going to the previous or next post. Returns once the copy of the
 /// picture can stand in for it.
@@ -447,6 +571,72 @@ pub fn leave() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_flying_picture_stays_under_the_bars() {
+        // Regression: it hung off `<body>` above everything, so it crossed over the
+        // bars and the rail. Lower numbers come first: the gallery's copy, the
+        // picture, then the bars.
+        let css = include_str!("../assets/main.css");
+        assert!(css.contains(".hero-past { position: fixed; inset: 0; z-index: 7;"));
+        assert!(HERO.contains(r#"zIndex: "8""#));
+        assert!(HERO.contains(r#"document.querySelector(".app")"#));
+        assert!(
+            css.contains("position: fixed; z-index: 9; left: var(--bar-gap); width: var(--rail-w)")
+        );
+        assert!(css.contains("position: fixed; inset: 0 0 auto; z-index: 10;"));
+    }
+
+    #[test]
+    fn the_browsers_forward_button_flies_like_a_click() {
+        // Regression: only a click on a tile lifted the picture off, so forward
+        // and back to a post skipped the opening.
+        assert!(BY_HISTORY.contains(".masonry [data-post="));
+        // A click has lifted it off already.
+        assert!(BY_HISTORY.contains("!window.__sbHero.ghost"));
+        // While the gallery is on the page: a `popstate` listener comes too late.
+        assert!(!BY_HISTORY.contains("popstate"));
+        let gallery = include_str!("pages/gallery.rs");
+        let (_, drop) = gallery.split_once("use_drop(|| {").unwrap();
+        let farewell = drop.find("motion::leaving_gallery()").unwrap();
+        assert!(farewell < drop.find("WATCH_SCROLL_OFF").unwrap());
+        assert!(HERO.contains("box.bottom <= 0 || box.top >= innerHeight"));
+    }
+
+    #[test]
+    fn the_glow_waits_for_its_picture_and_takes_one_fade_at_a_time() {
+        let (_, run) = GLOW.split_once("async run() {").unwrap();
+        let decode = run.find("img.decode()").unwrap();
+        let paint = run.find("this.paint(").unwrap();
+        let fade = run.find(r#"back.classList.add("on")"#).unwrap();
+        assert!(decode < paint && paint < fade);
+        assert!(run.contains("getAnimations()"));
+        assert!(GLOW.contains("if (!this.busy &&"));
+        // It never ends up waiting on a picture that doesn't come.
+        assert!(run.contains("after(3000)"));
+    }
+
+    #[test]
+    fn the_glow_needs_nothing_the_webviews_lack() {
+        // WebKit has no `ctx.filter`, and a picture from another origin can be drawn
+        // but not read back.
+        assert!(!GLOW.contains("ctx.filter") && !GLOW.contains(".filter ="));
+        assert!(!GLOW.contains("getImageData") && !GLOW.contains("toDataURL"));
+        assert!(GLOW.contains(r#"data-saver="on""#));
+    }
+
+    #[test]
+    fn a_picture_flipped_past_has_no_entrance_to_wait_for() {
+        let (_, show) = TURN.split_once("show(thumb) {").unwrap();
+        assert!(show.contains(r#"el.classList.contains("quick")"#));
+        let (_, start) = TURN.split_once("start(el) {").unwrap();
+        let (start, _) = start.split_once("\n  },").unwrap();
+        assert!(
+            start.contains(r#"el.classList.contains("quick")"#) && start.contains("this.end()")
+        );
+        let css = include_str!("../assets/main.css");
+        assert!(css.contains(".stage img.quick, .stage video.quick { animation: none; }"));
+    }
 
     #[test]
     fn no_view_transitions() {

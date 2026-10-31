@@ -588,6 +588,7 @@ pub fn Gallery(q: String) -> Element {
         });
     });
     use_drop(|| {
+        motion::leaving_gallery();
         document::eval(WATCH_SCROLL_OFF);
         document::eval(WATCH_NEAR_OFF);
     });

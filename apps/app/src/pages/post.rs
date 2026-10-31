@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use dioxus::core::Task;
 use dioxus::html::geometry::{ClientPoint, PixelsRect};
 use dioxus::prelude::*;
 use starbooru_client::{Client, ClientError};
@@ -96,6 +97,25 @@ fn browser_fullscreen(on: bool) {
     });
 }
 
+/// Nothing pressed for this long, and the user has stopped on a post. Until then
+/// only what it takes to flip through loads.
+const SETTLE_MS: u32 = 250;
+
+/// Presses of previous or next that can wait for the posts to be known. Holding
+/// a key down shouldn't leave the viewer walking on long after it's let go.
+const MOST_QUEUED: i32 = 6;
+
+/// The queue of presses after one more: the other way cancels one out.
+fn queued(steps: i32, forward: bool) -> i32 {
+    let step = if forward { 1 } else { -1 };
+    steps.saturating_add(step).clamp(-MOST_QUEUED, MOST_QUEUED)
+}
+
+/// Where the next press in the queue goes.
+fn step_target(steps: i32, n: Neighbors) -> Option<i64> {
+    if steps > 0 { n.next } else { n.prev }
+}
+
 /// The post a gallery thumbnail is opening, so the viewer can show it
 /// before the server answers.
 pub static OPENING: GlobalSignal<Option<Post>> = Signal::global(|| None);
@@ -116,6 +136,25 @@ pub fn PostView(id: i64, q: String) -> Element {
 
     // The props as signals, for the key handler, which outlives a render.
     let mut current = use_signal(|| (id, q.clone()));
+    // One answer for all of the viewer, rather than one per post flipped past.
+    let ai = use_resource(|| async move {
+        let client = store::client()?;
+        client.ai_status().await.ok()
+    });
+    use_context_provider(|| ai);
+    // Presses of previous/next not acted on yet: next counts up, previous down.
+    let mut steps = use_signal(|| 0_i32);
+    // A turn is on its way to the router.
+    let mut moving = use_signal(|| false);
+    // Pressing again before the last press has settled: flipping through, so
+    // pictures come without their entrance and with only their thumbnail.
+    let mut rushing = use_signal(|| false);
+    // The post the user has stopped on, the one worth the rest of what it has.
+    let mut settled = use_signal(|| id);
+    let mut settling = use_hook(|| CopyValue::new(None::<Task>));
+    // A load is running, and the post the last one found out about.
+    let mut loading = use_hook(|| CopyValue::new(false));
+    let mut fresh = use_hook(|| CopyValue::new(None::<i64>));
 
     let mut handle = move |result: Result<Post, ClientError>| match result {
         Ok(p) => {
@@ -148,6 +187,33 @@ pub fn PostView(id: i64, q: String) -> Element {
             }
         });
     };
+    // A post not known yet. Only ever one at a time, always the one the viewer has
+    // got to: the pictures flipped past show as they come, and the last one always
+    // gets its turn.
+    let mut load = move || {
+        let Some(client) = store::client() else {
+            return;
+        };
+        if *loading.peek() {
+            return;
+        }
+        loading.set(true);
+        spawn(async move {
+            loop {
+                let asked = current.peek().0;
+                let result = client.post(asked).await;
+                if current.peek().0 == asked {
+                    fresh.set(Some(asked));
+                    handle(result);
+                    break;
+                }
+                if let Ok(p) = result {
+                    post.set(Some(p));
+                }
+            }
+            loading.set(false);
+        });
+    };
     let mut zoom = use_signal(Zoom::default);
     // The post whose original is wanted instead of the sample: zooming in asks
     // for the detail only the original has.
@@ -172,30 +238,73 @@ pub fn PostView(id: i64, q: String) -> Element {
     let mut ahead = use_signal(HashMap::<i64, Post>::new);
     // Which way the last previous/next went: `Some(true)` for next.
     let mut entered = use_signal(|| None::<bool>);
+    // First, as what follows goes by it.
+    use_effect(use_reactive!(|id, q| {
+        current.set((id, q));
+        moving.set(false);
+    }));
     use_effect(use_reactive!(|id| {
         let known = ahead.peek().get(&id).cloned();
         let opening = OPENING.write().take().filter(|p| p.id == id);
+        fresh.set(None);
         // Not known yet: the post before it stays until it is, as a spinner
         // in between would throw out the whole page.
-        if let Some(p) = known.or(opening) {
+        let shown = known.or(opening);
+        let have = shown.is_some();
+        if let Some(p) = shown {
             post.set(Some(p));
+        } else {
+            load();
         }
         editing.set(false);
         media_editing.set(false);
         zoom.set(Zoom::default());
-        reload(id);
+        if let Some(task) = settling.take() {
+            task.cancel();
+        }
+        // Where the viewer opens, there's nothing to wait for.
+        if *settled.peek() == id && !*rushing.peek() {
+            if have {
+                reload(id);
+            }
+            return;
+        }
+        settling.set(Some(spawn(async move {
+            loop {
+                crate::activity::wait_ms(SETTLE_MS).await;
+                if *steps.peek() == 0 && !*moving.peek() {
+                    break;
+                }
+            }
+            rushing.set(false);
+            settled.set(id);
+            if *fresh.peek() != Some(id) && !*loading.peek() {
+                reload(id);
+            }
+        })));
     }));
-    use_effect(use_reactive!(|id, q| current.set((id, q))));
 
+    // Said which post they're for: until they've come, they're the last post's.
     let neighbors = use_resource(move || async move {
         let (id, q) = current();
         let client = store::client()?;
-        client.neighbors(id, &q).await.ok()
+        Some((id, client.neighbors(id, &q).await.ok()))
     });
-    let nav = move || (*neighbors.read()).flatten().unwrap_or_default();
+    let links = move || {
+        (*neighbors.read())
+            .flatten()
+            .filter(|(at, _)| *at == current.read().0)
+            .map(|(_, n)| n.unwrap_or_default())
+    };
     use_effect(move || {
-        let n = nav();
+        let Some(n) = links() else {
+            return;
+        };
         let here = current.peek().0;
+        // Flipping through, the next ones aren't worth fetching yet.
+        if settled() != here {
+            return;
+        }
         ahead
             .write()
             .retain(|k, _| *k == here || Some(*k) == n.prev || Some(*k) == n.next);
@@ -228,21 +337,38 @@ pub fn PostView(id: i64, q: String) -> Element {
         let client = store::client()?;
         client.info().await.ok().map(|i| i.video_editing)
     });
-    let go = move |to: Option<i64>| {
-        // The neighbours can still be the last post's.
-        let Some(id) = to.filter(|to| *to != current.peek().0) else {
+    let mut press = move |forward: bool| {
+        if *moving.peek() || *steps.peek() != 0 || *settled.peek() != current.peek().0 {
+            rushing.set(true);
+        }
+        let now = *steps.peek();
+        steps.set(queued(now, forward));
+    };
+    // Acts on the presses one at a time, as soon as it's known where each one goes.
+    use_effect(move || {
+        let want = steps();
+        if want == 0 || moving() {
+            return;
+        }
+        let Some(n) = links() else {
             return;
         };
-        let n = (*neighbors.peek()).flatten().unwrap_or_default();
-        let next = n.prev != Some(id);
+        let here = current.peek().0;
+        // The end of the list.
+        let Some(id) = step_target(want, n).filter(|to| *to != here) else {
+            steps.set(0);
+            return;
+        };
+        steps.set(want - want.signum());
+        moving.set(true);
         spawn(async move {
             motion::hold().await;
-            entered.set(Some(next));
+            entered.set(Some(want > 0));
             let q = current.peek().1.clone();
             // Replace, so Back returns to the gallery rather than through every post.
             navigator().replace(Route::PostView { id, q });
         });
-    };
+    });
     let mut set_full = move |on: bool| {
         full.set(on);
         browser_fullscreen(on);
@@ -281,8 +407,8 @@ pub fn PostView(id: i64, q: String) -> Element {
                 continue;
             }
             match key.as_str() {
-                "ArrowLeft" => go(nav().prev),
-                "ArrowRight" => go(nav().next),
+                "ArrowLeft" => press(false),
+                "ArrowRight" => press(true),
                 "f" => set_full(!full()),
                 "fullscreen-exit" => full.set(false),
                 "+" | "=" => zoom.set(zoom().zoom_at(STEP, (0.0, 0.0), size_of(rect()))),
@@ -352,6 +478,7 @@ pub fn PostView(id: i64, q: String) -> Element {
         };
     };
 
+    let known = links();
     let client = store::client();
     let abs = |u: &str| client.as_ref().map(|c| c.absolute(u)).unwrap_or_default();
     let file_url = abs(&p.file_url);
@@ -397,12 +524,16 @@ pub fn PostView(id: i64, q: String) -> Element {
                     src,
                     thumb,
                     size: p.width.zip(p.height),
-                    enter: enter_class(entered()),
+                    enter: enter_class(entered(), rushing()),
+                    passing: rushing(),
+                    ready: settled() == p.id,
                     alt,
                     zoom,
                     full,
-                    nav: nav(),
-                    onnav: move |to| go(Some(to)),
+                    // Until the post's neighbours are known, either way may be open.
+                    first: known.is_some_and(|n| n.prev.is_none()),
+                    last: known.is_some_and(|n| n.next.is_none()),
+                    onstep: press,
                     onfull: set_full,
                     onback: move |()| step_back(),
                     rect,
@@ -464,8 +595,9 @@ pub fn PostView(id: i64, q: String) -> Element {
                         }
                     }
                 }
+                // What's there stays until the user stops on a post.
                 Related {
-                    id: p.id,
+                    id: settled(),
                     onopen: move |near: Post| {
                         *OPENING.write() = Some(near.clone());
                         entered.set(None);
@@ -600,28 +732,15 @@ pub fn PostView(id: i64, q: String) -> Element {
 }
 
 /// The picture's own colours, blurred, as the light the viewer stands in, and all
-/// there is around the picture in fullscreen. The last one stays underneath until
-/// the new one has faded in. The battery saver leaves it out.
+/// there is around the picture in fullscreen. Two layers take turns: see
+/// `motion::glow`. The battery saver leaves it out.
 #[component]
 fn PostGlow(thumb: Option<String>) -> Element {
-    let mut now = use_signal(|| thumb.clone());
-    let mut past = use_signal(|| None::<String>);
-    use_effect(use_reactive!(|thumb| {
-        if *now.peek() != thumb {
-            past.set(now.peek().clone());
-            now.set(thumb);
-        }
-    }));
+    use_effect(use_reactive!(|thumb| motion::glow(thumb.as_deref())));
     rsx! {
         div { class: "post-glow", aria_hidden: "true",
-            if let Some(url) = past() {
-                div { key: "past-{url}", class: "glow-layer still", style: "background-image: {css_url(&url)}" }
-            }
-            if let Some(url) = now() {
-                div { key: "now-{url}", class: "glow-layer", style: "background-image: {css_url(&url)}",
-                    onanimationend: move |_| past.set(None),
-                }
-            }
+            canvas { class: "glow-layer" }
+            canvas { class: "glow-layer" }
         }
     }
 }
@@ -632,11 +751,9 @@ const OCR_FOLD_LINES: usize = 6;
 
 /// Which AI tools the server offers, for showing AI buttons.
 pub(super) fn use_ai_status() -> AiStatus {
-    let status = use_resource(|| async move {
-        let client = store::client()?;
-        client.ai_status().await.ok()
-    });
-    status.read().clone().flatten().unwrap_or_default()
+    try_use_context::<Resource<Option<AiStatus>>>()
+        .and_then(|status| status.read().clone().flatten())
+        .unwrap_or_default()
 }
 
 /// "Text in image": what OCR read in the picture, with a copy button and,
@@ -1092,12 +1209,36 @@ fn stage_url(client: &Client, p: &Post, original: bool) -> String {
     }
 }
 
-/// The entrance after previous/next: from the side the post came from.
-fn enter_class(next: Option<bool>) -> &'static str {
+/// The entrance after previous/next: from the side the post came from, or none
+/// at all when flipping through.
+fn enter_class(next: Option<bool>, rushing: bool) -> &'static str {
     match next {
+        Some(_) if rushing => "quick",
         Some(true) => "from-next",
         Some(false) => "from-prev",
         None => "",
+    }
+}
+
+/// Whether the picture has yet to be asked for. One that came while flipping
+/// through has only its thumbnail until the user stops, and one that's already
+/// there keeps what it has when the flipping starts.
+fn use_held_back(passing: bool) -> bool {
+    let mut held = use_hook(|| CopyValue::new(passing));
+    if !passing && *held.peek() {
+        held.set(false);
+    }
+    *held.peek()
+}
+
+/// What the viewer's image shows. A picture held back shows its thumbnail: with
+/// no source at all, a browser draws a frame around it as a broken image. The
+/// thumbnail stays up until the file that replaces it has loaded.
+fn stage_src(held: bool, src: &str, thumb: Option<&str>) -> Option<String> {
+    if held {
+        thumb.map(str::to_owned)
+    } else {
+        Some(src.to_owned())
     }
 }
 
@@ -1143,9 +1284,11 @@ fn StageImage(
     size: Option<(i32, i32)>,
     transform: String,
     enter: &'static str,
+    passing: bool,
     onwheel: EventHandler<WheelEvent>,
 ) -> Element {
     let mut loaded = use_signal(|| false);
+    let held = use_held_back(passing);
     // For this picture's whole time on the stage: another entrance starting on
     // it would be a second one, while the next post is on its way.
     let enter = use_hook(|| enter);
@@ -1155,13 +1298,15 @@ fn StageImage(
         style.push_str("; --thumb: ");
         style.push_str(&css_url(t));
     }
+    let shown = stage_src(held, &src, thumb.as_deref());
     rsx! {
         img {
             id: "stage-img",
             class: if loaded() { "{enter}" } else { "{enter} loading" },
             "data-turn": (!enter.is_empty()).then_some("wait"),
-            src: "{src}",
-            alt: "{alt}",
+            // With nothing to show, the browser would print this over the picture.
+            alt: if shown.is_some() { "{alt}" },
+            src: shown,
             draggable: "false",
             decoding: "async",
             style,
@@ -1176,6 +1321,10 @@ fn StageImage(
                 motion::arrive(id);
                 if !enter.is_empty() {
                     motion::turn(thumb.as_deref());
+                }
+                // The file hasn't been asked for yet, and the thumbnail can sit behind.
+                if held {
+                    return;
                 }
                 // A cached image can finish before the listener exists.
                 spawn(async move {
@@ -1202,14 +1351,17 @@ fn StageVideo(
     thumb: Option<String>,
     size: Option<(i32, i32)>,
     enter: &'static str,
+    passing: bool,
 ) -> Element {
     // As for the image: one entrance.
     let enter = use_hook(|| enter);
+    let held = use_held_back(passing);
     rsx! {
         video {
             class: enter,
             "data-turn": (!enter.is_empty()).then_some("wait"),
-            src: "{src}",
+            src: if !held { "{src}" },
+            poster: thumb.clone(),
             style: fit_style(size),
             controls: true,
             autoplay: !power::active(),
@@ -1262,9 +1414,13 @@ fn pick_translation(
 /// zoomed with it, and the button that shows it or asks the server to make
 /// it in the app's language.
 #[component]
-fn PanelOverlay(id: i64, size: (i32, i32), transform: String) -> Element {
+fn PanelOverlay(id: i64, size: (i32, i32), transform: String, ready: ReadSignal<bool>) -> Element {
     let can_make = use_ai_status().comics;
     let kept = use_resource(move || async move {
+        // Flipped past, it isn't worth asking.
+        if !ready() {
+            return None;
+        }
         let client = store::client()?;
         client.panel_translations(id).await.ok()
     });
@@ -1340,6 +1496,9 @@ fn PanelOverlay(id: i64, size: (i32, i32), transform: String) -> Element {
     }
 }
 
+/// A little longer than `--fast`, the picture's way back from being zoomed.
+const SHRINK_MS: u32 = 200;
+
 /// The media, with zoom and pan for images, previous/next and fullscreen.
 #[component]
 fn Stage(
@@ -1349,11 +1508,14 @@ fn Stage(
     thumb: Option<String>,
     size: Option<(i32, i32)>,
     enter: &'static str,
+    passing: bool,
+    ready: bool,
     alt: String,
     zoom: Signal<Zoom>,
     full: Signal<bool>,
-    nav: Neighbors,
-    onnav: EventHandler<i64>,
+    first: bool,
+    last: bool,
+    onstep: EventHandler<bool>,
     onfull: EventHandler<bool>,
     onback: EventHandler<()>,
     rect: Signal<Option<PixelsRect>>,
@@ -1371,6 +1533,25 @@ fn Stage(
         }
     };
     let zoomable = kind != MediaKind::Video;
+
+    // Going back to its size, the picture is bigger than the stage for a moment
+    // yet, and stays inside its window until it's done.
+    let mut shrinking = use_signal(|| false);
+    let mut shrunk = use_hook(|| CopyValue::new(None::<Task>));
+    let grown = use_memo(move || zoom().is_zoomed());
+    use_effect(move || {
+        if let Some(task) = shrunk.take() {
+            task.cancel();
+        }
+        if grown() {
+            shrinking.set(true);
+        } else if *shrinking.peek() {
+            shrunk.set(Some(spawn(async move {
+                crate::activity::wait_ms(SHRINK_MS).await;
+                shrinking.set(false);
+            })));
+        }
+    });
 
     // Rect of the stage; measured when a gesture starts, as scrolling moves it.
     let measure = move || async move {
@@ -1398,7 +1579,7 @@ fn Stage(
     let mut class = String::from("stage");
     for (on, name) in [
         (full(), " full"),
-        (z.is_zoomed(), " zoomed"),
+        (z.is_zoomed() || shrinking(), " zoomed"),
         (dragging(), " dragging"),
     ] {
         if on {
@@ -1481,10 +1662,7 @@ fn Stage(
                 };
                 let (dx, dy) = (t.last.x - t.start.x, t.last.y - t.start.y);
                 if touches.peek().is_empty() && !zoom().is_zoomed() && dx.abs() > SWIPE && dx.abs() > dy.abs() * 1.5 {
-                    let to = if dx > 0.0 { nav.prev } else { nav.next };
-                    if let Some(to) = to {
-                        onnav.call(to);
-                    }
+                    onstep.call(dx < 0.0);
                 }
             },
             onpointercancel: move |e| {
@@ -1497,12 +1675,12 @@ fn Stage(
             },
             match kind {
                 MediaKind::Video => rsx! {
-                    StageVideo { key: "{id}", id, src, thumb, size, enter }
+                    StageVideo { key: "{id}", id, src, thumb, size, enter, passing }
                 },
                 _ => rsx! {
-                    StageImage { key: "{id}", id, src, thumb, alt, size, transform: z.css(), enter, onwheel: wheel }
+                    StageImage { key: "{id}", id, src, thumb, alt, size, transform: z.css(), enter, passing, onwheel: wheel }
                     if let Some(size) = size.filter(|_| kind == MediaKind::Image) {
-                        PanelOverlay { key: "{id}", id, size, transform: z.css() }
+                        PanelOverlay { key: "{id}", id, size, transform: z.css(), ready }
                     }
                 },
             }
@@ -1513,23 +1691,15 @@ fn Stage(
             }
             // Always there, greyed out at either end, so nothing comes and goes.
             button { class: "stage-btn stage-prev glass float", title: t!("post-prev-title"), aria_label: t!("post-prev"),
-                disabled: nav.prev.is_none(),
+                disabled: first,
                 ondoubleclick: move |e| e.stop_propagation(),
-                onclick: move |_| {
-                    if let Some(prev) = nav.prev {
-                        onnav.call(prev);
-                    }
-                },
+                onclick: move |_| onstep.call(false),
                 Ico { icon: Icon::ChevronLeft, size: 32 }
             }
             button { class: "stage-btn stage-next glass float", title: t!("post-next-title"), aria_label: t!("post-next"),
-                disabled: nav.next.is_none(),
+                disabled: last,
                 ondoubleclick: move |e| e.stop_propagation(),
-                onclick: move |_| {
-                    if let Some(next) = nav.next {
-                        onnav.call(next);
-                    }
-                },
+                onclick: move |_| onstep.call(true),
                 Ico { icon: Icon::ChevronRight, size: 32 }
             }
             // Only a double click on the media itself toggles the zoom. On the
@@ -1655,6 +1825,52 @@ mod tests {
     }
 
     #[test]
+    fn the_glow_fades_rather_than_blurring_every_frame() {
+        let layer = rule(".glow-layer");
+        assert!(layer.contains("opacity: 0"));
+        assert!(layer.contains("transition: opacity var(--fade)"));
+        assert!(!layer.contains("filter"));
+        assert!(rule(".glow-layer.on").contains("opacity: var(--glow-a)"));
+    }
+
+    #[test]
+    fn a_zoomed_picture_stays_in_its_window_until_it_has_shrunk() {
+        // Regression: the window went with the zoom, and the picture on its way
+        // back to size spilled over everything around the stage for a moment.
+        let css = include_str!("../../assets/main.css");
+        let fast = css
+            .split_once("--fast: ")
+            .and_then(|(_, rest)| rest.split_once("ms"))
+            .and_then(|(ms, _)| ms.parse::<u32>().ok())
+            .unwrap();
+        assert!(SHRINK_MS > fast);
+        assert!(rule(".stage.zoomed").contains("overflow: hidden"));
+    }
+
+    #[test]
+    fn no_press_is_lost_and_the_queue_stays_short() {
+        assert_eq!(queued(0, true), 1);
+        assert_eq!(queued(2, true), 3);
+        assert_eq!(queued(0, false), -1);
+        // The other way cancels one out.
+        assert_eq!(queued(2, false), 1);
+        // A key held down doesn't leave it walking on for long.
+        assert_eq!(queued(MOST_QUEUED, true), MOST_QUEUED);
+        assert_eq!(queued(-MOST_QUEUED, false), -MOST_QUEUED);
+    }
+
+    #[test]
+    fn a_press_goes_the_way_it_was_meant() {
+        let n = Neighbors {
+            prev: Some(1),
+            next: Some(3),
+        };
+        assert_eq!(step_target(2, n), Some(3));
+        assert_eq!(step_target(-1, n), Some(1));
+        assert_eq!(step_target(1, Neighbors::default()), None);
+    }
+
+    #[test]
     fn swaps_in_the_original_only_when_the_screen_has_more_pixels() {
         let photo = (6000, 4000);
         // A laptop window, and a phone held upright: the sample is enough.
@@ -1759,8 +1975,31 @@ mod tests {
 
     #[test]
     fn enters_from_the_side_it_came_from() {
-        assert_eq!(enter_class(Some(true)), "from-next");
-        assert_eq!(enter_class(Some(false)), "from-prev");
-        assert_eq!(enter_class(None), "");
+        assert_eq!(enter_class(Some(true), false), "from-next");
+        assert_eq!(enter_class(Some(false), false), "from-prev");
+        assert_eq!(enter_class(None, false), "");
+    }
+
+    #[test]
+    fn flipping_through_has_no_entrance() {
+        assert_eq!(enter_class(Some(true), true), "quick");
+        assert_eq!(enter_class(Some(false), true), "quick");
+        // Opened from elsewhere, it isn't a turn at all.
+        assert_eq!(enter_class(None, true), "");
+    }
+
+    #[test]
+    fn a_picture_flipped_past_shows_its_thumbnail_and_never_nothing() {
+        assert_eq!(
+            stage_src(true, "file", Some("thumb")).as_deref(),
+            Some("thumb")
+        );
+        assert_eq!(
+            stage_src(false, "file", Some("thumb")).as_deref(),
+            Some("file")
+        );
+        assert_eq!(stage_src(false, "file", None).as_deref(), Some("file"));
+        // Nothing to stand in: no file is asked for either.
+        assert_eq!(stage_src(true, "file", None), None);
     }
 }
