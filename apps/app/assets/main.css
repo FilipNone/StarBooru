@@ -879,6 +879,9 @@ button.thumb { width: 100%; padding: 0; border: 0; font: inherit; color: inherit
   --post-bar-h: 60px; --post-gap: 12px; --peek: 48px;
 }
 .post-main { display: grid; gap: var(--post-gap); min-width: 0; }
+/* Painted after the stage, so a picture sliding in passes under the panels. No
+   z-index: a menu in a panel still has to reach over the bars. */
+.post-layout > .side { position: relative; }
 /* A picture sliding in doesn't make the window scroll sideways. */
 .content:has(.post-layout) { overflow-x: clip; }
 /* The glow's negative z-index stops here, above the canvas on `.app`. */
@@ -1112,7 +1115,9 @@ html:has(.stage.full) { overflow-y: hidden; }
 /* Left hand: the viewer's panel and zoom tools on the left. */
 @media (min-width: 901px) {
   .app[data-hand="left"] .post-layout { grid-template-columns: 360px minmax(0, 1fr); }
-  .app[data-hand="left"] .post-layout > aside { order: -1; }
+  /* By place, not `order`, which would also paint the panels under the stage. */
+  .app[data-hand="left"] .post-layout > aside { grid-area: 1 / 1; }
+  .app[data-hand="left"] .post-layout > .post-main { grid-area: 1 / 2; }
 }
 
 /* ---------- recycle bin ---------- */
@@ -1351,12 +1356,17 @@ kbd { box-shadow: inset 0 -1px 0 var(--outline); white-space: nowrap; }
 
 /* The picture flying between a tile and the viewer (motion.rs). Nothing it
    lands on may be moving, so the pages only fade. Rules that last as long as
-   the flight leave animations alone: taking one away starts it over. */
+   the flight leave animations alone: taking one away starts it over.
+   From the bottom: the gallery's copy (0), the picture (1), the viewer's controls
+   and panels (2), the bars. The stage keeps its buttons to itself except during
+   a flight, when they have to stand over a picture from outside it. */
 html.sb-hero .stage img, html.sb-hero .stage video { visibility: hidden; }
+html.sb-hero-flying .stage { isolation: auto; }
+html.sb-hero-flying :is(.post-main > :not(.stage), .post-layout > .side) { position: relative; z-index: 2; }
 .page.post-layout { animation-name: fade-in; }
 html.sb-hero-leaving .page.gallery { opacity: 0; }
 html.sb-hero-back .page.gallery { animation: fade-in var(--med) var(--ease); }
-.hero-past { position: fixed; inset: 0; z-index: 7; overflow: hidden; pointer-events: none; background: var(--canvas); }
+.hero-past { position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; background: var(--canvas); }
 .hero-past .page { position: absolute; margin: 0; }
 .hero-past * { animation: none !important; transition: none !important; }
 @keyframes drift { to { transform: translate(4%, -3%) rotate(8deg); } }

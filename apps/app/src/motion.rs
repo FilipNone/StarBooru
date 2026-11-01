@@ -5,8 +5,9 @@
 
 use dioxus::prelude::*;
 
-/// The copy flies over the page and under the bars, as `.hero-past` lies under
-/// it. Its flight's values are spelled out, as the script has no use for tokens.
+/// The copy flies over the page, under the viewer's controls and panels and under
+/// the bars, as `.hero-past` lies under it. Its flight's values are spelled out, as
+/// the script has no use for tokens.
 const HERO: &str = r##"
 window.__sbHero ??= {
   ghost: null, hidden: null, flying: false, holding: false, past: null, stage: null, timer: 0, veil: 0, unwatch: null,
@@ -24,7 +25,7 @@ window.__sbHero ??= {
     this.past = null;
     this.uncover();
     this.unveil();
-    document.documentElement.classList.remove("sb-hero", "sb-hero-back");
+    document.documentElement.classList.remove("sb-hero", "sb-hero-back", "sb-hero-flying");
   },
   uncover() {
     if (this.hidden) this.hidden.style.visibility = "";
@@ -41,7 +42,7 @@ window.__sbHero ??= {
     ghost.setAttribute("aria-hidden", "true");
     ghost.src = src;
     Object.assign(ghost.style, {
-      position: "fixed", zIndex: "8", margin: "0", pointerEvents: "none", objectFit: "cover",
+      position: "fixed", zIndex: "1", margin: "0", pointerEvents: "none", objectFit: "cover",
       left: `${box.left}px`, top: `${box.top}px`, width: `${box.width}px`, height: `${box.height}px`,
       borderRadius: radius,
     });
@@ -81,6 +82,13 @@ window.__sbHero ??= {
     };
     past.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 200, easing: "ease-out", fill: "forwards" })
       .finished.then(gone, gone);
+  },
+  // The viewer's controls and panels now stand over the gallery's copy, so they
+  // come in as it goes.
+  fadeInViewer() {
+    for (const el of document.querySelectorAll(".stage > button, .stage-tools, .post-main > :not(.stage), .post-layout > .side")) {
+      el.animate([{ opacity: 0 }, {}], { duration: 200, easing: "ease-out" });
+    }
   },
   // Landed: what it landed on shows underneath, and it leaves once that can
   // really paint. A new picture may still be coming or decoding, in which case
@@ -184,7 +192,9 @@ window.__sbHero ??= {
       scrollTo({ top: 0, behavior: "instant" });
       const box = el.getBoundingClientRect();
       if (box.width >= 2 && box.height >= 2) {
+        document.documentElement.classList.add("sb-hero-flying");
         this.fadePast();
+        this.fadeInViewer();
         this.fly(() => (el.isConnected ? el.getBoundingClientRect() : null), getComputedStyle(el).borderRadius, () => this.under(el));
       } else if (tries > 0) {
         requestAnimationFrame(() => go(tries - 1));
@@ -578,13 +588,43 @@ mod tests {
         // bars and the rail. Lower numbers come first: the gallery's copy, the
         // picture, then the bars.
         let css = include_str!("../assets/main.css");
-        assert!(css.contains(".hero-past { position: fixed; inset: 0; z-index: 7;"));
-        assert!(HERO.contains(r#"zIndex: "8""#));
+        assert!(css.contains(".hero-past { position: fixed; inset: 0; z-index: 0;"));
+        assert!(HERO.contains(r#"zIndex: "1""#));
         assert!(HERO.contains(r#"document.querySelector(".app")"#));
         assert!(
             css.contains("position: fixed; z-index: 9; left: var(--bar-gap); width: var(--rail-w)")
         );
         assert!(css.contains("position: fixed; inset: 0 0 auto; z-index: 10;"));
+    }
+
+    #[test]
+    fn the_flying_picture_stays_under_the_viewers_controls_and_panels() {
+        // Regression: it covered back, previous/next, the zoom tools, the bar and
+        // the panels until it landed. The buttons are at 2 inside the stage, which
+        // lets them out only while the picture flies.
+        let css = include_str!("../assets/main.css");
+        assert!(css.contains(".stage-tools, .stage-translate, .stage-note { z-index: 2; }"));
+        assert!(css.contains("html.sb-hero-flying .stage { isolation: auto; }"));
+        assert!(css.contains(
+            "html.sb-hero-flying :is(.post-main > :not(.stage), .post-layout > .side) { position: relative; z-index: 2; }"
+        ));
+        // Set before the flight and gone with the picture, so no button changes
+        // places with it while it's still there.
+        let (_, go) = HERO.split_once("const go = (tries) => {").unwrap();
+        let set = go.find(r#"classList.add("sb-hero-flying")"#).unwrap();
+        assert!(set < go.find("this.fly(").unwrap());
+        let (_, clear) = HERO.split_once("clear() {").unwrap();
+        let (clear, _) = clear.split_once("\n  },").unwrap();
+        assert!(clear.contains("this.ghost?.remove()") && clear.contains(r#""sb-hero-flying""#));
+    }
+
+    #[test]
+    fn a_sliding_picture_stays_under_the_panels() {
+        // Regression: the panels weren't positioned, so a picture sliding in from
+        // the side was painted over them. With `order`, it still would be.
+        let css = include_str!("../assets/main.css");
+        assert!(css.contains(".post-layout > .side { position: relative; }"));
+        assert!(!css.contains("order: -1"));
     }
 
     #[test]
