@@ -124,7 +124,7 @@ mod tests {
                 category: Some(TagCategory::General),
                 score: 0.9,
             }],
-            rating: Some(Rating::General),
+            rating: Some(Rating::Safe),
         };
         let text = serde_json::to_string(&reply).unwrap();
         assert_eq!(serde_json::from_str::<WorkerReply>(&text).unwrap(), reply);

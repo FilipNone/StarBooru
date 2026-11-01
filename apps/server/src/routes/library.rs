@@ -1132,10 +1132,7 @@ mod tests {
         let mut found = posts(&app, &token).await;
         found.sort_by_key(|p| p.id);
         let ratings: Vec<Rating> = found.iter().map(|p| p.rating).collect();
-        assert_eq!(
-            ratings,
-            [Rating::Explicit, Rating::Explicit, Rating::General]
-        );
+        assert_eq!(ratings, [Rating::Explicit, Rating::Explicit, Rating::Safe]);
         let first = found.first().unwrap();
         assert_eq!(first.source.as_deref(), Some("https://a.b/1"));
         assert_eq!(first.created_at.to_rfc3339(), "2001-02-03T04:05:06+00:00");

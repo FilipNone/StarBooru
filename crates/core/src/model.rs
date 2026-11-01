@@ -27,12 +27,14 @@ impl Role {
     }
 }
 
-/// Content rating, following the Danbooru g/s/q/e scale.
+/// Content rating. `safe` is what other boorus call it; Danbooru's `general` means
+/// the same and is still understood, in the API and in searches.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Rating {
     #[default]
-    General,
+    #[serde(alias = "general")]
+    Safe,
     Sensitive,
     Questionable,
     Explicit,
@@ -40,7 +42,7 @@ pub enum Rating {
 
 impl Rating {
     pub const ALL: [Rating; 4] = [
-        Rating::General,
+        Rating::Safe,
         Rating::Sensitive,
         Rating::Questionable,
         Rating::Explicit,
@@ -48,7 +50,7 @@ impl Rating {
 
     pub fn to_db(self) -> i16 {
         match self {
-            Rating::General => 0,
+            Rating::Safe => 0,
             Rating::Sensitive => 1,
             Rating::Questionable => 2,
             Rating::Explicit => 3,
@@ -57,7 +59,7 @@ impl Rating {
 
     pub fn from_db(v: i16) -> Option<Self> {
         match v {
-            0 => Some(Rating::General),
+            0 => Some(Rating::Safe),
             1 => Some(Rating::Sensitive),
             2 => Some(Rating::Questionable),
             3 => Some(Rating::Explicit),
@@ -65,10 +67,11 @@ impl Rating {
         }
     }
 
-    /// Accepts the full name or its first letter (`rating:e`).
+    /// Accepts the full name or Danbooru's letter (`rating:e`). `s` is sensitive,
+    /// as there, so `safe` is written out or `g`.
     pub fn parse(s: &str) -> Option<Self> {
         match s.to_ascii_lowercase().as_str() {
-            "g" | "general" | "safe" => Some(Rating::General),
+            "safe" | "g" | "general" => Some(Rating::Safe),
             "s" | "sensitive" => Some(Rating::Sensitive),
             "q" | "questionable" => Some(Rating::Questionable),
             "e" | "explicit" => Some(Rating::Explicit),
@@ -78,7 +81,7 @@ impl Rating {
 
     pub fn as_str(self) -> &'static str {
         match self {
-            Rating::General => "general",
+            Rating::Safe => "safe",
             Rating::Sensitive => "sensitive",
             Rating::Questionable => "questionable",
             Rating::Explicit => "explicit",
@@ -642,6 +645,20 @@ pub struct ApiError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn safe_is_called_safe_and_general_still_means_it() {
+        assert_eq!(serde_json::to_string(&Rating::Safe).unwrap(), "\"safe\"");
+        assert_eq!(Rating::Safe.as_str(), "safe");
+        for name in ["safe", "general"] {
+            let json = format!("\"{name}\"");
+            assert_eq!(serde_json::from_str::<Rating>(&json).unwrap(), Rating::Safe);
+        }
+        for name in ["safe", "SAFE", "g", "general"] {
+            assert_eq!(Rating::parse(name), Some(Rating::Safe));
+        }
+        assert_eq!(Rating::parse("s"), Some(Rating::Sensitive));
+    }
 
     #[test]
     fn db_codes_round_trip() {

@@ -770,7 +770,7 @@ done
             r.json()["tags"],
             json!([{ "name": "blue_sky", "category": "general", "exists": false }])
         );
-        assert_eq!(r.json()["rating"], "general");
+        assert_eq!(r.json()["rating"], "safe");
 
         // The admin's own pick wins over the preset.
         let r = app

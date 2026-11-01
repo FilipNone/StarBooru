@@ -23,11 +23,11 @@ pub const MAX_AI_FIELD_CHARS: usize = 512;
 /// The prompt that asks a vision model for booru tags.
 pub const TAG_PROMPT: &str = "You tag images for a booru (an image board). Look at the image and \
 answer with JSON only, no prose, in this shape: \
-{\"tags\": [{\"name\": \"long_hair\", \"category\": \"general\"}], \"rating\": \"general\"}. \
+{\"tags\": [{\"name\": \"long_hair\", \"category\": \"general\"}], \"rating\": \"safe\"}. \
 Use danbooru conventions: lowercase English, words joined by underscores, singular nouns, \
 for example 1girl, blue_sky, holding_umbrella, outdoors. Category is one of general, artist, \
 character, copyright, meta; only name characters, series or artists you are sure of. \
-Give at most 30 tags, most important first. Rating is one of general, sensitive, \
+Give at most 30 tags, most important first. Rating is one of safe, sensitive, \
 questionable, explicit. \
 Also describe each person in the image, left to right, under \"figures\": \
 [{\"kind\": \"girl\", \"character\": \"\", \"cosplay\": \"\", \"head\": [\"hat\"], \
@@ -585,7 +585,7 @@ mod tests {
             "Sure! Here you go:\n```json\n{\"tags\": [\"sky\", \"cloud\"], \"rating\": \"g\"}\n```\nEnjoy.",
         );
         assert_eq!(names(&p), vec!["sky", "cloud"]);
-        assert_eq!(p.rating, Some(Rating::General));
+        assert_eq!(p.rating, Some(Rating::Safe));
     }
 
     #[test]

@@ -115,7 +115,7 @@ fn choose(
         match row.category {
             9 => {
                 let value = match row.name.as_str() {
-                    "general" => Rating::General,
+                    "general" => Rating::Safe,
                     "sensitive" => Rating::Sensitive,
                     "questionable" => Rating::Questionable,
                     "explicit" => Rating::Explicit,
@@ -264,7 +264,7 @@ mod tests {
     fn short_scores_are_harmless() {
         let (tags, rating) = choose(&wd_list(), &[0.9], 0.5, 0.85);
         assert!(tags.is_empty());
-        assert_eq!(rating, Some(Rating::General));
+        assert_eq!(rating, Some(Rating::Safe));
     }
 
     #[test]

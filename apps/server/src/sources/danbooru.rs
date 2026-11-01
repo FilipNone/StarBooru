@@ -135,7 +135,7 @@ fn read_pool(pool: &Value, answer: &mut Answer) {
 
 fn rating(code: &str) -> Option<Rating> {
     match code {
-        "g" => Some(Rating::General),
+        "g" => Some(Rating::Safe),
         "s" => Some(Rating::Sensitive),
         "q" => Some(Rating::Questionable),
         "e" => Some(Rating::Explicit),

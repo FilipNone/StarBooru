@@ -1,6 +1,6 @@
 //! Search query language.
 //!
-//! `blue_sky -cloud rating:g type:image order:score`
+//! `blue_sky -cloud rating:safe type:image order:score`
 //!
 //! * `tag`: post must have the tag; `-tag`: post must not have it.
 //! * `rating:<g|s|q|e>`, `-rating:<..>`, `type:<image|animation|video>`.
@@ -518,7 +518,7 @@ mod tests {
         let q = parse_query("Blue_Sky -cloud rating:g -rating:e type:video order:score").unwrap();
         assert_eq!(q.include, vec!["blue_sky"]);
         assert_eq!(q.exclude, vec!["cloud"]);
-        assert_eq!(q.ratings, vec![Rating::General]);
+        assert_eq!(q.ratings, vec![Rating::Safe]);
         assert_eq!(q.exclude_ratings, vec![Rating::Explicit]);
         assert_eq!(q.kind, Some(MediaKind::Video));
         assert_eq!(

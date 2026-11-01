@@ -253,7 +253,7 @@ fn source(image: &Value) -> Option<String> {
 
 fn rating(name: &str) -> Option<Rating> {
     match name.to_ascii_lowercase().as_str() {
-        "general" | "safe" => Some(Rating::General),
+        "general" | "safe" => Some(Rating::Safe),
         "sensitive" => Some(Rating::Sensitive),
         "questionable" => Some(Rating::Questionable),
         "explicit" => Some(Rating::Explicit),

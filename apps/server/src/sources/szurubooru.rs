@@ -145,7 +145,7 @@ fn read_post(site: &Site, post: &Value, answer: &mut Answer) {
 
 fn rating(safety: &str) -> Option<Rating> {
     match safety {
-        "safe" => Some(Rating::General),
+        "safe" => Some(Rating::Safe),
         "sketchy" => Some(Rating::Questionable),
         "unsafe" => Some(Rating::Explicit),
         _ => None,

@@ -4,6 +4,8 @@ All endpoints are under `/api/v1`. Bodies are JSON unless noted. The Rust types 
 
 **Auth.** Send `Authorization: Bearer <token>`. Every endpoint except `info`, `auth/register` and `auth/login` requires it. The token is a session token from sign-in (`sb_…`) or an [API key](#api-keys) (`sbk_…`).
 
+**Ratings.** A rating is `safe`, `sensitive`, `questionable` or `explicit`. `general` is also accepted in requests and means `safe`; answers always say `safe`.
+
 **Errors.** Errors are returned as `{"code": "...", "message": "..."}` with a matching status:
 
 | Status | Meaning |
@@ -127,7 +129,7 @@ A `Backup`'s `url` is a signed path relative to the server, valid for an hour. F
 | Method | Path | Body | Returns |
 |---|---|---|---|
 | GET | `/posts?q=&page=&limit=` | | `PostPage {posts, page, limit, has_more, corrected?}`. `page` starts at 1 (at most 10000); `limit` is at most 200, default 60. `corrected` lists `TagCorrection {from, to}` for the unknown tags the search corrected; it is left out when there are none. |
-| POST | `/posts` | multipart: `file` (required), `tags` (space-separated), `rating` (`g`/`s`/`q`/`e`), `source` | `Post`, or 409 `duplicate` if the same file exists. The message names the post, and says so when it is in the recycle bin. |
+| POST | `/posts` | multipart: `file` (required), `tags` (space-separated), `rating` (`safe`/`s`/`q`/`e`), `source` | `Post`, or 409 `duplicate` if the same file exists. The message names the post, and says so when it is in the recycle bin. |
 | POST | `/posts/import` | `ImportRequest {url, tags?, rating?, source?}`. `tags` is a list; `source` defaults to `url`. | `Post`, like an upload. 400 for a non-http(s) address, credentials in the URL, a private-network address (unless the server allows them) or import turned off; 413 over the upload limit; 409 `duplicate`; 424 `fetch_failed` when the remote server errors, times out or redirects more than 5 times. |
 | GET | `/posts/{id}` | | `Post`, with `ocr_text` and `tag_details: [PostTag {name, category, section}]`. `section` is the top of the tag's parent chain (`clothing` for `boots`), the tag itself when it heads a tree, or null for a tag on its own; the viewer groups general tags by it. Also `figures`, the people in the picture (see [People](#people-in-a-post)), left out when there are none. The answers of `PATCH /posts/{id}`, the vote, restore and OCR rescan carry the same fields; lists leave them out. |
 | GET | `/posts/{id}/neighbors?q=` | | `Neighbors {prev, next}`: the ids just before and after the post in the results of search `q` (same filters and order), or null at either end. Both are null for `order:random` or when `q` matches nothing. |
@@ -174,7 +176,7 @@ Terms are separated by spaces, with at most 40 terms.
 | `-cloud` | must not have the tag, nor any tag under it |
 | `{girl blonde_hair boots}` / `-{boy hat}` | one person in the picture has every tag (or a tag under it in the tree); `girl`, `boy` or `other` inside the braces also sets their kind, and `{boy}` alone matches any boy. With a minus, no one does. A tag that doesn't exist makes `{…}` match nothing, and `-{…}` exclude nothing. |
 | `artist:name` | the tag `name`; the prefix (`artist:`, `character:`/`char:`, `copyright:`/`copy:`/`series:`, `meta:`, `general:`/`gen:`) is dropped |
-| `rating:g` / `-rating:e` | rating is (not) general, sensitive, questionable or explicit (`g s q e`); repeat to allow several, e.g. `rating:g rating:s` |
+| `rating:safe` / `-rating:e` | rating is (not) safe, sensitive, questionable or explicit (`safe s q e`; `g` and `general` also mean safe); repeat to allow several, e.g. `rating:safe rating:q` |
 | `type:image` / `type:animation` / `type:video` | media kind |
 | `date:2024`, `date:2024-03`, `date:2024-03-15` | the post's date is in that period. The date is `file_date` (from the file), or the upload date when there is none. Dates are compared in UTC. |
 | `date:2023..2024`, `date:2023-06..`, `date:..2024` | from the start of the first period to the end of the last; either end can be left open |

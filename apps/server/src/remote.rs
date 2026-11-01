@@ -211,8 +211,8 @@ fn absolute(base: &Url, raw: &str) -> Option<String> {
 /// Blombooru) it means *safe*. Anything unknown is treated as questionable.
 fn rating(api: BooruApi, raw: &str) -> Rating {
     match raw {
-        "g" | "general" | "safe" => Rating::General,
-        "s" if api != BooruApi::Danbooru => Rating::General,
+        "g" | "general" | "safe" => Rating::Safe,
+        "s" if api != BooruApi::Danbooru => Rating::Safe,
         "s" | "sensitive" => Rating::Sensitive,
         "e" | "explicit" => Rating::Explicit,
         _ => Rating::Questionable,
@@ -318,7 +318,7 @@ mod tests {
             p.preview_url,
             "https://b.home/api/media/12/thumbnail?api_key=k"
         );
-        assert_eq!(p.rating, Rating::General);
+        assert_eq!(p.rating, Rating::Safe);
         assert_eq!(p.tags, ["sunset", "sea"]);
         let mut s = search(BooruApi::Blombooru, "https://b.home");
         s.login = Some("me".into());
@@ -345,7 +345,7 @@ mod tests {
         .unwrap();
         assert_eq!((posts.len(), sent), (1, 2));
         assert_eq!(posts[0].tags, ["someone", "smile"]);
-        assert_eq!(posts[0].rating, Rating::General);
+        assert_eq!(posts[0].rating, Rating::Safe);
         assert_eq!(posts[0].page_url, "https://e.net/posts/5");
         assert_eq!((posts[0].width, posts[0].height), (10, 20));
     }
@@ -426,10 +426,10 @@ mod tests {
     #[test]
     fn maps_ratings_per_scale() {
         assert_eq!(rating(BooruApi::Danbooru, "s"), Rating::Sensitive);
-        assert_eq!(rating(BooruApi::Moebooru, "s"), Rating::General);
+        assert_eq!(rating(BooruApi::Moebooru, "s"), Rating::Safe);
         assert_eq!(rating(BooruApi::Gelbooru, "sensitive"), Rating::Sensitive);
         assert_eq!(rating(BooruApi::E621, "e"), Rating::Explicit);
-        assert_eq!(rating(BooruApi::Blombooru, "s"), Rating::General);
+        assert_eq!(rating(BooruApi::Blombooru, "s"), Rating::Safe);
         assert_eq!(rating(BooruApi::Danbooru, ""), Rating::Questionable);
     }
 }

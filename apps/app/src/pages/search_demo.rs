@@ -14,8 +14,8 @@ fn examples() -> [(&'static str, String); 18] {
         ("ishtar_(fate) smile", t!("demo-tag-all")),
         ("ishtar_(fate) -rin_tohsaka", t!("demo-tag-not")),
         ("{ishtar_(fate) red_eyes}", t!("demo-figure")),
-        ("ishtar_(fate) rating:g", t!("demo-rating")),
-        ("ishtar_(fate) rating:g rating:s", t!("demo-rating-any")),
+        ("ishtar_(fate) rating:safe", t!("demo-rating")),
+        ("ishtar_(fate) rating:safe rating:q", t!("demo-rating-any")),
         ("ishtar_(fate) -rating:e", t!("demo-rating-not")),
         ("ishtar_(fate) type:video", t!("demo-type")),
         ("ishtar_(fate) date:2024-03", t!("demo-date")),
@@ -28,7 +28,7 @@ fn examples() -> [(&'static str, String); 18] {
         ("ishtar_(fate) order:score", t!("demo-order-score")),
         ("ishtar_(fate) order:random", t!("demo-order-random")),
         (
-            "ishtar_(fate) -rin_tohsaka rating:g order:score",
+            "ishtar_(fate) -rin_tohsaka rating:safe order:score",
             t!("demo-combined"),
         ),
     ]

@@ -152,7 +152,7 @@ pub fn split_tag_edit(text: &str) -> (Vec<String>, Vec<String>) {
 /// A rating's name in the current language.
 pub fn rating_label(rating: Rating) -> String {
     match rating {
-        Rating::General => t!("rating-general"),
+        Rating::Safe => t!("rating-safe"),
         Rating::Sensitive => t!("rating-sensitive"),
         Rating::Questionable => t!("rating-questionable"),
         Rating::Explicit => t!("rating-explicit"),

@@ -30,8 +30,8 @@ fn sections() -> [(String, Vec<(&'static str, String)>); 5] {
         (
             t!("help-filters"),
             vec![
-                ("rating:g", t!("help-rating")),
-                ("rating:g rating:s", t!("help-rating-any")),
+                ("rating:safe", t!("help-rating")),
+                ("rating:safe rating:q", t!("help-rating-any")),
                 ("-rating:e", t!("help-rating-not")),
                 ("type:image", t!("help-type")),
                 ("status:deleted", t!("help-deleted")),
@@ -74,7 +74,7 @@ fn sections() -> [(String, Vec<(&'static str, String)>); 5] {
         (
             t!("help-combined"),
             vec![
-                ("cat -dog rating:g order:score", t!("help-combined-cats")),
+                ("cat -dog rating:safe order:score", t!("help-combined-cats")),
                 ("type:video order:size", t!("help-combined-videos")),
             ],
         ),
@@ -113,7 +113,7 @@ pub fn Help() -> Element {
                     },
                     input {
                         r#type: "search",
-                        placeholder: "cat -dog rating:g order:score",
+                        placeholder: "cat -dog rating:safe order:score",
                         aria_label: t!("help-try-label"),
                         autocomplete: "off",
                         spellcheck: "false",
@@ -286,7 +286,7 @@ fn figure_line(term: &FigureTerm, negated: bool) -> String {
     }
 }
 
-/// "general, sensitive or questionable".
+/// "safe, sensitive or questionable".
 fn ratings(list: &[Rating]) -> String {
     let names: Vec<String> = list.iter().map(|r| rating_label(*r)).collect();
     match names.split_last() {
@@ -360,7 +360,7 @@ mod tests {
             [
                 "Tagged cat",
                 "Tagged with none of dog, bird",
-                "Rated general or sensitive",
+                "Rated safe or sensitive",
                 "Not rated explicit",
                 "Videos only",
                 "By file size, smallest first",
@@ -410,7 +410,7 @@ mod tests {
         assert!(explain("date:soon").unwrap_err().contains("date:soon"));
         assert!(explain("width:wide").unwrap_err().contains("width:wide"));
         let ratings3 = explain("rating:g rating:s rating:q").unwrap();
-        assert_eq!(ratings3[0], "Rated general, sensitive or questionable");
+        assert_eq!(ratings3[0], "Rated safe, sensitive or questionable");
         assert!(explain("rating:z").unwrap_err().contains("unknown rating"));
     }
 

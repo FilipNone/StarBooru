@@ -124,7 +124,7 @@ Uploads work these out at ingest. A startup backfill (`backfill_colors`) reads t
 
 ### Search
 
-Tags are stored on each post as a `BIGINT[]` with a GIN index. A query like `blue_sky night -cloud rating:g order:score` becomes:
+Tags are stored on each post as a `BIGINT[]` with a GIN index. A query like `blue_sky night -cloud rating:safe order:score` becomes:
 
 1. Unknown tags are corrected, unless the query says `exact:true` (`correct_typos` in `routes/posts.rs`). One query finds the names that are neither a tag nor an alias. For each, `tags::spelled_like` fetches candidates in use: the top 20 by `pg_trgm` similarity, plus up to 200 of about the same length with the same first letter, as short words share few trigrams. `starbooru_core::closest_tag` then picks one by edit distance. The corrected query is what the rest of the search uses, so the corrections are the same in the gallery, the viewer's neighbours and Explore, and known names cost only that one query.
 2. The tag names are resolved to ids, following aliases, and each is expanded to the tags below it in the tree (a recursive CTE on `parent_id`, at most 32 levels). If an included tag doesn't exist, the result is empty, with no scan.

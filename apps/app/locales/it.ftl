@@ -54,7 +54,7 @@ nav-tags = Tag
 nav-upload = Carica
 nav-settings = Impostazioni
 nav-settings-tab = Opzioni
-search-placeholder = Cerca tag, ad es. ishtar_(fate) rating:g
+search-placeholder = Cerca tag, ad es. cat rating:safe
 demo-tag = Post con questo tag
 demo-tag-all = Post con tutti i tag elencati
 demo-tag-not = Il meno esclude un tag
@@ -236,7 +236,7 @@ dup-similar = Simili
 
 ## Ratings
 
-rating-general = generale
+rating-safe = sicuro
 rating-sensitive = delicato
 rating-questionable = discutibile
 rating-explicit = esplicito
@@ -258,7 +258,7 @@ help-tag-category = il tag some_name; quando tagghi, il prefisso lo rende un tag
 help-tag-spaces = due tag: gli spazi separano i termini, quindi scrivi blue_sky
 help-tag-meta = post ad alta risoluzione senza audio. Il server aggiunge da solo tag meta come lowres, highres, absurdres, wide_image, tall_image, hd, full_hd, 4k, 8k, horizontal_image, vertical_image, square_image, animated, video, sound e long_video
 help-filters = Filtri
-help-rating = classificato generale (g), delicato (s), discutibile (q) o esplicito (e)
+help-rating = classificato sicuro, delicato (s), discutibile (q) o esplicito (e)
 help-rating-any = una qualsiasi delle classificazioni elencate
 help-rating-not = qualsiasi classificazione tranne esplicito
 help-type = immagini statiche; anche type:animation e type:video

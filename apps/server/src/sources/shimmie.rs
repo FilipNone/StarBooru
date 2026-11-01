@@ -154,7 +154,7 @@ fn file_of(site: &Site, raw: &str) -> Option<url::Url> {
 
 fn rating(post: &Value) -> Option<Rating> {
     match text(post, "rating")? {
-        "s" => Some(Rating::General),
+        "s" => Some(Rating::Safe),
         "q" => Some(Rating::Questionable),
         "e" => Some(Rating::Explicit),
         _ => None,
@@ -220,7 +220,7 @@ mod tests {
             seen,
             [
                 ("2", Some(Rating::Questionable)),
-                ("5", Some(Rating::General)),
+                ("5", Some(Rating::Safe)),
                 ("9", None)
             ]
         );

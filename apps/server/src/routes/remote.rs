@@ -142,7 +142,7 @@ mod tests {
         assert_eq!(page["more"], false);
         assert_eq!(page["posts"][0]["tags"], json!(["t1"]));
         assert_eq!(page["posts"][0]["page_url"], format!("{site}/d/posts/1"));
-        assert_eq!(page["posts"][0]["rating"], "general");
+        assert_eq!(page["posts"][0]["rating"], "safe");
 
         let signed = search("danbooru", "d", json!({"login": "me", "api_key": "secret"}));
         let r = app

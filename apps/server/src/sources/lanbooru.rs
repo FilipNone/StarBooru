@@ -71,7 +71,7 @@ fn read_image(site: &Site, image: &Value, answer: &mut Answer) {
 
 fn rating(code: i64) -> Option<Rating> {
     match code {
-        1 => Some(Rating::General),
+        1 => Some(Rating::Safe),
         2 => Some(Rating::Questionable),
         3 => Some(Rating::Explicit),
         _ => None,

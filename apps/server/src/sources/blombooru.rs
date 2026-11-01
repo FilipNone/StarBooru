@@ -251,7 +251,7 @@ fn read_media(site: &Site, item: &Value, answer: &mut Answer) {
 
 fn rating(name: &str) -> Option<Rating> {
     match name {
-        "safe" => Some(Rating::General),
+        "safe" => Some(Rating::Safe),
         "questionable" => Some(Rating::Questionable),
         "explicit" => Some(Rating::Explicit),
         _ => None,
