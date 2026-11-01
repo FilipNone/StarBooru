@@ -230,4 +230,44 @@ mod tests {
         prefs.system_accent = false;
         assert_eq!(pick_hue(&prefs, Some(140)), prefs.accent_hue);
     }
+
+    /// OKLCH to gamma-encoded sRGB, unclamped, 1.0 being full.
+    fn srgb(l: f64, c: f64, h: f64) -> [f64; 3] {
+        let (a, b) = (c * h.to_radians().cos(), c * h.to_radians().sin());
+        let lms = [
+            (l + 0.396_337_777_4 * a + 0.215_803_757_3 * b).powi(3),
+            (l - 0.105_561_345_8 * a - 0.063_854_172_8 * b).powi(3),
+            (l - 0.089_484_177_5 * a - 1.291_485_548 * b).powi(3),
+        ];
+        [
+            4.076_741_662_1 * lms[0] - 3.307_711_591_3 * lms[1] + 0.230_969_929_2 * lms[2],
+            -1.268_438_004_6 * lms[0] + 2.609_757_401_1 * lms[1] - 0.341_319_396_5 * lms[2],
+            -0.004_196_086_3 * lms[0] - 0.703_418_614_7 * lms[1] + 1.707_614_701 * lms[2],
+        ]
+        .map(|c| {
+            if c <= 0.003_130_8 {
+                12.92 * c
+            } else {
+                1.055 * c.powf(1.0 / 2.4) - 0.055
+            }
+        })
+    }
+
+    #[test]
+    fn the_page_background_fits_srgb_at_every_hue() {
+        // Regression: WebView 113 painted the page yellow on a bluish wallpaper,
+        // because the blue channel of the canvas came to 256 and wrapped to 0.
+        let css = include_str!("../assets/main.css");
+        let canvases: Vec<_> = css.split("--canvas: oklch(").skip(1).collect();
+        assert!(!canvases.is_empty());
+        for canvas in canvases {
+            let mut parts = canvas.split_whitespace();
+            let l: f64 = parts.next().unwrap().parse().unwrap();
+            let c: f64 = parts.next().unwrap().parse().unwrap();
+            for hue in 0..360 {
+                let rgb = srgb(l, c, f64::from(hue));
+                assert!(rgb.iter().all(|&ch| ch <= 1.0), "{l} {c} {hue}: {rgb:?}");
+            }
+        }
+    }
 }

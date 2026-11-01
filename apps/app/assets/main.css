@@ -14,7 +14,7 @@ body { background: #111; }
 
   /* light role mapping */
   color-scheme: light;
-  --canvas: oklch(0.985 0.008 var(--h));
+  --canvas: oklch(0.985 0.006 var(--h));
   --surface: oklch(0.965 0.014 var(--h));
   --surface-2: oklch(0.94 0.02 var(--h));
   --surface-3: oklch(0.905 0.028 var(--h));

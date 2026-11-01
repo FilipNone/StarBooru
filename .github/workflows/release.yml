@@ -21,7 +21,8 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      # The Dockerfile's version: wasm-bindgen can't read what newer linkers strip.
+      - uses: dtolnay/rust-toolchain@1.98
         with:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
@@ -70,7 +71,7 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.98
       - uses: Swatinem/rust-cache@v2
       - name: Install the Linux dependencies
         if: runner.os == 'Linux'
@@ -122,7 +123,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.98
         with:
           targets: aarch64-linux-android
       - uses: Swatinem/rust-cache@v2
