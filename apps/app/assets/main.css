@@ -904,6 +904,10 @@ button.thumb { width: 100%; padding: 0; border: 0; font: inherit; color: inherit
   grid-template: minmax(0, 1fr) / minmax(0, 1fr);
   height: var(--fit-h); border-radius: var(--r);
   --r: var(--radius-l);
+  /* The tools' width, known here so the translate button can stand beside them
+     and come and go without moving them: three buttons, the zoom, gaps and padding. */
+  --tool-w: 40px; --zoom-w: 52px;
+  --tools-w: calc(3 * var(--tool-w) + var(--zoom-w) + 10px);
   /* the media's height limit; the image box is sized from it before loading */
   --fit-h: max(280px, calc(100dvh - var(--bar-end) - 16px - var(--post-gap) - var(--post-bar-h) - var(--post-gap) - var(--peek)));
 }
@@ -971,18 +975,18 @@ html:has(.stage.full) { overflow-y: hidden; }
   padding: 2px; border-radius: 999px;
   transition: opacity var(--med) var(--ease);
 }
-.stage-tools .stage-btn { width: 40px; height: 40px; background: transparent; }
+.stage-tools .stage-btn { width: var(--tool-w); height: 40px; background: transparent; }
 .stage-tools .stage-btn:disabled { opacity: 0.38; }
 @media (hover: hover) {
   .stage-tools :is(.stage-btn, .stage-zoom):hover:not(:disabled) { background: var(--glass-line); }
 }
 .stage.full .stage-back { display: none; }
-/* The translation's button sits under the tools, where it comes and goes alone. */
-.stage-translate { position: absolute; right: 12px; top: 68px; }
-.stage.full .stage-tools { top: max(12px, env(safe-area-inset-top)); }
-.stage.full .stage-translate { top: calc(max(12px, env(safe-area-inset-top)) + 56px); }
+/* The translation's button sits beside the tools, where it comes and goes alone. */
+.stage-translate { position: absolute; right: calc(12px + var(--tools-w) + 6px); top: 12px; }
+.stage.full :is(.stage-tools, .stage-translate) { top: max(12px, env(safe-area-inset-top)); }
 .app[data-hand="left"] .stage-back { left: auto; right: 12px; }
-.app[data-hand="left"] .stage-tools, .app[data-hand="left"] .stage-translate { right: auto; left: 12px; }
+.app[data-hand="left"] .stage-tools { right: auto; left: 12px; }
+.app[data-hand="left"] .stage-translate { right: auto; left: calc(12px + var(--tools-w) + 6px); }
 .stage.full[data-rest] :is(.stage-prev, .stage-next, .stage-tools, .stage-translate:not(.busy)) { opacity: 0; pointer-events: none; }
 /* translated text over the image: same cell, box and zoom as the image */
 .stage > img, .stage > video, .stage > .panel-layer { grid-area: 1 / 1; }
@@ -1003,14 +1007,14 @@ html:has(.stage.full) { overflow-y: hidden; }
 .stage-translate[aria-pressed="true"] { background: var(--primary); color: var(--on-primary); }
 .stage-translate.busy { animation: pulse 1.2s var(--ease) infinite; }
 .stage-note {
-  /* Under the back button and the tools, and clear of the translate button. */
-  position: absolute; top: 68px; left: 50%; transform: translateX(-50%); width: max-content; max-width: calc(100% - 136px);
+  /* Under the back button and the tools. */
+  position: absolute; top: 68px; left: 50%; transform: translateX(-50%); width: max-content; max-width: calc(100% - 24px);
   margin: 0; padding: 6px 14px; border-radius: 999px; background: var(--scrim); color: var(--on-scrim);
   font-size: 13px; text-align: center;
 }
 .stage-zoom {
   /* As wide as "100%" or "Adatta", so the buttons beside it stay where they are. */
-  width: 7ch; min-height: 40px; padding: 0; border: 0; border-radius: 999px; background: transparent;
+  width: var(--zoom-w); min-height: 40px; padding: 0; border: 0; border-radius: 999px; background: transparent;
   color: var(--on-surface); font: inherit; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; cursor: pointer;
 }
 
@@ -1036,6 +1040,8 @@ html:has(.stage.full) { overflow-y: hidden; }
   .post-bar { gap: 4px 8px; }
   .post-bar .icon-btn { width: 40px; }
   .bar-acts { gap: 0; }
+  /* Back, the translate button and the tools, all on one row. */
+  .stage { --tool-w: 36px; }
 }
 .post-main .banner { margin: 0; }
 .score { min-width: 3ch; text-align: center; font-weight: 700; font-variant-numeric: tabular-nums; }

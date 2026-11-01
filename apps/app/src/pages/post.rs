@@ -1810,6 +1810,24 @@ mod tests {
     }
 
     #[test]
+    fn the_translate_button_stands_beside_the_tools() {
+        let tools = rule(".stage-tools");
+        assert!(tools.contains("right: 12px") && tools.contains("top: 12px"));
+        assert!(tools.contains("padding: 2px") && tools.contains("gap: 2px"));
+        let translate = rule(".stage-translate");
+        assert!(translate.contains("right: calc(12px + var(--tools-w) + 6px)"));
+        assert!(translate.contains("top: 12px"));
+        assert!(
+            rule(".app[data-hand=\"left\"] .stage-translate")
+                .contains("left: calc(12px + var(--tools-w) + 6px)")
+        );
+        // The width it's placed by is the width the tools are built from.
+        assert!(rule(".stage").contains("calc(3 * var(--tool-w) + var(--zoom-w) + 10px)"));
+        assert!(rule(".stage-tools .stage-btn").contains("width: var(--tool-w)"));
+        assert!(rule(".stage-zoom").contains("width: var(--zoom-w)"));
+    }
+
+    #[test]
     fn the_picture_keeps_its_corners_when_zoomed() {
         // The transform scales the radius too, so it's divided back down.
         assert!(rule(".stage.zoomed img").contains("calc(var(--r) / var(--z, 1))"));
