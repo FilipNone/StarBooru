@@ -1,11 +1,12 @@
 use chrono::Utc;
 use dioxus::prelude::*;
+use starbooru_core::color::Rgb;
 use starbooru_core::{Identity, Role, SessionInfo, SignInMethods, Usage};
 
 use super::api_keys::ApiKeysCard;
 use super::library_import::LibraryImportCard;
 use super::share::SharesCard;
-use super::{Choice, ErrorBanner, Select, Spinner};
+use super::{Choice, ColorPicker, ErrorBanner, Select, Spinner};
 use crate::Route;
 use crate::cache;
 use crate::i18n::Lang;
@@ -13,7 +14,7 @@ use crate::icons::{Ico, Icon};
 use crate::oidc::{self, Done};
 use crate::power;
 use crate::store::{self, Hand, PREFS, SESSION, Saver, Theme};
-use crate::system::SYSTEM_HUE;
+use crate::system::{self, SYSTEM_HUE};
 use crate::util::{human_size, time_ago};
 
 const MIN_PASSWORD_CHARS: usize = 8;
@@ -21,15 +22,36 @@ const MIN_PASSWORD_CHARS: usize = 8;
 /// Accent presets (OKLCH hues).
 const SWATCHES: [u16; 8] = [285, 330, 20, 65, 140, 190, 245, 0];
 
-/// Whether `hue` is the colour in use, not overridden by the wallpaper's.
-fn picked(prefs: &store::Prefs, hue: u16) -> bool {
-    prefs.accent_hue == hue && !(prefs.system_accent && SYSTEM_HUE.peek().is_some())
+/// Whether `hue` is the preset in use. `wallpaper` says the wallpaper's colour
+/// overrides it.
+fn picked(prefs: &store::Prefs, hue: u16, wallpaper: bool) -> bool {
+    !wallpaper && prefs.accent_color.is_none() && prefs.accent_hue == hue
+}
+
+/// Whether the colour in use came from the picker, not a preset. A hue with no
+/// colour stored came from the slider older versions had.
+fn custom_in_use(prefs: &store::Prefs, wallpaper: bool) -> bool {
+    !wallpaper && (prefs.accent_color.is_some() || !SWATCHES.contains(&prefs.accent_hue))
 }
 
 fn pick(hue: u16) {
     let mut prefs = PREFS.write();
     prefs.accent_hue = hue;
+    prefs.accent_color = None;
     prefs.system_accent = false;
+}
+
+/// Makes `rgb` the accent. The palette is built from a hue, so a grey can't be
+/// one, and this returns false for it.
+fn pick_color(prefs: &mut store::Prefs, rgb: Rgb) -> bool {
+    let [r, g, b] = rgb;
+    let Some(hue) = system::hue_of(u32::from_be_bytes([0xFF, r, g, b])) else {
+        return false;
+    };
+    prefs.accent_hue = hue;
+    prefs.accent_color = Some(rgb);
+    prefs.system_accent = false;
+    true
 }
 
 fn swatch_name(hue: u16) -> String {
@@ -45,6 +67,70 @@ fn swatch_name(hue: u16) -> String {
     }
 }
 
+/// Centres the accent's colour picker under its button, as far as the window
+/// allows: the row of colours wraps, so the button can be anywhere across it.
+const PLACE_ACCENT_MENU: &str = r#"
+    const menu = document.getElementById("accent-menu");
+    if (menu) {
+        const button = menu.parentElement.getBoundingClientRect();
+        const middle = (button.left + button.right) / 2;
+        const room = document.documentElement.clientWidth - menu.offsetWidth - 8;
+        const left = Math.max(8, Math.min(middle - menu.offsetWidth / 2, room));
+        menu.style.left = `${left - button.left}px`;
+        menu.style.transformOrigin = `${middle - left}px top`;
+    }
+"#;
+
+/// The last choice of *Accent colour*: the colour picker, behind a button that
+/// shows the colour when it's the one in use.
+#[component]
+fn AccentPicker(hue: u16, value: Rgb, on: bool) -> Element {
+    let mut open = use_signal(|| false);
+    let mut grey = use_signal(|| false);
+    let label = t!("settings-accent-custom");
+    rsx! {
+        div {
+            class: "color-pick",
+            onkeydown: move |e: KeyboardEvent| {
+                if open() && e.key() == Key::Escape {
+                    e.stop_propagation();
+                    open.set(false);
+                }
+            },
+            button {
+                r#type: "button",
+                class: if on { "accent custom on" } else { "accent custom" },
+                style: if on { "--swatch-hue: {hue}" },
+                title: label.clone(),
+                aria_label: label.clone(),
+                aria_haspopup: "dialog",
+                aria_expanded: if open() { "true" } else { "false" },
+                onclick: move |_| open.toggle(),
+                Ico { icon: Icon::Palette, size: 20 }
+            }
+            if open() {
+                div { class: "select-backdrop", onclick: move |_| open.set(false) }
+                div {
+                    id: "accent-menu",
+                    class: "color-menu",
+                    role: "dialog",
+                    aria_label: label.clone(),
+                    onmounted: move |_| {
+                        let _ = document::eval(PLACE_ACCENT_MENU);
+                    },
+                    ColorPicker {
+                        value,
+                        on_pick: move |rgb| grey.set(!pick_color(&mut PREFS.write(), rgb)),
+                    }
+                    if grey() {
+                        p { class: "field-error", role: "alert", {t!("accent-no-hue")} }
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[component]
 pub fn Settings() -> Element {
     let info = use_resource(|| async move {
@@ -57,6 +143,11 @@ pub fn Settings() -> Element {
     });
     let prefs = PREFS.read().clone();
     let session = SESSION.read().clone();
+    let wallpaper = prefs.system_accent && SYSTEM_HUE().is_some();
+    let accent_rgb = match prefs.accent_color {
+        Some(rgb) if !wallpaper => rgb,
+        _ => system::swatch_rgb(system::seed_hue(&prefs)),
+    };
     // Bumped after a password change, which signs other sessions out.
     let mut sessions_version = use_signal(|| 0u32);
     let mut methods = use_signal(|| None::<SignInMethods>);
@@ -127,10 +218,10 @@ pub fn Settings() -> Element {
                 }
                 div { class: "field",
                     span { {t!("settings-accent")} }
-                    div { class: "swatches",
+                    div { class: "accents",
                         if let Some(hue) = SYSTEM_HUE() {
                             button {
-                                class: if prefs.system_accent { "swatch system on" } else { "swatch system" },
+                                class: if prefs.system_accent { "accent system on" } else { "accent system" },
                                 style: "--swatch-hue: {hue}",
                                 aria_pressed: if prefs.system_accent { "true" } else { "false" },
                                 title: t!("accent-system-hint"),
@@ -142,26 +233,19 @@ pub fn Settings() -> Element {
                         for hue in SWATCHES {
                             button {
                                 key: "{hue}",
-                                class: if picked(&prefs, hue) { "swatch on" } else { "swatch" },
+                                class: if picked(&prefs, hue, wallpaper) { "accent on" } else { "accent" },
                                 style: "--swatch-hue: {hue}",
                                 aria_label: swatch_name(hue),
                                 title: swatch_name(hue),
                                 onclick: move |_| pick(hue),
-                                if picked(&prefs, hue) { Ico { icon: Icon::Check, size: 18 } }
+                                if picked(&prefs, hue, wallpaper) { Ico { icon: Icon::Check, size: 18 } }
                             }
                         }
-                    }
-                    input {
-                        r#type: "range",
-                        min: "0",
-                        max: "359",
-                        aria_label: t!("settings-accent-custom"),
-                        value: "{prefs.accent_hue}",
-                        oninput: move |e| {
-                            if let Ok(h) = e.value().parse::<u16>() {
-                                pick(h.min(359));
-                            }
-                        },
+                        AccentPicker {
+                            hue: prefs.accent_hue,
+                            value: accent_rgb,
+                            on: custom_in_use(&prefs, wallpaper),
+                        }
                     }
                 }
                 div { class: "field",
@@ -759,5 +843,63 @@ fn CacheCard() -> Element {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_accent_keeps_the_exact_colour_it_came_from() {
+        let mut prefs = store::Prefs::default();
+        assert!(pick_color(&mut prefs, [0xff, 0x00, 0x00]));
+        assert_eq!(prefs.accent_hue, 29);
+        assert_eq!(prefs.accent_color, Some([0xff, 0x00, 0x00]));
+        assert!(!prefs.system_accent);
+    }
+
+    #[test]
+    fn a_grey_cant_be_the_accent() {
+        let mut prefs = store::Prefs::default();
+        for grey in [[0x80, 0x80, 0x80], [0, 0, 0], [0xff, 0xff, 0xff]] {
+            assert!(!pick_color(&mut prefs, grey));
+        }
+        assert_eq!(prefs, store::Prefs::default());
+    }
+
+    #[test]
+    fn one_accent_choice_shows_as_in_use() {
+        let mut prefs = store::Prefs {
+            accent_hue: 140,
+            ..Default::default()
+        };
+        assert!(picked(&prefs, 140, false));
+        assert!(!custom_in_use(&prefs, false));
+
+        // An exact colour, even of a preset's hue, belongs to the picker.
+        prefs.accent_color = Some([0x20, 0xb0, 0x20]);
+        assert!(!picked(&prefs, 140, false));
+        assert!(custom_in_use(&prefs, false));
+
+        // A hue from the slider of older versions.
+        prefs.accent_color = None;
+        prefs.accent_hue = 100;
+        assert!(custom_in_use(&prefs, false));
+
+        // The wallpaper overrides both.
+        assert!(!custom_in_use(&prefs, true));
+        prefs.accent_hue = 140;
+        assert!(!picked(&prefs, 140, true));
+    }
+
+    #[test]
+    fn accent_swatches_keep_their_own_styles() {
+        // Regression: the colour search's `.swatch` rules overrode the accent's,
+        // which took the tick off centre in WebKit and made the circles small.
+        let css = include_str!("../../assets/main.css");
+        assert_eq!(css.matches("\n.swatch {").count(), 1);
+        assert_eq!(css.matches("\n.swatches {").count(), 1);
+        assert_eq!(css.matches("\n.accent {").count(), 1);
     }
 }

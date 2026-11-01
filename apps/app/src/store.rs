@@ -8,6 +8,7 @@ use std::sync::{Mutex, PoisonError};
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 use starbooru_client::Client;
+use starbooru_core::color::Rgb;
 use starbooru_core::{AuthResponse, User};
 
 use crate::i18n::Lang;
@@ -189,6 +190,9 @@ pub struct Prefs {
     pub theme: Theme,
     /// OKLCH hue (0–360) the whole palette is derived from.
     pub accent_hue: u16,
+    /// The exact colour `accent_hue` was taken from, to show it again in the
+    /// picker; `None` for a preset.
+    pub accent_color: Option<Rgb>,
     /// Follow the wallpaper's colour where the system has one (Android 12+)
     /// instead of `accent_hue`.
     pub system_accent: bool,
@@ -215,6 +219,7 @@ impl Default for Prefs {
         Self {
             theme: Theme::System,
             accent_hue: 285,
+            accent_color: None,
             system_accent: true,
             last_server: String::new(),
             language: None,
@@ -496,6 +501,7 @@ mod tests {
     fn older_prefs_still_load() {
         let prefs: Prefs = serde_json::from_str(r#"{"theme":"dark","accent_hue":120}"#).unwrap();
         assert_eq!(prefs.theme, Theme::Dark);
+        assert_eq!(prefs.accent_color, None);
         assert_eq!(prefs.hand, Hand::Either);
         assert_eq!(prefs.battery_saver, Saver::Auto);
         assert!(prefs.boorus.is_empty());

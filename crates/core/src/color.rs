@@ -81,6 +81,12 @@ pub fn parse_color(value: &str) -> Option<ColorTerm> {
     })
 }
 
+/// A colour typed as hex: `rrggbb` or `rgb`, with or without `#`, in either case.
+pub fn parse_hex_color(value: &str) -> Option<Rgb> {
+    let value = value.trim();
+    parse_hex(value.strip_prefix('#').unwrap_or(value))
+}
+
 /// `rrggbb` or `rgb`.
 fn parse_hex(value: &str) -> Option<Rgb> {
     if !value.bytes().all(|b| b.is_ascii_hexdigit()) {
@@ -388,6 +394,19 @@ mod tests {
         assert_eq!(wheel_color(0.0, -3.0), [255, 0, 0]);
         // Hostile numbers still give a colour.
         let _ = wheel_color(f64::NAN, f64::INFINITY);
+    }
+
+    #[test]
+    fn reads_a_typed_hex_colour() {
+        for typed in ["#2060e0", "2060e0", " #2060E0 ", "#2060E0"] {
+            assert_eq!(parse_hex_color(typed), Some([0x20, 0x60, 0xe0]), "{typed}");
+        }
+        assert_eq!(parse_hex_color("#26e"), Some([0x22, 0x66, 0xee]));
+        for typed in [
+            "", "#", "red", "#12", "#1234", "#12345g", "##2060e0", "#2060é",
+        ] {
+            assert_eq!(parse_hex_color(typed), None, "{typed}");
+        }
     }
 
     #[test]

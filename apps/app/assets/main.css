@@ -226,20 +226,26 @@ input[type="range"] { width: 100%; accent-color: var(--primary); margin-top: 12p
 .seg:disabled { opacity: .45; cursor: not-allowed; }
 .seg.on { background: var(--primary-container); color: var(--on-primary-container); font-weight: 600; }
 
-.swatches { display: flex; flex-wrap: wrap; gap: 10px; }
-.swatch {
-  display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; cursor: pointer;
-  border: 3px solid var(--canvas); outline: 1px solid var(--outline);
+/* accent colour (pages/settings.rs). The ring is a shadow, and hovering doesn't
+   scale: a border and outline on a scaled layer showed seams in WebKit. */
+.accents { display: flex; flex-wrap: wrap; gap: 10px; }
+.accent {
+  display: grid; place-items: center; width: 40px; height: 40px; padding: 0; border: 0; border-radius: 50%; cursor: pointer;
   background: oklch(0.6 0.16 var(--swatch-hue)); color: white;
-  transition: transform var(--fast) var(--ease-spring);
+  transition: box-shadow var(--fast) var(--ease);
 }
-.swatch:hover { transform: scale(1.1); }
-.swatch.on { outline: 3px solid var(--on-surface); }
+.accent:hover { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--outline); }
+.accent.on { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--on-surface); }
+.accent:focus-visible { outline: 3px solid var(--primary); outline-offset: 4px; }
+/* the picker: no colour of its own until its colour is the one in use */
+.accent.custom:not(.on) { background: var(--surface-3); color: var(--on-surface); }
 /* the wallpaper's colour (Android 12+): a labelled pill, darker for legible text */
-.swatch.system {
-  display: inline-flex; gap: 4px; width: auto; padding: 0 14px 0 12px; border-radius: 20px;
+.accent.system {
+  display: inline-flex; align-items: center; gap: 4px; width: auto; padding: 0 14px 0 12px; border-radius: 20px;
   background: oklch(0.48 0.15 var(--swatch-hue)); font: inherit; font-size: 14px; font-weight: 600;
 }
+/* opens from its button; AccentPicker keeps it inside the window */
+.accents .color-menu { left: 0; right: auto; }
 
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .chip {
@@ -653,13 +659,23 @@ a.brand:hover .mark-star, a.search-home:hover .mark-star { transform: rotate(90d
   background: radial-gradient(closest-side, #fff, #fff0),
     conic-gradient(#f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00);
 }
+/* the box on the wheel's centre line, with the colour and the button either side */
+.color-hex { grid-template-columns: 1fr 124px 1fr; align-items: center; gap: 2px; width: 222px; margin: 0; }
+.color-hex input { text-align: center; }
+/* the margin matches the empty space around the button's tick, so both sit as far from the box */
+.color-preview {
+  justify-self: end; width: 24px; height: 24px; margin-right: 10px; border-radius: 50%;
+  border: 1px solid oklch(from var(--outline) l c h / 0.6);
+}
+.color-hex .icon-btn { justify-self: start; width: 36px; height: 36px; }
+.color-menu .field-error { width: 222px; margin: 0; text-align: center; }
 .swatches { display: grid; grid-template-columns: repeat(6, 32px); gap: 6px; }
 .swatch {
   display: block; width: 32px; height: 32px; padding: 0; border-radius: 50%; cursor: pointer;
   border: 1px solid oklch(from var(--outline) l c h / 0.6);
-  transition: transform var(--fast) var(--ease);
+  transition: box-shadow var(--fast) var(--ease);
 }
-.swatch:hover { transform: scale(1.12); }
+.swatch:hover { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--outline); }
 .swatch:focus-visible { outline: 3px solid var(--primary); outline-offset: 2px; }
 .swatch[aria-pressed="true"] { outline: 3px solid var(--primary); outline-offset: 2px; }
 .post-swatches { display: flex; flex-wrap: wrap; gap: 6px; }

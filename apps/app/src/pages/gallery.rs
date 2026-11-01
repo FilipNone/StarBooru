@@ -3,7 +3,7 @@ use std::collections::{BTreeSet, HashSet};
 use chrono::{DateTime, Utc};
 use dioxus::prelude::*;
 use serde::Deserialize;
-use starbooru_core::color::{NAMED_COLORS, to_hex, wheel_color};
+use starbooru_core::color::{NAMED_COLORS, to_hex};
 use starbooru_core::saved::MAX_SEARCH_NAME_CHARS;
 use starbooru_core::{
     BulkEdit, MAX_BULK_POSTS, MediaKind, Order, Post, Rating, SavedSearch, SortKey, TagCorrection,
@@ -13,7 +13,7 @@ use starbooru_core::{
 use super::post::OPENING;
 use super::share::ShareSheet;
 use super::upload::DropToUpload;
-use super::{Choice, CorrectionBanner, ErrorBanner, Select, Spinner};
+use super::{Choice, ColorPicker, CorrectionBanner, ErrorBanner, Select, Spinner};
 use crate::Route;
 use crate::activity;
 use crate::cache;
@@ -25,8 +25,6 @@ use crate::store::{self, GalleryView, PREFS, Prefs, Spot};
 use crate::util::{escape_attr, format_duration, rating_label, split_tag_edit};
 
 const PAGE_SIZE: u32 = 60;
-/// The colour wheel's width in pixels, as in `main.css`.
-const WHEEL_SIZE: f64 = 176.0;
 
 /// Width of the gallery's grid in pixels, kept so coming back to the page
 /// lays it out right away.
@@ -1121,9 +1119,7 @@ fn color_label(name: &str) -> String {
     }
 }
 
-/// Rewrites the query's `color:` term from a wheel or named swatches. The
-/// wheel takes a pointer, so every part of it has a swatch close by for the
-/// keyboard.
+/// Rewrites the query's `color:` term from the colour picker or named swatches.
 #[component]
 fn ColorMenu(q: String) -> Element {
     let mut open = use_signal(|| false);
@@ -1164,16 +1160,9 @@ fn ColorMenu(q: String) -> Element {
             if open() {
                 div { class: "select-backdrop", onclick: move |_| open.set(false) }
                 div { class: "color-menu", role: "dialog", aria_label: t!("color-search"),
-                    div {
-                        class: "color-wheel",
-                        title: t!("color-wheel"),
-                        aria_hidden: "true",
-                        onclick: move |e: MouseEvent| {
-                            let at = e.element_coordinates();
-                            let radius = WHEEL_SIZE / 2.0;
-                            let rgb = wheel_color((at.x - radius) / radius, (at.y - radius) / radius);
-                            pick.call(Some(to_hex(rgb)));
-                        },
+                    ColorPicker {
+                        value: current.as_ref().map(|c| c.rgb),
+                        on_pick: move |rgb| pick.call(Some(to_hex(rgb))),
                     }
                     div { class: "swatches",
                         for (name, rgb) in NAMED_COLORS {

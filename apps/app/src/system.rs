@@ -9,6 +9,8 @@
 
 use dioxus::prelude::*;
 
+use starbooru_core::color::Rgb;
+
 use crate::store::Prefs;
 
 /// The wallpaper's accent hue, when the device has one. Read at start and
@@ -81,6 +83,34 @@ pub fn hue_of(argb: u32) -> Option<u16> {
     let degrees = b.atan2(a).to_degrees().rem_euclid(360.0).round();
     // `degrees` is in 0..=360, so it fits; 360 wraps to 0.
     Some((degrees as u16) % 360)
+}
+
+/// The colour an accent preset of this hue is drawn in, as `.accent` in
+/// `main.css`.
+pub fn swatch_rgb(hue: u16) -> Rgb {
+    srgb(0.6, 0.16, f64::from(hue)).map(|c| (c.clamp(0.0, 1.0) * 255.0).round() as u8)
+}
+
+/// OKLCH to gamma-encoded sRGB, unclamped, 1.0 being full.
+fn srgb(l: f64, c: f64, h: f64) -> [f64; 3] {
+    let (a, b) = (c * h.to_radians().cos(), c * h.to_radians().sin());
+    let lms = [
+        (l + 0.396_337_777_4 * a + 0.215_803_757_3 * b).powi(3),
+        (l - 0.105_561_345_8 * a - 0.063_854_172_8 * b).powi(3),
+        (l - 0.089_484_177_5 * a - 1.291_485_548 * b).powi(3),
+    ];
+    [
+        4.076_741_662_1 * lms[0] - 3.307_711_591_3 * lms[1] + 0.230_969_929_2 * lms[2],
+        -1.268_438_004_6 * lms[0] + 2.609_757_401_1 * lms[1] - 0.341_319_396_5 * lms[2],
+        -0.004_196_086_3 * lms[0] - 0.703_418_614_7 * lms[1] + 1.707_614_701 * lms[2],
+    ]
+    .map(|c| {
+        if c <= 0.003_130_8 {
+            12.92 * c
+        } else {
+            1.055 * c.powf(1.0 / 2.4) - 0.055
+        }
+    })
 }
 
 /// The app's private folders, from `Context`. `directories` can't find them:
@@ -231,26 +261,17 @@ mod tests {
         assert_eq!(pick_hue(&prefs, Some(140)), prefs.accent_hue);
     }
 
-    /// OKLCH to gamma-encoded sRGB, unclamped, 1.0 being full.
-    fn srgb(l: f64, c: f64, h: f64) -> [f64; 3] {
-        let (a, b) = (c * h.to_radians().cos(), c * h.to_radians().sin());
-        let lms = [
-            (l + 0.396_337_777_4 * a + 0.215_803_757_3 * b).powi(3),
-            (l - 0.105_561_345_8 * a - 0.063_854_172_8 * b).powi(3),
-            (l - 0.089_484_177_5 * a - 1.291_485_548 * b).powi(3),
-        ];
-        [
-            4.076_741_662_1 * lms[0] - 3.307_711_591_3 * lms[1] + 0.230_969_929_2 * lms[2],
-            -1.268_438_004_6 * lms[0] + 2.609_757_401_1 * lms[1] - 0.341_319_396_5 * lms[2],
-            -0.004_196_086_3 * lms[0] - 0.703_418_614_7 * lms[1] + 1.707_614_701 * lms[2],
-        ]
-        .map(|c| {
-            if c <= 0.003_130_8 {
-                12.92 * c
-            } else {
-                1.055 * c.powf(1.0 / 2.4) - 0.055
-            }
-        })
+    #[test]
+    fn a_preset_is_drawn_in_its_own_hue() {
+        let css = include_str!("../assets/main.css");
+        assert!(css.contains("oklch(0.6 0.16 var(--swatch-hue))"));
+        // Some fall outside sRGB, and clipping them moves the hue a little.
+        for hue in [285, 330, 20, 65, 140, 190, 245, 0] {
+            let [r, g, b] = swatch_rgb(hue);
+            let got = hue_of(u32::from_be_bytes([0xFF, r, g, b])).unwrap();
+            let apart = got.abs_diff(hue).min(360 - got.abs_diff(hue));
+            assert!(apart <= 10, "{hue}: {got}");
+        }
     }
 
     #[test]

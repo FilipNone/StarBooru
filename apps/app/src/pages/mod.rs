@@ -3,6 +3,7 @@ mod admin_ai;
 mod admin_backups;
 mod api_keys;
 mod boorus;
+mod color_picker;
 mod duplicates;
 mod editor;
 mod explore;
@@ -26,6 +27,7 @@ use dioxus::prelude::*;
 
 pub use admin::Admin;
 pub use boorus::Boorus;
+pub use color_picker::ColorPicker;
 pub use duplicates::Duplicates;
 pub use explore::Explore;
 pub use gallery::Gallery;
