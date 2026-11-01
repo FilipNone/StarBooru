@@ -55,7 +55,9 @@ impl AppError {
             AppError::PayloadTooLarge => (StatusCode::PAYLOAD_TOO_LARGE, "too_large"),
             AppError::Unsupported(_) => (StatusCode::UNSUPPORTED_MEDIA_TYPE, "unsupported"),
             AppError::TooManyRequests { .. } => (StatusCode::TOO_MANY_REQUESTS, "rate_limited"),
-            AppError::Upstream(_) => (StatusCode::BAD_GATEWAY, "fetch_failed"),
+            // Not 502 or 504: Cloudflare swaps those for a page of its own, and the
+            // message that says what went wrong never reaches the user.
+            AppError::Upstream(_) => (StatusCode::FAILED_DEPENDENCY, "fetch_failed"),
             AppError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "internal"),
         }
     }
@@ -134,5 +136,16 @@ impl From<starbooru_core::FigureError> for AppError {
 impl From<starbooru_core::query::QueryError> for AppError {
     fn from(e: starbooru_core::query::QueryError) -> Self {
         AppError::BadRequest(e.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_failing_site_uses_a_status_that_proxies_leave_alone() {
+        let response = AppError::Upstream("that site is down".into()).into_response();
+        assert_eq!(response.status(), StatusCode::FAILED_DEPENDENCY);
     }
 }

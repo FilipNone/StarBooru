@@ -454,7 +454,7 @@ mod tests {
         let id = app.upload_png(&admin, 3, "").await;
         let path = format!("/api/v1/posts/{id}/suggest-tags");
         let r = app.call(Method::POST, &path, Some(&admin), None).await;
-        assert_eq!(r.status, StatusCode::BAD_GATEWAY);
+        assert_eq!(r.status, StatusCode::FAILED_DEPENDENCY);
         let text = r.json().to_string();
         assert!(text.contains("AI provider answered 401"), "{text}");
         assert!(!text.contains("sk-wrong"));
@@ -640,8 +640,11 @@ mod tests {
         );
         assert_eq!(translate(other, "it").await.status, StatusCode::BAD_REQUEST);
         assert_eq!(translate(999_999, "it").await.status, StatusCode::NOT_FOUND);
-        // The provider refusing the request is a clean 502.
-        assert_eq!(translate(id, "en").await.status, StatusCode::BAD_GATEWAY);
+        // The provider refusing the request is a clean `fetch_failed`.
+        assert_eq!(
+            translate(id, "en").await.status,
+            StatusCode::FAILED_DEPENDENCY
+        );
         app.finish().await;
     }
 
@@ -1062,7 +1065,7 @@ done
         // An answer with no blocks is an error; one with no text is not
         // kept over a good translation.
         for (answer, status) in [
-            ("Sorry, I can't read this.", StatusCode::BAD_GATEWAY),
+            ("Sorry, I can't read this.", StatusCode::FAILED_DEPENDENCY),
             ("{\"blocks\": []}", StatusCode::OK),
         ] {
             let body = json!({ "mode": "api", "preset": "balanced",

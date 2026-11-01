@@ -177,12 +177,12 @@ mod tests {
             ),
             (
                 search("e621", "html", json!({})),
-                StatusCode::BAD_GATEWAY,
+                StatusCode::FAILED_DEPENDENCY,
                 "fetch_failed",
             ),
             (
                 search("e621", "missing", json!({})),
-                StatusCode::BAD_GATEWAY,
+                StatusCode::FAILED_DEPENDENCY,
                 "fetch_failed",
             ),
             (

@@ -3064,8 +3064,8 @@ mod tests {
         assert_eq!(again.json()["code"], "duplicate");
 
         for (path, status, code) in [
-            ("/missing", StatusCode::BAD_GATEWAY, "fetch_failed"),
-            ("/loop", StatusCode::BAD_GATEWAY, "fetch_failed"),
+            ("/missing", StatusCode::FAILED_DEPENDENCY, "fetch_failed"),
+            ("/loop", StatusCode::FAILED_DEPENDENCY, "fetch_failed"),
             ("/big", StatusCode::PAYLOAD_TOO_LARGE, "too_large"),
         ] {
             let r = app

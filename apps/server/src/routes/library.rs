@@ -143,7 +143,10 @@ fn not_that_system(source: LibrarySource) -> String {
         LibrarySource::Shimmie2 => "this address doesn't answer like Shimmie2 with its Ouroboros \
                                     API extension: turn that on in the Extension Manager"
             .to_owned(),
-        other => format!("this address doesn't answer like {}", other.name()),
+        other => format!(
+            "this address doesn't answer like {}: use the site's main address, not a page on it",
+            other.name()
+        ),
     }
 }
 
@@ -1758,7 +1761,7 @@ mod tests {
                 Some(lan(&base)),
             )
             .await;
-        assert_eq!(r.status, StatusCode::BAD_GATEWAY);
+        assert_eq!(r.status, StatusCode::FAILED_DEPENDENCY);
         assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 1);
         app.finish().await;
     }
