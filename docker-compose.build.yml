@@ -1,0 +1,12 @@
+# Compile the image from this checkout instead of downloading it, for a commit that
+# isn't released or a changed Dockerfile. Goes last, after any other override:
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml -f docker-compose.build.yml up -d --build
+# For a graphics card add its override and AI_GPU=vulkan or AI_GPU=nvidia in front.
+services:
+  starbooru:
+    image: starbooru:local
+    pull_policy: build
+    build:
+      context: .
+      args:
+        AI_GPU: ${AI_GPU:-none}

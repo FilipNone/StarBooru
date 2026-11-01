@@ -1,11 +1,8 @@
 # Local AI on NVIDIA cards through CUDA. Needs the NVIDIA Container Toolkit:
-#   docker compose -f docker-compose.yml -f docker-compose.nvidia.yml up -d --build
+#   docker compose -f docker-compose.yml -f docker-compose.nvidia.yml up -d
 services:
   starbooru:
-    build:
-      context: .
-      args:
-        AI_GPU: nvidia
+    image: ghcr.io/filipnone/starbooru:${STARBOORU_VERSION:-latest}-nvidia
     environment:
       NVIDIA_DRIVER_CAPABILITIES: compute,utility
     deploy:

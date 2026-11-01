@@ -112,10 +112,10 @@ ffmpeg（動画サムネイル）、tesseract（画像内の文字）、pg_dump�
 git clone https://github.com/FilipNone/StarBooru.git
 cd StarBooru
 cp .env.example .env   # POSTGRES_PASSWORD と STARBOORU_SECRET を設定
-docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
+docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
 ```
 
-初回のビルドには数分かかります。http://localhost:8080 を開いてアカウントを作成してください。最初のアカウントが管理者になります。
+初回の起動では、ビルド済みのイメージをダウンロードします。http://localhost:8080 を開いてアカウントを作成してください。最初のアカウントが管理者になります。
 
 Dokploy、グラフィックカード、リバースプロキシについては[インストールガイド](https://github.com/FilipNone/StarBooru/wiki/Installation)（英語）をご覧ください。
 

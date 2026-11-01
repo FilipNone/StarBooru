@@ -1,6 +1,6 @@
 # Deployment
 
-StarBooru ships as one image that contains the server and the web app, plus a PostgreSQL container. The repository's `docker-compose.yml` is ready for Dokploy.
+StarBooru ships as one ready-made image, `ghcr.io/filipnone/starbooru`, that contains the server and the web app, plus a PostgreSQL container. The repository's `docker-compose.yml` runs it and is ready for Dokploy.
 
 ## Dokploy
 
@@ -11,7 +11,7 @@ StarBooru ships as one image that contains the server and the web app, plus a Po
    openssl rand -hex 32   # STARBOORU_SECRET
    ```
 3. **Domain.** In the *Domains* tab, add your domain for service **`starbooru`**, port **`8080`**, with HTTPS (Let's Encrypt). Dokploy adds the Traefik labels and network. Don't publish host ports.
-4. **Deploy.** The first build compiles everything and takes several minutes. Later deploys reuse Docker's layer cache where they can.
+4. **Deploy.** This downloads the image, so nothing is compiled on your server.
 5. **Create the admin account.** Open `https://your-domain` and choose *Create account*. The first account becomes admin. Registration then closes unless `STARBOORU_ALLOW_REGISTRATION=true`.
 6. **Backups.** StarBooru backs the database up itself (see [Backups](#backups)) into the `media` volume. In *Volume Backups*, back up the `media` volume off the server: it then holds the files and the database backups. Backing up `pgdata` as well does no harm, but a copy of a running database's files may not restore cleanly; the `pg_dump` archives always do.
 
@@ -90,7 +90,7 @@ Admins can change the name, open registration, the recycle-bin days and the back
 | `STARBOORU_FFMPEG` | `ffmpeg` | ffmpeg for video, AVIF and JPEG XL thumbnails (installed in the image); `off` disables it |
 | `STARBOORU_FFPROBE` | `ffprobe` | ffprobe, for video size and length |
 | `STARBOORU_OCR` | `true` | Read text in still images with tesseract (installed in the image), for `text:` search and the viewer's *Text in image*. Runs on the server only; no image leaves it. `off` turns it off; a path picks another tesseract. Without tesseract it is quietly off (logged once at start). Older posts are read in the background at each start. |
-| `STARBOORU_OCR_LANGS` | `eng` (`eng+jpn+jpn_vert` in `docker-compose.yml`) | tesseract languages, joined with `+`, e.g. `eng+ita`. The image has English and Japanese (`jpn` across, `jpn_vert` down, for manga); fewer languages read faster. For another language add its package (`tesseract-ocr-ita`) in the `Dockerfile` first. |
+| `STARBOORU_OCR_LANGS` | `eng` (`eng+jpn+jpn_vert` in `docker-compose.yml`) | tesseract languages, joined with `+`, e.g. `eng+ita`. The image has English and Japanese (`jpn` across, `jpn_vert` down, for manga); fewer languages read faster. For another language add its package (`tesseract-ocr-ita`) in the `Dockerfile` and [compile the image yourself](#compiling-the-image-yourself). |
 | `STARBOORU_URL_IMPORT` | `on` | Import from URL: `on` (public addresses only), `private` (also private-network addresses, e.g. a NAS; anyone with an account can then make the server fetch from your LAN), `off`. Library imports follow it, except that an admin's can always reach the server's own network; `off` turns them off for everyone too. |
 | `STARBOORU_AI_URL` | unset | Base URL of an OpenAI-compatible API, such as `https://openrouter.ai/api/v1`, `https://api.openai.com/v1`, `https://generativelanguage.googleapis.com/v1beta/openai` or a local server's own (`http://192.168.1.5:11434/v1`). What a new install's tools start with; each tool can have its own in Administration › Server › AI. Thumbnails of posts, and the text of images being translated, are sent to it. |
 | `STARBOORU_AI_MODEL` | unset | The API's model, such as `google/gemini-2.5-flash-lite` or `gpt-4o-mini` |
@@ -152,16 +152,16 @@ Times are for one picture, one sentence or one page of eight balloons with the m
 
 ### Graphics cards
 
-The default image runs on the processor (x86-64 and ARM64). A card needs a build that includes its driver layer. When the card can't be used, StarBooru falls back to the processor.
+The default image runs on the processor (x86-64 and ARM64). A card needs an image that includes its driver layer. When the card can't be used, StarBooru falls back to the processor.
 
 ```sh
 # NVIDIA (CUDA): needs the NVIDIA Container Toolkit; adds about 3 GB
-docker compose -f docker-compose.yml -f docker-compose.nvidia.yml up -d --build
+docker compose -f docker-compose.yml -f docker-compose.nvidia.yml up -d
 # AMD, Intel, or NVIDIA through Vulkan
-docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
 ```
 
-If `/dev/dri/renderD128` isn't open to everyone on the host, set `STARBOORU_RENDER_GID` to its group (`stat -c %g /dev/dri/renderD128`). With several cards the NVIDIA build uses NVIDIA; the Vulkan build uses the one the driver layer ranks first. On Dokploy add the same keys to the compose file. Both builds are x86-64 only.
+If `/dev/dri/renderD128` isn't open to everyone on the host, set `STARBOORU_RENDER_GID` to its group (`stat -c %g /dev/dri/renderD128`). With several cards the NVIDIA image uses NVIDIA; the Vulkan image uses the one the driver layer ranks first. On Dokploy add the same keys to the compose file, including the `image` line. Both images are x86-64 only.
 
 Upgrading from the Ollama setup: the `ollama` service is gone, and its volume is no longer used (`docker volume rm <project>_ollama` frees the space). `STARBOORU_LOCAL_AI_URL` and `STARBOORU_LOCAL_AI_MODEL` are ignored. A custom Ollama saved in the panel becomes an API with the same address and model; one set only through those variables needs `STARBOORU_AI_URL` and `STARBOORU_AI_MODEL` instead (with `/v1` on the address).
 
@@ -196,9 +196,21 @@ Settings › Import from another booru moves a whole library from szurubooru, Sh
 
 ```sh
 cp .env.example .env        # fill in the two secrets
-docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
+docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
 # → http://localhost:8080
 ```
+
+## Compiling the image yourself
+
+Only needed for a commit that isn't released yet or a changed `Dockerfile`, such as an added OCR language. It takes several minutes. Add `docker-compose.build.yml` last:
+
+```sh
+docker compose -f docker-compose.yml -f docker-compose.local.yml -f docker-compose.build.yml up -d --build
+# For a graphics card, with its override and the matching AI_GPU (vulkan or nvidia)
+AI_GPU=vulkan docker compose -f docker-compose.yml -f docker-compose.gpu.yml -f docker-compose.build.yml up -d --build
+```
+
+On Dokploy, set *Compose Path* to a file of your own that has the `build` section, as Dokploy reads one compose file.
 
 ## Health
 
@@ -209,4 +221,6 @@ The container runs as uid 10001. A fresh named volume gets the right ownership a
 
 ## Updating
 
-Redeploy. Database migrations run at startup, and the media layout is stable. Back up first when the release notes mention a migration.
+Redeploy, or run the `docker compose … up -d` command again: both download the newest release. Database migrations run at startup, and the media layout is stable. Back up first when the release notes mention a migration.
+
+To stay on one version, set `STARBOORU_VERSION` (`0.1.0-beta.1`). Without it you get `latest`, the newest published release: betas only until the first stable one, then stable releases only.

@@ -112,10 +112,10 @@ ffmpeg (миниатюры видео), tesseract (текст на изобра�
 git clone https://github.com/FilipNone/StarBooru.git
 cd StarBooru
 cp .env.example .env   # укажите POSTGRES_PASSWORD и STARBOORU_SECRET
-docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
+docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
 ```
 
-Первая сборка занимает несколько минут. Откройте http://localhost:8080 и создайте учётную запись: первая становится администратором.
+При первом запуске скачивается готовый образ. Откройте http://localhost:8080 и создайте учётную запись: первая становится администратором.
 
 О Dokploy, видеокартах и обратных прокси читайте в [руководстве по установке](https://github.com/FilipNone/StarBooru/wiki/Installation) (на английском).
 

@@ -112,10 +112,10 @@ One image holds the server and the web app, next to a PostgreSQL container:
 git clone https://github.com/FilipNone/StarBooru.git
 cd StarBooru
 cp .env.example .env   # set POSTGRES_PASSWORD and STARBOORU_SECRET
-docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
+docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
 ```
 
-The first build takes several minutes. Open http://localhost:8080 and create an account: the first one becomes admin.
+The first start downloads the ready-made image. Open http://localhost:8080 and create an account: the first one becomes admin.
 
 For Dokploy, graphics cards and reverse proxies, see the [installation guide](https://github.com/FilipNone/StarBooru/wiki/Installation).
 

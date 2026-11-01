@@ -10,7 +10,7 @@ what you want to try. Anything it needs starts first, it waits until it answers,
 | Android app | `dx serve --android` (needs the Android SDK/NDK and an emulator or device), after the server | the app on the device |
 | Server | `cargo run -p starbooru-server` on 127.0.0.1:8080, after the database. Registration is on, data goes in `./data` | — |
 | Database | PostgreSQL container `starbooru-dev-pg` on 127.0.0.1:55432, data in volume `starbooru-dev-pgdata` | — |
-| Docker stack | The production image via `docker compose … up --build` on port 8090. Creates `.env` with random secrets if it is missing | your browser |
+| Docker stack | The production image, compiled from this checkout, via `docker compose … up --build` on port 8090. Creates `.env` with random secrets if it is missing | your browser |
 
 Each target runs in its own terminal, named `StarBooru: <target>`. Click a running target to see its output.
 - **■** stops the target; closing its terminal does the same.

@@ -1,13 +1,10 @@
 # Local AI on AMD and Intel graphics, or NVIDIA's Vulkan driver:
-#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
 # Where /dev/dri/renderD128 isn't open to everyone, set STARBOORU_RENDER_GID to
 # its group: stat -c %g /dev/dri/renderD128
 services:
   starbooru:
-    build:
-      context: .
-      args:
-        AI_GPU: vulkan
+    image: ghcr.io/filipnone/starbooru:${STARBOORU_VERSION:-latest}-vulkan
     devices:
       - /dev/dri:/dev/dri
     group_add:

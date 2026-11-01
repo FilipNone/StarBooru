@@ -112,10 +112,10 @@ Un'unica immagine contiene il server e l'app web, affiancata da un container Pos
 git clone https://github.com/FilipNone/StarBooru.git
 cd StarBooru
 cp .env.example .env   # imposta POSTGRES_PASSWORD e STARBOORU_SECRET
-docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
+docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
 ```
 
-La prima compilazione richiede alcuni minuti. Apri http://localhost:8080 e crea un account: il primo diventa amministratore.
+Il primo avvio scarica l'immagine già pronta. Apri http://localhost:8080 e crea un account: il primo diventa amministratore.
 
 Per Dokploy, schede grafiche e reverse proxy, vedi la [guida all'installazione](https://github.com/FilipNone/StarBooru/wiki/Installation) (in inglese).
 

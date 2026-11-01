@@ -20,7 +20,7 @@ const DB_PASSWORD = 'starbooru-dev';
 const DEV_SECRET = 'starbooru-dev-secret-not-for-production-000000';
 // A first build compiles every dependency; give it time.
 const READY_TIMEOUT_MS = 20 * 60 * 1000;
-const COMPOSE_FILES = ['-f', 'docker-compose.yml', '-f', 'docker-compose.local.yml'];
+const COMPOSE_FILES = ['-f', 'docker-compose.yml', '-f', 'docker-compose.local.yml', '-f', 'docker-compose.build.yml'];
 
 /**
  * @typedef {'stopped' | 'starting' | 'running'} State
