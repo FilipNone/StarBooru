@@ -951,9 +951,9 @@ html:has(.stage.full) { overflow-y: hidden; }
 .stage-btn {
   display: inline-grid; place-items: center; width: 44px; height: 44px; border: 0; border-radius: 999px;
   color: var(--on-surface); cursor: pointer;
-  transition: opacity var(--med) var(--ease), transform var(--med) var(--ease-spring), border-radius var(--med) var(--ease-spring);
+  transition: opacity var(--med) var(--ease), transform var(--med) var(--ease-spring);
 }
-.stage-btn:active:not(:disabled) { transform: scale(0.88); border-radius: 14px; }
+.stage-btn:active:not(:disabled) { transform: scale(0.88); }
 .stage-btn:disabled { opacity: 0.4; cursor: default; }
 @media (hover: hover) {
   .stage-prev:hover:not(:disabled) .icon { transform: translateX(-2px); }
@@ -1021,10 +1021,9 @@ html:has(.stage.full) { overflow-y: hidden; }
   display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px;
   min-height: var(--post-bar-h); padding: 8px; border-radius: calc(var(--post-bar-h) / 2);
 }
-.post-bar .icon-btn { color: var(--on-surface); transition: transform var(--med) var(--ease-spring), background-color var(--fast) var(--ease), color var(--fast) var(--ease), border-radius var(--med) var(--ease-spring); }
-.post-bar .icon-btn:active:not(:disabled) { border-radius: 14px; }
+.post-bar .icon-btn { color: var(--on-surface); transition: transform var(--med) var(--ease-spring), background-color var(--fast) var(--ease), color var(--fast) var(--ease); }
 .vote { display: flex; align-items: center; border-radius: 999px; background: var(--surface-3); }
-.post-bar .vote .icon-btn.on { border-radius: 14px; background: var(--primary); color: var(--on-primary); }
+.post-bar .vote .icon-btn.on { background: var(--primary); color: var(--on-primary); }
 .bar-acts { display: flex; align-items: center; gap: 4px; }
 .bar-delete { margin-left: auto; }
 .bar-label { display: none; }

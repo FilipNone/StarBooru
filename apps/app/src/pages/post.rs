@@ -540,13 +540,15 @@ pub fn PostView(id: i64, q: String) -> Element {
                 }
                 // What you do with the post, apart from how you look at it: an
                 // opinion, what leaves with the file, and the one that removes it.
+                // `act` ignores a press while another is running, so nothing here
+                // greys out for the moment a request takes.
                 div { class: "post-bar glass float", role: "toolbar", aria_label: t!("post-actions"),
                     div { class: "vote",
                         button {
                             class: if p.my_vote > 0 { "icon-btn on" } else { "icon-btn" },
                             aria_label: t!("post-upvote"),
                             aria_pressed: "{p.my_vote > 0}",
-                            disabled: busy() || p.deleted,
+                            disabled: p.deleted,
                             onclick: move |_| act(Op::Vote(if p.my_vote > 0 { 0 } else { 1 })),
                             Ico { icon: Icon::ThumbUp }
                         }
@@ -555,7 +557,7 @@ pub fn PostView(id: i64, q: String) -> Element {
                             class: if p.my_vote < 0 { "icon-btn on" } else { "icon-btn" },
                             aria_label: t!("post-downvote"),
                             aria_pressed: "{p.my_vote < 0}",
-                            disabled: busy() || p.deleted,
+                            disabled: p.deleted,
                             onclick: move |_| act(Op::Vote(if p.my_vote < 0 { 0 } else { -1 })),
                             Ico { icon: Icon::ThumbDown }
                         }
@@ -579,7 +581,7 @@ pub fn PostView(id: i64, q: String) -> Element {
                     }
                     if !p.deleted {
                         button { class: "icon-btn danger bar-delete", aria_label: t!("post-delete"), title: t!("post-delete-title"),
-                            disabled: busy(), onclick: move |_| act(Op::Delete),
+                            onclick: move |_| act(Op::Delete),
                             Ico { icon: Icon::Delete }
                         }
                     }
@@ -1776,6 +1778,35 @@ mod tests {
         // Holding the old height during a turn is what made it change.
         assert!(!include_str!("../motion.rs").contains("stage.style.height"));
         assert!(!include_str!("../motion.rs").contains("dataset.turning"));
+    }
+
+    #[test]
+    fn the_viewers_buttons_stay_round() {
+        // Regression: pressed, and on a vote, they turned into rounded squares.
+        assert!(rule(".stage-btn:active:not(:disabled)").contains("scale(0.88)"));
+        for button in [
+            ".stage-btn",
+            ".stage-btn:active:not(:disabled)",
+            ".post-bar .icon-btn",
+            ".post-bar .vote .icon-btn.on",
+        ] {
+            assert!(!rule(button).contains("border-radius: 14px"), "{button}");
+            assert!(!rule(button).contains("border-radius var("), "{button}");
+        }
+        assert!(!include_str!("../../assets/main.css").contains(".post-bar .icon-btn:active"));
+    }
+
+    #[test]
+    fn a_vote_leaves_the_rest_of_the_bar_alone() {
+        // Regression: the bin and the vote buttons blinked grey for each request.
+        let (source, _) = include_str!("post.rs").split_once("#[cfg(test)]").unwrap();
+        let (_, bar) = source
+            .split_once("class: \"post-bar glass float\"")
+            .unwrap();
+        let (bar, _) = bar.split_once("if let Some(message) = error()").unwrap();
+        assert!(!bar.contains("disabled: busy()"));
+        // What keeps a second press out instead.
+        assert!(source.contains("if busy() || post.peek()"));
     }
 
     #[test]
