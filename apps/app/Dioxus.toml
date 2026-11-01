@@ -17,3 +17,9 @@ icon = [
   "icons/icon.ico",
   "icons/icon.icns",
 ]
+
+# dx writes no dependencies by itself, and the app can't start without these.
+# The GStreamer plugins are what WebKit plays videos with.
+[bundle.deb]
+depends = ["libwebkit2gtk-4.1-0", "libgtk-3-0", "libsoup-3.0-0", "libxdo3", "libssl3"]
+recommends = ["gstreamer1.0-plugins-good", "gstreamer1.0-libav"]
