@@ -239,7 +239,7 @@ async fn info(State(state): State<AppState>) -> AppResult<Json<ServerInfo>> {
     let settings = crate::settings::current(&state).await?;
     Ok(Json(ServerInfo {
         name: settings.name,
-        version: env!("CARGO_PKG_VERSION").to_owned(),
+        version: starbooru_core::VERSION.to_owned(),
         has_users,
         registration_open: !has_users || settings.allow_registration,
         max_upload_bytes: state.config.max_upload_bytes as u64,

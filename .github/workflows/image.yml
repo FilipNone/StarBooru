@@ -56,7 +56,9 @@ jobs:
         with:
           context: .
           platforms: linux/${{ matrix.arch }}
-          build-args: AI_GPU=${{ matrix.gpu }}
+          build-args: |
+            AI_GPU=${{ matrix.gpu }}
+            STARBOORU_VERSION=${{ inputs.tag || github.ref_name }}
           labels: |
             org.opencontainers.image.source=https://github.com/FilipNone/StarBooru
             org.opencontainers.image.licenses=AGPL-3.0-or-later

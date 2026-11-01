@@ -13,6 +13,8 @@ permissions:
 env:
   CARGO_INCREMENTAL: 0
   CARGO_TERM_COLOR: always
+  # The version the apps show. By hand this says the branch, like the filenames.
+  STARBOORU_VERSION: ${{ github.ref_name }}
 
 jobs:
   server:

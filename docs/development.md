@@ -171,6 +171,8 @@ Three things to know when reading the results:
 
 `.github/workflows/release.yml` builds every download on a push of a `v*` tag and puts them in a draft release. A hyphen in the tag (`v0.1.0-beta.1`) makes it a prerelease. Running the workflow by hand builds everything without releasing, which is how to try a change to the workflow; the filenames then say `main`.
 
+Cargo's version stays `0.1.0`, as a pre-release name can break the Windows installer. What the apps and the server show comes from `STARBOORU_VERSION`, which both workflows set to the tag at build time (`starbooru_core::VERSION`). A local build without it shows Cargo's.
+
 `.github/workflows/image.yml` builds the server image from the same tag and pushes it to `ghcr.io/filipnone/starbooru` under its version: x86-64 and ARM64, plus `<version>-vulkan` and `<version>-nvidia`. Publishing the release moves `latest`, and `latest-vulkan` and `latest-nvidia` with it, which is what every install runs, so a draft reaches nobody. A beta moves them only until there is a stable release. Running it by hand builds an existing tag again, with `latest` moved only if you tick that.
 
 It pins the Rust version of the `Dockerfile`, as newer linkers strip a section wasm-bindgen needs. The Linux builds use the oldest supported Ubuntu, so they run on any newer glibc. Each desktop job starts the app and uploads a screenshot as `screenshot-*`: look at them. That job starts the binary it built, so also install the `.deb` in a clean container to catch a missing dependency. There is no AppImage: the one dx makes leaves out WebKit's helper processes and can't start.

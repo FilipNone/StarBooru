@@ -73,6 +73,21 @@ pub use vocab::{SECTIONS, VARIANTS, VOCAB, VOCAB_VERSION, split_category};
 /// Path prefix of the versioned JSON API.
 pub const API_PREFIX: &str = "/api/v1";
 
+/// The version people see. Release builds pass their tag, as Cargo's version
+/// stays numeric for the Windows installer and can't say which beta this is.
+pub const VERSION: &str = match option_env!("STARBOORU_VERSION") {
+    Some(tag) if !tag.is_empty() => without_v(tag),
+    _ => env!("CARGO_PKG_VERSION"),
+};
+
+/// `v0.1.0-beta.2` → `0.1.0-beta.2`
+const fn without_v(tag: &str) -> &str {
+    match tag.as_bytes() {
+        [b'v', ..] => tag.split_at(1).1,
+        _ => tag,
+    }
+}
+
 /// Largest page a client may request from list endpoints.
 pub const MAX_PAGE_LIMIT: u32 = 200;
 /// Page size used when the client does not ask for one.
@@ -80,3 +95,20 @@ pub const DEFAULT_PAGE_LIMIT: u32 = 60;
 /// Samples, the smaller copies the server makes of big images for viewing,
 /// fit in this square (pixels).
 pub const SAMPLE_SIZE: u32 = 2560;
+
+#[cfg(test)]
+mod version_tests {
+    use super::*;
+
+    #[test]
+    fn a_tag_loses_its_v() {
+        assert_eq!(without_v("v0.1.0-beta.2"), "0.1.0-beta.2");
+        assert_eq!(without_v("0.1.0"), "0.1.0");
+        assert_eq!(without_v("main"), "main");
+    }
+
+    #[test]
+    fn there_is_always_a_version() {
+        assert!(!VERSION.is_empty());
+    }
+}

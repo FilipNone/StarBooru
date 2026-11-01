@@ -82,7 +82,7 @@ pub async fn stats(State(state): State<AppState>, user: AuthUser) -> AppResult<J
     .fetch_all(&state.db)
     .await?;
     Ok(Json(ServerStats {
-        version: env!("CARGO_PKG_VERSION").to_owned(),
+        version: starbooru_core::VERSION.to_owned(),
         started_at: state.started_at,
         users: count(t.users),
         disabled_users: count(t.disabled_users),

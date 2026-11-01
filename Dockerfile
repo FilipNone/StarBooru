@@ -33,6 +33,8 @@ RUN set -eux; \
 WORKDIR /src
 COPY . .
 
+# The version the app and the server show: a release's tag, or Cargo's when empty.
+ARG STARBOORU_VERSION=
 RUN dx bundle --web --release -p starbooru-app --out-dir /out/web
 RUN cargo build --release --locked -p starbooru-server -p starbooru-ai-worker \
     && cp target/release/starbooru-server /out/starbooru-server \
