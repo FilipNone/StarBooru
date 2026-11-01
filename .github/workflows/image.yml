@@ -1,0 +1,143 @@
+# Builds the server image, so installing StarBooru downloads it instead of compiling it.
+# A tag pushes it under its version, and publishing the release moves `latest`, which is
+# what docker-compose.yml runs. Running it by hand builds an existing tag again.
+name: Image
+
+on:
+  push:
+    tags: ['v*']
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The tag to build, such as v0.1.0-beta.1
+        required: true
+      latest:
+        description: Move latest to it too
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/filipnone/starbooru
+
+jobs:
+  build:
+    name: Build (${{ matrix.gpu }}, ${{ matrix.arch }})
+    if: github.event_name != 'release'
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { gpu: none, arch: amd64, os: ubuntu-24.04 }
+          - { gpu: none, arch: arm64, os: ubuntu-24.04-arm }
+          - { gpu: vulkan, arch: amd64, os: ubuntu-24.04 }
+          - { gpu: nvidia, arch: amd64, os: ubuntu-24.04 }
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - uses: docker/setup-buildx-action@v4
+      # Pushed by digest only: the merge job below gives them a name once all of them exist.
+      - id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/${{ matrix.arch }}
+          build-args: AI_GPU=${{ matrix.gpu }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/FilipNone/StarBooru
+            org.opencontainers.image.licenses=AGPL-3.0-or-later
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+      - name: Keep the digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir digests
+          touch "digests/${DIGEST#sha256:}"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: digest-${{ matrix.gpu }}-${{ matrix.arch }}
+          path: digests/*
+          if-no-files-found: error
+
+  merge:
+    name: Name (${{ matrix.gpu }})
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        gpu: [none, vulkan, nvidia]
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: digest-${{ matrix.gpu }}-*
+          merge-multiple: true
+          path: digests
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - uses: docker/setup-buildx-action@v4
+      - name: Give the images their version's name
+        working-directory: digests
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+          GPU: ${{ matrix.gpu }}
+        run: |
+          suffix="-$GPU"
+          [ "$GPU" = none ] && suffix=
+          docker buildx imagetools create \
+            --annotation "index:org.opencontainers.image.source=https://github.com/FilipNone/StarBooru" \
+            --annotation "index:org.opencontainers.image.description=StarBooru, a self-hosted personal booru: the server and the web app" \
+            --annotation "index:org.opencontainers.image.licenses=AGPL-3.0-or-later" \
+            -t "$IMAGE:${TAG#v}$suffix" \
+            $(printf "$IMAGE@sha256:%s " *)
+
+  latest:
+    name: Move latest
+    needs: merge
+    if: always() && (github.event_name == 'release' || (inputs.latest && needs.merge.result == 'success'))
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - uses: docker/setup-buildx-action@v4
+      - name: Point latest at this version
+        env:
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          PRERELEASE: ${{ github.event.release.prerelease }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          # A beta is what people get only until there is a stable release.
+          stable="$(gh release list --exclude-pre-releases --exclude-drafts --limit 1 --json tagName --jq '.[].tagName')"
+          if [ "$PRERELEASE" = true ] && [ -n "$stable" ]; then
+            echo "Stable release $stable exists, so $TAG doesn't move latest."
+            exit 0
+          fi
+          for suffix in "" -vulkan -nvidia; do
+            docker buildx imagetools create -t "$IMAGE:latest$suffix" "$IMAGE:${TAG#v}$suffix"
+          done
