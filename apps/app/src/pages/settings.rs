@@ -19,6 +19,9 @@ use crate::util::{human_size, time_ago};
 
 const MIN_PASSWORD_CHARS: usize = 8;
 
+const REPOSITORY: &str = env!("CARGO_PKG_REPOSITORY");
+const CREDITS: &str = concat!(env!("CARGO_PKG_REPOSITORY"), "/blob/main/ATTRIBUTION.md");
+
 /// Accent presets (OKLCH hues).
 const SWATCHES: [u16; 8] = [285, 330, 20, 65, 140, 190, 245, 0];
 
@@ -397,6 +400,34 @@ pub fn Settings() -> Element {
                 SessionsCard { version: sessions_version() }
                 SharesCard {}
                 ApiKeysCard {}
+            }
+
+            AboutCard {}
+        }
+    }
+}
+
+/// Who made StarBooru, with what, where its code lives and which version this is.
+#[component]
+fn AboutCard() -> Element {
+    rsx! {
+        section { class: "card",
+            h2 { class: "card-title", {t!("about-title")} }
+            dl { class: "meta about-credits",
+                dt { {t!("about-made-by")} } dd { "FilipNone" }
+                dt { {t!("about-icons")} } dd { "MingCute, Material Symbols, Solar, Fluent UI" }
+                dt { {t!("about-lettering")} } dd { "M PLUS Rounded 1c" }
+                dt { {t!("about-version")} } dd { "{starbooru_core::VERSION}" }
+            }
+            a { class: "list-link", href: REPOSITORY, target: "_blank", rel: "noopener noreferrer",
+                Ico { icon: Icon::GitHub }
+                span { "GitHub" }
+                span { class: "muted", {REPOSITORY.trim_start_matches("https://")} }
+            }
+            a { class: "list-link", href: CREDITS, target: "_blank", rel: "noopener noreferrer",
+                Ico { icon: Icon::Star }
+                span { {t!("about-credits")} }
+                span { class: "muted", {t!("about-credits-note")} }
             }
         }
     }
@@ -891,6 +922,14 @@ mod tests {
         assert!(!custom_in_use(&prefs, true));
         prefs.accent_hue = 140;
         assert!(!picked(&prefs, 140, true));
+    }
+
+    #[test]
+    fn the_about_card_links_to_this_project() {
+        assert_eq!(REPOSITORY, "https://github.com/FilipNone/StarBooru");
+        // The credits link is only right while the file stays where it is.
+        let attribution = concat!(env!("CARGO_MANIFEST_DIR"), "/../../ATTRIBUTION.md");
+        assert!(std::path::Path::new(attribution).exists());
     }
 
     #[test]

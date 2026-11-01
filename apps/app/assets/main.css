@@ -1159,6 +1159,7 @@ html:has(.stage.full) { overflow-y: hidden; }
 .list-link span:not(.muted) { font-weight: 600; }
 .list-link .muted { font-size: 14px; }
 .list-link:hover { background: var(--surface-2); }
+.about-credits { margin-bottom: 12px; }
 
 /* ---------- tags ---------- */
 
