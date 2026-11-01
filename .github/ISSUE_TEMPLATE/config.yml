@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Guides and setup help
+    url: https://github.com/FilipNone/StarBooru/wiki
+    about: Installing, uploading, searching and troubleshooting.
+  - name: Security problem
+    url: https://github.com/FilipNone/StarBooru/security/advisories/new
+    about: Report it privately instead of opening an issue.

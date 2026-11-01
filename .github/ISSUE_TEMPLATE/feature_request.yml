@@ -1,0 +1,22 @@
+name: Feature request
+description: Suggest something new or a better way to do something
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What do you want to do?
+      description: The task you're trying to get done, and what gets in the way today.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: How could it work?
+  - type: checkboxes
+    id: roadmap
+    attributes:
+      label: Checks
+      options:
+        - label: I looked at the [roadmap](https://github.com/FilipNone/StarBooru/blob/main/docs/roadmap.md) and existing issues.
+          required: true
