@@ -930,7 +930,7 @@ pub(super) async fn create_post(
 ) -> AppResult<Post> {
     match store_post(state, user_id, bytes, rating, source, tags).await? {
         Stored::Added(id) => load(state, user_id, id).await,
-        Stored::Exists(id) => Err(duplicate(id)),
+        Stored::Exists(id) => Err(duplicate_of(state, id).await?),
     }
 }
 
@@ -1592,6 +1592,25 @@ pub async fn backfill_colors(state: AppState) {
     }
 }
 
+/// The refusal of a file that is already post `id`, saying where it is: a post
+/// in the recycle bin shows up nowhere else.
+async fn duplicate_of(state: &AppState, id: i64) -> AppResult<AppError> {
+    let binned: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM posts WHERE id = $1 AND deleted_at IS NOT NULL)",
+    )
+    .bind(id)
+    .fetch_one(&state.db)
+    .await?;
+    Ok(if binned {
+        AppError::Conflict {
+            code: "duplicate",
+            message: format!("this file is post #{id}, in the recycle bin: restore it from there"),
+        }
+    } else {
+        duplicate(id)
+    })
+}
+
 fn duplicate(id: i64) -> AppError {
     AppError::Conflict {
         code: "duplicate",
@@ -1963,6 +1982,32 @@ mod tests {
             .iter()
             .map(|p| p["id"].as_i64().unwrap())
             .collect()
+    }
+
+    #[tokio::test]
+    async fn uploading_a_binned_file_says_where_it_is() {
+        let Some(app) = testing::app().await else {
+            return;
+        };
+        let t = app.register("binner").await;
+        let png = flat_png([12, 34, 56]);
+        let id = upload_file(&app, &t, &png).await["id"].as_i64().unwrap();
+        let again = app.upload(&t, &png, &[]).await;
+        assert_eq!(again.status, StatusCode::CONFLICT);
+        assert_eq!(again.json()["code"], "duplicate");
+        let live = again.json()["message"].as_str().unwrap().to_owned();
+        assert!(live.contains(&format!("#{id}")), "{live}");
+        assert!(!live.contains("recycle bin"), "{live}");
+
+        let path = format!("/api/v1/posts/{id}");
+        let r = app.call(Method::DELETE, &path, Some(&t), None).await;
+        assert_eq!(r.status, StatusCode::NO_CONTENT);
+        let again = app.upload(&t, &png, &[]).await;
+        assert_eq!(again.status, StatusCode::CONFLICT);
+        assert_eq!(again.json()["code"], "duplicate");
+        let binned = again.json()["message"].as_str().unwrap().to_owned();
+        assert!(binned.contains(&format!("#{id}")), "{binned}");
+        assert!(binned.contains("recycle bin"), "{binned}");
     }
 
     /// Uploads a file and returns its post.
