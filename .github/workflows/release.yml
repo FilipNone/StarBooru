@@ -1,0 +1,153 @@
+# Builds every download. A tag (v0.1.0-beta.1) puts them in a draft release; running it
+# by hand only builds. The APK is signed afterwards: docs/development.md › Making a release.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_TERM_COLOR: always
+
+jobs:
+  server:
+    name: Server
+    # The oldest supported Ubuntu, so the binary runs on any newer glibc.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - name: Install dx
+        run: tools/release/install-dx.sh x86_64-unknown-linux-gnu.tar.gz 4363e4ed2a3f1eb7f4d38d2d59aed59ce43271c44c16b425e92c89a64761fbe7
+      - run: dx bundle --web --release -p starbooru-app --out-dir dist
+      - run: cargo build --release --locked -p starbooru-server
+      - name: Pack
+        run: |
+          name="starbooru-server-${GITHUB_REF_NAME#v}-linux-x86_64"
+          mkdir -p "$name" out
+          cp target/release/starbooru-server .env.example LICENSE ATTRIBUTION.md "$name/"
+          cp -R dist/public "$name/web"
+          tar -czf "out/$name.tar.gz" "$name"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: server
+          path: out/*
+          if-no-files-found: error
+
+  desktop:
+    name: Desktop (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            os: ubuntu-22.04
+            dx: x86_64-unknown-linux-gnu.tar.gz
+            dx_sha256: 4363e4ed2a3f1eb7f4d38d2d59aed59ce43271c44c16b425e92c89a64761fbe7
+            types: --package-types deb --package-types appimage
+            suffix: linux-x86_64
+          - name: Windows
+            os: windows-2025
+            dx: x86_64-pc-windows-msvc.zip
+            dx_sha256: 45eb4f87b7f86fdba8508ee7e0ef1f9e13cf8f2ffcc6a2d5858d0e8ea7dd1531
+            types: --package-types msi
+            suffix: windows-x64
+          - name: macOS
+            os: macos-15
+            dx: aarch64-apple-darwin.tar.gz
+            dx_sha256: 342c92bc33dca60dadd725ed5e249923f049ae2e1e50b7477f4968d56695b425
+            types: --package-types dmg
+            suffix: macos-arm64
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install the Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev \
+            libayatana-appindicator3-dev libxdo-dev librsvg2-dev \
+            patchelf file libfuse2 xvfb imagemagick
+          echo APPIMAGE_EXTRACT_AND_RUN=1 >> "$GITHUB_ENV"
+      - name: Install dx
+        run: tools/release/install-dx.sh ${{ matrix.dx }} ${{ matrix.dx_sha256 }}
+      - run: dx bundle --desktop --release -p starbooru-app ${{ matrix.types }}
+      - name: Start the app
+        run: tools/release/smoke-desktop.sh
+      - name: Pack
+        run: |
+          mkdir -p out
+          version="${GITHUB_REF_NAME#v}"
+          find target/dx/starbooru-app/bundle -type f \
+            \( -name '*.deb' -o -name '*.AppImage' -o -name '*.msi' -o -name '*.dmg' \) |
+            while read -r file; do
+              cp "$file" "out/StarBooru-$version-${{ matrix.suffix }}.${file##*.}"
+            done
+          ls -l out
+      - uses: actions/upload-artifact@v7
+        with:
+          name: desktop-${{ matrix.suffix }}
+          path: out/*
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: screenshot-${{ matrix.suffix }}
+          path: smoke.png
+          if-no-files-found: warn
+
+  android:
+    name: Android
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+      - name: Install dx
+        run: tools/release/install-dx.sh x86_64-unknown-linux-gnu.tar.gz 4363e4ed2a3f1eb7f4d38d2d59aed59ce43271c44c16b425e92c89a64761fbe7
+      - run: tools/brand/android-build.sh --release --unsigned --target aarch64-linux-android
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: android-unsigned
+          path: target/dx/starbooru-app/release/android/app/app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+
+  release:
+    name: Draft release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [server, desktop, android]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+      - name: Create the draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          prerelease=
+          case "$GITHUB_REF_NAME" in *-*) prerelease=--prerelease ;; esac
+          gh release create "$GITHUB_REF_NAME" --draft $prerelease --verify-tag \
+            --title "StarBooru ${GITHUB_REF_NAME#v}" --notes "Draft: the APK and the notes come next." \
+            artifacts/server/* artifacts/desktop-*/*
