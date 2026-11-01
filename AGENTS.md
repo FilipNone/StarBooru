@@ -37,6 +37,7 @@ tools/
   ai-catalog         pins each AI model file to a commit and a SHA-256 (writes crates/core/src/ai_files.rs)
   vscode-starbooru   VS Code "play button" runner (plain JS: VS Code extensions run on Node; keep it dependency-free)
   brand              draws the logo and writes every icon and brand file (brand.py); Android build step (android-build.sh)
+  release            scripts for .github/workflows/release.yml: install dx, start the desktop app and screenshot it
   nested-kwin.sh     throwaway headless KWin with a private D-Bus session, for UI tests that need a compositor
 ```
 

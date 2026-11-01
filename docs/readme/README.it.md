@@ -73,7 +73,7 @@ Formati: JPEG, PNG, WebP, BMP, TIFF, GIF, AVIF, JPEG XL, MP4, WebM, MKV e MOV.
 Ogni app si collega al tuo server, quindi parti da lì. [Docker](#docker) è la strada più rapida.
 
 > [!NOTE]
-> La prima release non è ancora uscita, quindi [Releases](https://github.com/FilipNone/StarBooru/releases) per ora è vuota. Nel frattempo compila le app dal [sorgente](#sorgente).
+> StarBooru è in beta: aspettati qualche difetto e tieni un [backup](https://github.com/FilipNone/StarBooru/wiki/Backups) di ciò che non puoi perdere.
 
 ### Desktop
 
@@ -81,17 +81,17 @@ Ogni app si collega al tuo server, quindi parti da lì. [Docker](#docker) è la 
 |---|---|
 | Windows | `.msi` |
 | macOS | `.dmg` |
-| Linux | `.deb`, `.AppImage` |
+| Linux (Debian, Ubuntu) | `.deb` |
 
-Scarica da [Releases](https://github.com/FilipNone/StarBooru/releases), avvia l'app e inserisci l'indirizzo del tuo server. L'uso quotidiano e i test avvengono su Linux; Windows e macOS condividono il codice ma non sono ancora stati provati.
+Scarica da [Releases](https://github.com/FilipNone/StarBooru/releases), avvia l'app e inserisci l'indirizzo del tuo server. Le versioni per Windows e macOS non sono firmate, quindi il sistema ti avvisa prima di aprirle.
 
 ### Mobile
 
-Android: installa l'`.apk` da [Releases](https://github.com/FilipNone/StarBooru/releases) e inserisci l'indirizzo del tuo server. È stata provata su Android 13. Non esiste un'app per iOS.
+Android: installa l'`.apk` da [Releases](https://github.com/FilipNone/StarBooru/releases) e inserisci l'indirizzo del tuo server. È compilata per telefoni ARM a 64 bit. Non esiste un'app per iOS.
 
 ### Server
 
-Per farlo girare senza Docker servono [PostgreSQL](https://www.postgresql.org) 13 o più recente e gli [strumenti per il sorgente](#sorgente):
+In [Releases](https://github.com/FilipNone/StarBooru/releases) c'è un pacchetto del server per Linux a 64 bit con dentro l'app web: vedi la [guida all'installazione](https://github.com/FilipNone/StarBooru/wiki/Installation#server-package). Per compilarlo da te servono [PostgreSQL](https://www.postgresql.org) 13 o più recente e gli [strumenti per il sorgente](#sorgente):
 
 ```sh
 cargo build --release -p starbooru-server

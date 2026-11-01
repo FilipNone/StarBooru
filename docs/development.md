@@ -57,7 +57,7 @@ dx serve --android -p starbooru-app    # emulator or device (needs the NDK)
 Release builds:
 
 ```sh
-dx bundle --desktop --release -p starbooru-app    # installers for the host OS (.deb/.AppImage, .msi, .dmg)
+dx bundle --desktop --release -p starbooru-app    # installers for the host OS (.deb, .msi, .dmg)
 tools/brand/android-build.sh --release            # .apk, with the StarBooru icon and name
 ```
 
@@ -166,6 +166,27 @@ Three things to know when reading the results:
 - **Only `backdrop-filter`, without `-webkit-`.** Given both spellings, the minifier in `dx bundle` keeps only the prefixed one, and Chromium and Android get no blur. A debug build doesn't show this.
 - **Old stylesheets stay in the bundle's `assets/`.** `dx` keeps earlier hashed copies under `target/dx`, so grep the newest `main-*.css`, not the first match.
 - **A sharp ghost of the text through the glass** at 2× in headless Chromium comes from its software renderer. `--use-angle=swiftshader --enable-unsafe-swiftshader` and real phones don't show it.
+
+## Making a release
+
+`.github/workflows/release.yml` builds every download on a push of a `v*` tag and puts them in a draft release. A hyphen in the tag (`v0.1.0-beta.1`) makes it a prerelease. Running the workflow by hand builds everything without releasing, which is how to try a change to the workflow; the filenames then say `main`.
+
+It pins the Rust version of the `Dockerfile`, as newer linkers strip a section wasm-bindgen needs. The Linux builds use the oldest supported Ubuntu, so they run on any newer glibc. Each desktop job starts the app and uploads a screenshot as `screenshot-*`: look at them. That job starts the binary it built, so also install the `.deb` in a clean container to catch a missing dependency. There is no AppImage: the one dx makes leaves out WebKit's helper processes and can't start.
+
+The APK is signed on the owner's machine, so the key never reaches GitHub. Download the `android-unsigned` artifact of the run, then:
+
+```sh
+K=~/.config/starbooru-release
+gh run download <run id> -n android-unsigned -D apk
+zipalign -f -p 4 apk/app-release-unsigned.apk aligned.apk
+apksigner sign --ks "$K/starbooru-release.jks" --ks-pass "file:$K/keystore-password" \
+  --ks-key-alias starbooru --out StarBooru-<version>-android-arm64.apk aligned.apk
+apksigner verify --print-certs StarBooru-<version>-android-arm64.apk
+```
+
+The certificate's SHA-256 must be `fb4481c6c698fb00a43085ce002f79baf14f7df0ba0de3e009cf02ebda31de16`. Android refuses an update signed with any other key, and the only way past that is to uninstall the app, which deletes its settings, so don't lose the key. For the same reason, a phone with a debug build has to uninstall it before installing a release.
+
+Upload the APK and a `SHA256SUMS` of every file, write the notes, and publish with `gh release edit <tag> --draft=false`. Add `--prerelease` for a beta.
 
 ## Nested KWin
 

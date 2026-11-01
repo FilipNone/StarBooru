@@ -73,7 +73,7 @@
 Каждое приложение подключается к вашему серверу, поэтому начните с него. Самый быстрый способ — [Docker](#docker).
 
 > [!NOTE]
-> Первый релиз ещё не вышел, поэтому страница [Releases](https://github.com/FilipNone/StarBooru/releases) пока пуста. До тех пор собирайте приложения из [исходного кода](#исходный-код).
+> StarBooru находится в стадии беты, поэтому возможны недоработки. Храните [резервную копию](https://github.com/FilipNone/StarBooru/wiki/Backups) всего, что нельзя потерять.
 
 ### Компьютер
 
@@ -81,17 +81,17 @@
 |---|---|
 | Windows | `.msi` |
 | macOS | `.dmg` |
-| Linux | `.deb`, `.AppImage` |
+| Linux (Debian, Ubuntu) | `.deb` |
 
-Скачайте пакет со страницы [Releases](https://github.com/FilipNone/StarBooru/releases), запустите приложение и введите адрес своего сервера. Повседневное использование и тесты идут на Linux; Windows и macOS используют тот же код, но ещё не запускались.
+Скачайте пакет со страницы [Releases](https://github.com/FilipNone/StarBooru/releases), запустите приложение и введите адрес своего сервера. Сборки для Windows и macOS не имеют цифровой подписи, поэтому система предупредит вас перед открытием.
 
 ### Телефон
 
-Android: установите `.apk` со страницы [Releases](https://github.com/FilipNone/StarBooru/releases) и введите адрес своего сервера. Приложение запускалось на Android 13. Приложения для iOS нет.
+Android: установите `.apk` со страницы [Releases](https://github.com/FilipNone/StarBooru/releases) и введите адрес своего сервера. Оно собрано для 64-битных телефонов на ARM. Приложения для iOS нет.
 
 ### Сервер
 
-Для запуска без Docker нужны [PostgreSQL](https://www.postgresql.org) 13 или новее и [инструменты сборки](#исходный-код):
+На странице [Releases](https://github.com/FilipNone/StarBooru/releases) есть пакет сервера для 64-битного Linux со встроенным веб-приложением: см. [руководство по установке](https://github.com/FilipNone/StarBooru/wiki/Installation#server-package). Для самостоятельной сборки нужны [PostgreSQL](https://www.postgresql.org) 13 или новее и [инструменты сборки](#исходный-код):
 
 ```sh
 cargo build --release -p starbooru-server

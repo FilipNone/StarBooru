@@ -73,7 +73,7 @@
 どのアプリも自分のサーバーに接続するので、まずサーバーを用意してください。[Docker](#docker) が最も手軽です。
 
 > [!NOTE]
-> 最初のリリースはまだ公開されておらず、[Releases](https://github.com/FilipNone/StarBooru/releases) は現在空です。それまでは[ソースコード](#ソースコード)からアプリをビルドしてください。
+> StarBooru はベータ版です。不具合が残っている可能性があるため、失いたくないデータは[バックアップ](https://github.com/FilipNone/StarBooru/wiki/Backups)を取っておいてください。
 
 ### デスクトップ
 
@@ -81,17 +81,17 @@
 |---|---|
 | Windows | `.msi` |
 | macOS | `.dmg` |
-| Linux | `.deb`、`.AppImage` |
+| Linux (Debian, Ubuntu) | `.deb` |
 
-[Releases](https://github.com/FilipNone/StarBooru/releases) からダウンロードしてアプリを起動し、サーバーのアドレスを入力します。日常の利用とテストは Linux で行っています。Windows と macOS はコードを共有していますが、まだ実行していません。
+[Releases](https://github.com/FilipNone/StarBooru/releases) からダウンロードしてアプリを起動し、サーバーのアドレスを入力します。Windows 版と macOS 版にはコード署名がないため、開く前にシステムの警告が表示されます。
 
 ### モバイル
 
-Android：[Releases](https://github.com/FilipNone/StarBooru/releases) から `.apk` をインストールし、サーバーのアドレスを入力します。Android 13 で動作を確認しています。iOS アプリはありません。
+Android：[Releases](https://github.com/FilipNone/StarBooru/releases) から `.apk` をインストールし、サーバーのアドレスを入力します。64 ビット ARM のスマートフォン向けです。iOS アプリはありません。
 
 ### サーバー
 
-Docker なしで動かすには、[PostgreSQL](https://www.postgresql.org) 13 以降と[ビルドツール](#ソースコード)が必要です：
+[Releases](https://github.com/FilipNone/StarBooru/releases) には、Web アプリを同梱した 64 ビット Linux 向けのサーバーパッケージがあります。[インストールガイド](https://github.com/FilipNone/StarBooru/wiki/Installation#server-package)をご覧ください。自分でビルドするには、[PostgreSQL](https://www.postgresql.org) 13 以降と[ビルドツール](#ソースコード)が必要です：
 
 ```sh
 cargo build --release -p starbooru-server

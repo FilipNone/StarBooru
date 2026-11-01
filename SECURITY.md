@@ -8,7 +8,7 @@ StarBooru is a personal project, so there is no fixed response time. Reports are
 
 ## Supported versions
 
-Only the latest code on `main` gets fixes, until releases begin.
+Only the latest release and the latest code on `main` get fixes.
 
 ## What counts
 

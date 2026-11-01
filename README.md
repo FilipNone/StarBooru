@@ -73,7 +73,7 @@ Formats: JPEG, PNG, WebP, BMP, TIFF, GIF, AVIF, JPEG XL, MP4, WebM, MKV and MOV.
 Every app connects to your own server, so set that up first. [Docker](#docker) is the quickest way.
 
 > [!NOTE]
-> The first release isn't out yet, so [Releases](https://github.com/FilipNone/StarBooru/releases) is empty for now. Until then, build the apps from [source](#source).
+> StarBooru is in beta, so expect rough edges and keep a [backup](https://github.com/FilipNone/StarBooru/wiki/Backups) of anything you can't lose.
 
 ### Desktop
 
@@ -81,17 +81,17 @@ Every app connects to your own server, so set that up first. [Docker](#docker) i
 |---|---|
 | Windows | `.msi` |
 | macOS | `.dmg` |
-| Linux | `.deb`, `.AppImage` |
+| Linux (Debian, Ubuntu) | `.deb` |
 
-Download from [Releases](https://github.com/FilipNone/StarBooru/releases), start the app and enter your server's address. Daily use and testing happen on Linux; Windows and macOS share the code but haven't been run yet.
+Download from [Releases](https://github.com/FilipNone/StarBooru/releases), start the app and enter your server's address. The Windows and macOS builds aren't code-signed, so the system warns you before opening them.
 
 ### Mobile
 
-Android: install the `.apk` from [Releases](https://github.com/FilipNone/StarBooru/releases) and enter your server's address. It has been run on Android 13. There is no iOS app.
+Android: install the `.apk` from [Releases](https://github.com/FilipNone/StarBooru/releases) and enter your server's address. It's built for 64-bit ARM phones. There is no iOS app.
 
 ### Server
 
-To run without Docker you need [PostgreSQL](https://www.postgresql.org) 13 or newer and the [source tools](#source):
+[Releases](https://github.com/FilipNone/StarBooru/releases) has a server package for 64-bit Linux with the web app inside: see the [installation guide](https://github.com/FilipNone/StarBooru/wiki/Installation#server-package). To build it yourself you need [PostgreSQL](https://www.postgresql.org) 13 or newer and the [source tools](#source):
 
 ```sh
 cargo build --release -p starbooru-server

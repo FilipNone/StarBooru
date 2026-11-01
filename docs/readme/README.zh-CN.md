@@ -73,7 +73,7 @@
 所有应用都连接到你自己的服务器，所以请先部署服务器。[Docker](#docker) 是最快的方式。
 
 > [!NOTE]
-> 第一个版本尚未发布，[Releases](https://github.com/FilipNone/StarBooru/releases) 目前是空的。在此之前，请从[源码](#源码)构建应用。
+> StarBooru 处于测试阶段，可能还有不完善之处。重要的内容请保留[备份](https://github.com/FilipNone/StarBooru/wiki/Backups)。
 
 ### 桌面端
 
@@ -81,17 +81,17 @@
 |---|---|
 | Windows | `.msi` |
 | macOS | `.dmg` |
-| Linux | `.deb`、`.AppImage` |
+| Linux (Debian, Ubuntu) | `.deb` |
 
-从 [Releases](https://github.com/FilipNone/StarBooru/releases) 下载，启动应用并输入你的服务器地址。日常使用和测试都在 Linux 上进行；Windows 和 macOS 使用同一套代码，但尚未实际运行过。
+从 [Releases](https://github.com/FilipNone/StarBooru/releases) 下载，启动应用并输入你的服务器地址。Windows 和 macOS 版本没有代码签名，因此系统会在打开前发出警告。
 
 ### 移动端
 
-Android：从 [Releases](https://github.com/FilipNone/StarBooru/releases) 安装 `.apk`，然后输入你的服务器地址。已在 Android 13 上运行过。目前没有 iOS 应用。
+Android：从 [Releases](https://github.com/FilipNone/StarBooru/releases) 安装 `.apk`，然后输入你的服务器地址。它面向 64 位 ARM 手机。目前没有 iOS 应用。
 
 ### 服务器
 
-不使用 Docker 运行时，需要 [PostgreSQL](https://www.postgresql.org) 13 或更新版本，以及[源码构建工具](#源码)：
+[Releases](https://github.com/FilipNone/StarBooru/releases) 提供适用于 64 位 Linux 的服务器软件包，其中包含网页应用，详见[安装指南](https://github.com/FilipNone/StarBooru/wiki/Installation#server-package)。如果要自行构建，需要 [PostgreSQL](https://www.postgresql.org) 13 或更新版本，以及[源码构建工具](#源码)：
 
 ```sh
 cargo build --release -p starbooru-server

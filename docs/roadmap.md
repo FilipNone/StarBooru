@@ -99,12 +99,14 @@ The checklist's *better tagging system* request, built in five phases. Each phas
 | Item | Status |
 |---|---|
 | documentation up to date | ✅ `docs/`, and guides for users and admins in the [wiki](https://github.com/FilipNone/StarBooru/wiki). The README is in English, Italian, Chinese, Japanese and Russian. |
-| releases | ⬜ No release yet, and no pipeline to build one, so the README's download links lead to an empty page. Windows and macOS builds have never been run. Android release builds aren't signed yet (`[bundle.android]` isn't configured). |
+| releases | 🟡 First beta, `v0.1.0-beta.1`, on [Releases](https://github.com/FilipNone/StarBooru/releases): Windows, macOS and Linux apps, the Android APK, and a Linux server package, built by `.github/workflows/release.yml` (`docs/development.md` › Making a release). The Windows and macOS builds have only had a start-up check on CI and aren't code-signed. |
 | cheat sheet | ✅ `/help`: every search term with examples that run the search, a box that explains a query as you type, and the viewer's keyboard shortcuts. Linked from Settings and from a failed or empty search. |
 | Privacy Policy, Terms of Service pages | ✅ `/privacy` and `/terms`, open without signing in and linked from the sign-in card and Settings. They describe what the software stores; the operator of each server is responsible for it. |
 
 ## Known gaps and risks
 
+- **No package for Linux outside Debian and Ubuntu.** `dx` makes an AppImage, but it leaves out WebKit's helper processes (`WebKitNetworkProcess`, `WebKitWebProcess`), so it dies at startup unless they happen to be at Debian's path. Other distributions build from source until it's repackaged.
+- **The release's server package has no local AI.** It holds no `starbooru-ai-worker` or ONNX Runtime, so the built-in models need the Docker image. API-based AI works.
 - **Android restarts on a theme change.** Switching the system between light and dark while the app is open ends the process, and it goes back to the launcher. The manifest `dx` generates has no `uiMode` in `configChanges`. Under the *System* theme the app also stayed light with the phone set to dark.
 - **Plaintext token on desktop.** The token is stored in the user's config directory. Moving it to the OS keyring is M4.
 - **Orphan files.** Fixed for failed inserts (the files are removed unless another post owns them) and interrupted writes (`tmp/` is cleared at startup). Files left by a crash between the write and the insert are not swept yet.
