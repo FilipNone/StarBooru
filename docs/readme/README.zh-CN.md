@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/mark-gold.svg">
-    <img src="docs/brand/mark.svg" alt="StarBooru 标志" width="150">
+    <source media="(prefers-color-scheme: dark)" srcset="../brand/mark-gold.svg">
+    <img src="../brand/mark.svg" alt="StarBooru 标志" width="150">
   </picture>
 </p>
 
@@ -10,7 +10,7 @@
 <p align="center">在你自己的服务器上，整理并标记你的私人图片和视频收藏。</p>
 
 <p align="center">
-  <a href="README.md"><img src="https://img.shields.io/badge/English-1b1342?style=for-the-badge" alt="English"></a>
+  <a href="https://github.com/FilipNone/StarBooru/README.md"><img src="https://img.shields.io/badge/English-1b1342?style=for-the-badge" alt="English"></a>
   <a href="README.it.md"><img src="https://img.shields.io/badge/Italiano-1b1342?style=for-the-badge" alt="Italiano"></a>
   <a href="README.zh-CN.md"><img src="https://img.shields.io/badge/%E7%AE%80%E4%BD%93%E4%B8%AD%E6%96%87-f1c45e?style=for-the-badge" alt="简体中文"></a>
   <a href="README.ja.md"><img src="https://img.shields.io/badge/%E6%97%A5%E6%9C%AC%E8%AA%9E-1b1342?style=for-the-badge" alt="日本語"></a>
@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0--or--later-f1c45e?style=flat-square" alt="许可证"></a>
+  <a href="../../LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0--or--later-f1c45e?style=flat-square" alt="许可证"></a>
   <a href="https://github.com/FilipNone/StarBooru/releases"><img src="https://img.shields.io/badge/releases-download-f1c45e?style=flat-square" alt="发布版本"></a>
   <a href="https://github.com/FilipNone/StarBooru/actions/workflows/ci.yml"><img src="https://github.com/FilipNone/StarBooru/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/Rust-1b1342?style=flat-square&logo=rust&logoColor=white" alt="Rust"></a>
@@ -35,23 +35,23 @@
 ## 预览
 
 <p align="center">
-  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/showcase/gallery-dark.webp"><source media="(prefers-color-scheme: light)" srcset="docs/showcase/gallery-light.webp"><img src="docs/showcase/gallery-dark.webp" width="100%" alt="图库：图片网格，上方是已保存的搜索"></picture>
+  <picture><source media="(prefers-color-scheme: dark)" srcset="../showcase/gallery-dark.webp"><source media="(prefers-color-scheme: light)" srcset="../showcase/gallery-light.webp"><img src="../showcase/gallery-dark.webp" width="100%" alt="图库：图片网格，上方是已保存的搜索"></picture>
 </p>
 
 <p align="center">
-  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/showcase/viewer-dark.webp"><source media="(prefers-color-scheme: light)" srcset="docs/showcase/viewer-light.webp"><img src="docs/showcase/viewer-dark.webp" width="49%" alt="查看器：一张图片及其标签和详情"></picture>
-  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/showcase/explore-dark.webp"><source media="(prefers-color-scheme: light)" srcset="docs/showcase/explore-light.webp"><img src="docs/showcase/explore-dark.webp" width="49%" alt="探索：热门内容"></picture>
+  <picture><source media="(prefers-color-scheme: dark)" srcset="../showcase/viewer-dark.webp"><source media="(prefers-color-scheme: light)" srcset="../showcase/viewer-light.webp"><img src="../showcase/viewer-dark.webp" width="49%" alt="查看器：一张图片及其标签和详情"></picture>
+  <picture><source media="(prefers-color-scheme: dark)" srcset="../showcase/explore-dark.webp"><source media="(prefers-color-scheme: light)" srcset="../showcase/explore-light.webp"><img src="../showcase/explore-dark.webp" width="49%" alt="探索：热门内容"></picture>
 </p>
 
 <p align="center">
-  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/showcase/search-dark.webp"><source media="(prefers-color-scheme: light)" srcset="docs/showcase/search-light.webp"><img src="docs/showcase/search-dark.webp" width="49%" alt="带标签自动补全的搜索"></picture>
-  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/showcase/upload-dark.webp"><source media="(prefers-color-scheme: light)" srcset="docs/showcase/upload-light.webp"><img src="docs/showcase/upload-dark.webp" width="49%" alt="上传页面和文件队列"></picture>
+  <picture><source media="(prefers-color-scheme: dark)" srcset="../showcase/search-dark.webp"><source media="(prefers-color-scheme: light)" srcset="../showcase/search-light.webp"><img src="../showcase/search-dark.webp" width="49%" alt="带标签自动补全的搜索"></picture>
+  <picture><source media="(prefers-color-scheme: dark)" srcset="../showcase/upload-dark.webp"><source media="(prefers-color-scheme: light)" srcset="../showcase/upload-light.webp"><img src="../showcase/upload-dark.webp" width="49%" alt="上传页面和文件队列"></picture>
 </p>
 
 <p align="center">
-  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/showcase/phone-gallery-dark.webp"><source media="(prefers-color-scheme: light)" srcset="docs/showcase/phone-gallery-light.webp"><img src="docs/showcase/phone-gallery-dark.webp" width="32%" alt="手机上的图库"></picture>
-  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/showcase/phone-viewer-dark.webp"><source media="(prefers-color-scheme: light)" srcset="docs/showcase/phone-viewer-light.webp"><img src="docs/showcase/phone-viewer-dark.webp" width="32%" alt="手机上的查看器"></picture>
-  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/showcase/phone-explore-dark.webp"><source media="(prefers-color-scheme: light)" srcset="docs/showcase/phone-explore-light.webp"><img src="docs/showcase/phone-explore-dark.webp" width="32%" alt="手机上的探索页"></picture>
+  <picture><source media="(prefers-color-scheme: dark)" srcset="../showcase/phone-gallery-dark.webp"><source media="(prefers-color-scheme: light)" srcset="../showcase/phone-gallery-light.webp"><img src="../showcase/phone-gallery-dark.webp" width="32%" alt="手机上的图库"></picture>
+  <picture><source media="(prefers-color-scheme: dark)" srcset="../showcase/phone-viewer-dark.webp"><source media="(prefers-color-scheme: light)" srcset="../showcase/phone-viewer-light.webp"><img src="../showcase/phone-viewer-dark.webp" width="32%" alt="手机上的查看器"></picture>
+  <picture><source media="(prefers-color-scheme: dark)" srcset="../showcase/phone-explore-dark.webp"><source media="(prefers-color-scheme: light)" srcset="../showcase/phone-explore-light.webp"><img src="../showcase/phone-explore-dark.webp" width="32%" alt="手机上的探索页"></picture>
 </p>
 
 ## 功能
@@ -102,7 +102,7 @@ export STARBOORU_SECRET=at-least-32-characters-kept-the-same
 STARBOORU_WEB_DIR=$PWD/dist/public ./target/release/starbooru-server
 ```
 
-ffmpeg（视频缩略图）、tesseract（图中文字）和 pg_dump（备份）都是可选的。所有设置见 [docs/deployment.md](docs/deployment.md#configuration)。
+ffmpeg（视频缩略图）、tesseract（图中文字）和 pg_dump（备份）都是可选的。所有设置见 [docs/deployment.md](../deployment.md#configuration)。
 
 ### Docker
 
@@ -131,7 +131,7 @@ dx bundle --desktop --release -p starbooru-app
 tools/brand/android-build.sh --release --target aarch64-linux-android
 ```
 
-其余内容，从运行各个客户端到测试，都在 [docs/development.md](docs/development.md) 中。
+其余内容，从运行各个客户端到测试，都在 [docs/development.md](../development.md) 中。
 
 ## 路线图
 
@@ -155,18 +155,18 @@ tools/brand/android-build.sh --release --target aarch64-linux-android
   - [ ] 图像放大
   - [ ] 背景移除
 
-详情：[docs/roadmap.md](docs/roadmap.md)（英文）。
+详情：[docs/roadmap.md](../roadmap.md)（英文）。
 
 ## 参与贡献
 
-欢迎在 [Issues](https://github.com/FilipNone/StarBooru/issues) 中提交错误报告、想法和 Pull Request。请先阅读 [CONTRIBUTING.md](CONTRIBUTING.md)；项目规则见 [AGENTS.md](AGENTS.md)。安全问题请按 [SECURITY.md](SECURITY.md) 报告，不要发布公开 Issue。
+欢迎在 [Issues](https://github.com/FilipNone/StarBooru/issues) 中提交错误报告、想法和 Pull Request。请先阅读 [CONTRIBUTING.md](../../CONTRIBUTING.md)；项目规则见 [AGENTS.md](../../AGENTS.md)。安全问题请按 [SECURITY.md](../../SECURITY.md) 报告，不要发布公开 Issue。
 
 ## Wiki
 
-StarBooru 的使用和部署指南在 [Wiki](https://github.com/FilipNone/StarBooru/wiki) 中（英文）。[架构](docs/architecture.md)和 [HTTP API](docs/api.md) 的文档在 `docs/` 目录下。
+StarBooru 的使用和部署指南在 [Wiki](https://github.com/FilipNone/StarBooru/wiki) 中（英文）。[架构](../architecture.md)和 [HTTP API](../api.md) 的文档在 `docs/` 目录下。
 
 ## 许可证
 
-[AGPL-3.0-or-later](LICENSE)。第三方资源列于 [ATTRIBUTION.md](ATTRIBUTION.md)，截图中的图片是来自[克利夫兰艺术博物馆](https://www.clevelandart.org/open-access)的公共领域作品。
+[AGPL-3.0-or-later](../../LICENSE)。第三方资源列于 [ATTRIBUTION.md](../../ATTRIBUTION.md)，截图中的图片是来自[克利夫兰艺术博物馆](https://www.clevelandart.org/open-access)的公共领域作品。
 
 StarBooru 是非官方的个人项目，与 TYPE-MOON 或 Aniplex 没有任何关联，也未获其认可。

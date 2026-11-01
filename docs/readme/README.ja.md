@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/mark-gold.svg">
-    <img src="docs/brand/mark.svg" alt="StarBooru のロゴ" width="150">
+    <source media="(prefers-color-scheme: dark)" srcset="../brand/mark-gold.svg">
+    <img src="../brand/mark.svg" alt="StarBooru のロゴ" width="150">
   </picture>
 </p>
 
@@ -10,7 +10,7 @@
 <p align="center">自分のサーバーで、プライベートな画像と動画のコレクションを整理してタグ付けできます。</p>
 
 <p align="center">
-  <a href="README.md"><img src="https://img.shields.io/badge/English-1b1342?style=for-the-badge" alt="English"></a>
+  <a href="https://github.com/FilipNone/StarBooru/README.md"><img src="https://img.shields.io/badge/English-1b1342?style=for-the-badge" alt="English"></a>
   <a href="README.it.md"><img src="https://img.shields.io/badge/Italiano-1b1342?style=for-the-badge" alt="Italiano"></a>
   <a href="README.zh-CN.md"><img src="https://img.shields.io/badge/%E7%AE%80%E4%BD%93%E4%B8%AD%E6%96%87-1b1342?style=for-the-badge" alt="简体中文"></a>
   <a href="README.ja.md"><img src="https://img.shields.io/badge/%E6%97%A5%E6%9C%AC%E8%AA%9E-f1c45e?style=for-the-badge" alt="日本語"></a>
@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0--or--later-f1c45e?style=flat-square" alt="ライセンス"></a>
+  <a href="../../LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0--or--later-f1c45e?style=flat-square" alt="ライセンス"></a>
   <a href="https://github.com/FilipNone/StarBooru/releases"><img src="https://img.shields.io/badge/releases-download-f1c45e?style=flat-square" alt="リリース"></a>
   <a href="https://github.com/FilipNone/StarBooru/actions/workflows/ci.yml"><img src="https://github.com/FilipNone/StarBooru/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/Rust-1b1342?style=flat-square&logo=rust&logoColor=white" alt="Rust"></a>
@@ -35,23 +35,23 @@
 ## ショーケース
 
 <p align="center">
-  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/showcase/gallery-dark.webp"><source media="(prefers-color-scheme: light)" srcset="docs/showcase/gallery-light.webp"><img src="docs/showcase/gallery-dark.webp" width="100%" alt="ギャラリー：画像のグリッドと保存した検索"></picture>
+  <picture><source media="(prefers-color-scheme: dark)" srcset="../showcase/gallery-dark.webp"><source media="(prefers-color-scheme: light)" srcset="../showcase/gallery-light.webp"><img src="../showcase/gallery-dark.webp" width="100%" alt="ギャラリー：画像のグリッドと保存した検索"></picture>
 </p>
 
 <p align="center">
-  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/showcase/viewer-dark.webp"><source media="(prefers-color-scheme: light)" srcset="docs/showcase/viewer-light.webp"><img src="docs/showcase/viewer-dark.webp" width="49%" alt="ビューアー：画像とタグ、詳細情報"></picture>
-  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/showcase/explore-dark.webp"><source media="(prefers-color-scheme: light)" srcset="docs/showcase/explore-light.webp"><img src="docs/showcase/explore-dark.webp" width="49%" alt="エクスプローラー：トレンドの投稿"></picture>
+  <picture><source media="(prefers-color-scheme: dark)" srcset="../showcase/viewer-dark.webp"><source media="(prefers-color-scheme: light)" srcset="../showcase/viewer-light.webp"><img src="../showcase/viewer-dark.webp" width="49%" alt="ビューアー：画像とタグ、詳細情報"></picture>
+  <picture><source media="(prefers-color-scheme: dark)" srcset="../showcase/explore-dark.webp"><source media="(prefers-color-scheme: light)" srcset="../showcase/explore-light.webp"><img src="../showcase/explore-dark.webp" width="49%" alt="エクスプローラー：トレンドの投稿"></picture>
 </p>
 
 <p align="center">
-  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/showcase/search-dark.webp"><source media="(prefers-color-scheme: light)" srcset="docs/showcase/search-light.webp"><img src="docs/showcase/search-dark.webp" width="49%" alt="タグのオートコンプリート付き検索"></picture>
-  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/showcase/upload-dark.webp"><source media="(prefers-color-scheme: light)" srcset="docs/showcase/upload-light.webp"><img src="docs/showcase/upload-dark.webp" width="49%" alt="ファイルのキューがあるアップロード画面"></picture>
+  <picture><source media="(prefers-color-scheme: dark)" srcset="../showcase/search-dark.webp"><source media="(prefers-color-scheme: light)" srcset="../showcase/search-light.webp"><img src="../showcase/search-dark.webp" width="49%" alt="タグのオートコンプリート付き検索"></picture>
+  <picture><source media="(prefers-color-scheme: dark)" srcset="../showcase/upload-dark.webp"><source media="(prefers-color-scheme: light)" srcset="../showcase/upload-light.webp"><img src="../showcase/upload-dark.webp" width="49%" alt="ファイルのキューがあるアップロード画面"></picture>
 </p>
 
 <p align="center">
-  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/showcase/phone-gallery-dark.webp"><source media="(prefers-color-scheme: light)" srcset="docs/showcase/phone-gallery-light.webp"><img src="docs/showcase/phone-gallery-dark.webp" width="32%" alt="スマートフォンのギャラリー"></picture>
-  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/showcase/phone-viewer-dark.webp"><source media="(prefers-color-scheme: light)" srcset="docs/showcase/phone-viewer-light.webp"><img src="docs/showcase/phone-viewer-dark.webp" width="32%" alt="スマートフォンのビューアー"></picture>
-  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/showcase/phone-explore-dark.webp"><source media="(prefers-color-scheme: light)" srcset="docs/showcase/phone-explore-light.webp"><img src="docs/showcase/phone-explore-dark.webp" width="32%" alt="スマートフォンのエクスプローラー"></picture>
+  <picture><source media="(prefers-color-scheme: dark)" srcset="../showcase/phone-gallery-dark.webp"><source media="(prefers-color-scheme: light)" srcset="../showcase/phone-gallery-light.webp"><img src="../showcase/phone-gallery-dark.webp" width="32%" alt="スマートフォンのギャラリー"></picture>
+  <picture><source media="(prefers-color-scheme: dark)" srcset="../showcase/phone-viewer-dark.webp"><source media="(prefers-color-scheme: light)" srcset="../showcase/phone-viewer-light.webp"><img src="../showcase/phone-viewer-dark.webp" width="32%" alt="スマートフォンのビューアー"></picture>
+  <picture><source media="(prefers-color-scheme: dark)" srcset="../showcase/phone-explore-dark.webp"><source media="(prefers-color-scheme: light)" srcset="../showcase/phone-explore-light.webp"><img src="../showcase/phone-explore-dark.webp" width="32%" alt="スマートフォンのエクスプローラー"></picture>
 </p>
 
 ## 機能
@@ -102,7 +102,7 @@ export STARBOORU_SECRET=at-least-32-characters-kept-the-same
 STARBOORU_WEB_DIR=$PWD/dist/public ./target/release/starbooru-server
 ```
 
-ffmpeg（動画サムネイル）、tesseract（画像内の文字）、pg_dump（バックアップ）は任意です。すべての設定は [docs/deployment.md](docs/deployment.md#configuration) にあります。
+ffmpeg（動画サムネイル）、tesseract（画像内の文字）、pg_dump（バックアップ）は任意です。すべての設定は [docs/deployment.md](../deployment.md#configuration) にあります。
 
 ### Docker
 
@@ -131,7 +131,7 @@ dx bundle --desktop --release -p starbooru-app
 tools/brand/android-build.sh --release --target aarch64-linux-android
 ```
 
-各クライアントの実行からテストまで、詳しくは [docs/development.md](docs/development.md) をご覧ください。
+各クライアントの実行からテストまで、詳しくは [docs/development.md](../development.md) をご覧ください。
 
 ## ロードマップ
 
@@ -155,18 +155,18 @@ tools/brand/android-build.sh --release --target aarch64-linux-android
   - [ ] アップスケーリング
   - [ ] 背景除去
 
-詳細：[docs/roadmap.md](docs/roadmap.md)（英語）。
+詳細：[docs/roadmap.md](../roadmap.md)（英語）。
 
 ## コントリビュート
 
-バグ報告、アイデア、プルリクエストは [Issues](https://github.com/FilipNone/StarBooru/issues) で歓迎します。まず [CONTRIBUTING.md](CONTRIBUTING.md) をお読みください。プロジェクトのルールは [AGENTS.md](AGENTS.md) にあります。セキュリティの問題は公開の Issue ではなく、[SECURITY.md](SECURITY.md) の手順で報告してください。
+バグ報告、アイデア、プルリクエストは [Issues](https://github.com/FilipNone/StarBooru/issues) で歓迎します。まず [CONTRIBUTING.md](../../CONTRIBUTING.md) をお読みください。プロジェクトのルールは [AGENTS.md](../../AGENTS.md) にあります。セキュリティの問題は公開の Issue ではなく、[SECURITY.md](../../SECURITY.md) の手順で報告してください。
 
 ## Wiki
 
-StarBooru の使い方と運用のガイドは [Wiki](https://github.com/FilipNone/StarBooru/wiki)（英語）にあります。[アーキテクチャ](docs/architecture.md)と [HTTP API](docs/api.md) のドキュメントは `docs/` にあります。
+StarBooru の使い方と運用のガイドは [Wiki](https://github.com/FilipNone/StarBooru/wiki)（英語）にあります。[アーキテクチャ](../architecture.md)と [HTTP API](../api.md) のドキュメントは `docs/` にあります。
 
 ## ライセンス
 
-[AGPL-3.0-or-later](LICENSE)。サードパーティの素材は [ATTRIBUTION.md](ATTRIBUTION.md) に記載しています。スクリーンショット内の画像は[クリーブランド美術館](https://www.clevelandart.org/open-access)のパブリックドメイン作品です。
+[AGPL-3.0-or-later](../../LICENSE)。サードパーティの素材は [ATTRIBUTION.md](../../ATTRIBUTION.md) に記載しています。スクリーンショット内の画像は[クリーブランド美術館](https://www.clevelandart.org/open-access)のパブリックドメイン作品です。
 
 StarBooru は非公式の個人プロジェクトであり、TYPE-MOON および Aniplex とは一切関係がなく、承認も受けていません。

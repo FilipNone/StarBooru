@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/mark-gold.svg">
-    <img src="docs/brand/mark.svg" alt="Логотип StarBooru" width="150">
+    <source media="(prefers-color-scheme: dark)" srcset="../brand/mark-gold.svg">
+    <img src="../brand/mark.svg" alt="Логотип StarBooru" width="150">
   </picture>
 </p>
 
@@ -10,7 +10,7 @@
 <p align="center">Упорядочивайте и размечайте тегами личную коллекцию изображений и видео на собственном сервере.</p>
 
 <p align="center">
-  <a href="README.md"><img src="https://img.shields.io/badge/English-1b1342?style=for-the-badge" alt="English"></a>
+  <a href="https://github.com/FilipNone/StarBooru/README.md"><img src="https://img.shields.io/badge/English-1b1342?style=for-the-badge" alt="English"></a>
   <a href="README.it.md"><img src="https://img.shields.io/badge/Italiano-1b1342?style=for-the-badge" alt="Italiano"></a>
   <a href="README.zh-CN.md"><img src="https://img.shields.io/badge/%E7%AE%80%E4%BD%93%E4%B8%AD%E6%96%87-1b1342?style=for-the-badge" alt="简体中文"></a>
   <a href="README.ja.md"><img src="https://img.shields.io/badge/%E6%97%A5%E6%9C%AC%E8%AA%9E-1b1342?style=for-the-badge" alt="日本語"></a>
@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0--or--later-f1c45e?style=flat-square" alt="Лицензия"></a>
+  <a href="../../LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0--or--later-f1c45e?style=flat-square" alt="Лицензия"></a>
   <a href="https://github.com/FilipNone/StarBooru/releases"><img src="https://img.shields.io/badge/releases-download-f1c45e?style=flat-square" alt="Релизы"></a>
   <a href="https://github.com/FilipNone/StarBooru/actions/workflows/ci.yml"><img src="https://github.com/FilipNone/StarBooru/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/Rust-1b1342?style=flat-square&logo=rust&logoColor=white" alt="Rust"></a>
@@ -35,23 +35,23 @@
 ## Обзор
 
 <p align="center">
-  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/showcase/gallery-dark.webp"><source media="(prefers-color-scheme: light)" srcset="docs/showcase/gallery-light.webp"><img src="docs/showcase/gallery-dark.webp" width="100%" alt="Галерея: сетка изображений и сохранённые поиски над ней"></picture>
+  <picture><source media="(prefers-color-scheme: dark)" srcset="../showcase/gallery-dark.webp"><source media="(prefers-color-scheme: light)" srcset="../showcase/gallery-light.webp"><img src="../showcase/gallery-dark.webp" width="100%" alt="Галерея: сетка изображений и сохранённые поиски над ней"></picture>
 </p>
 
 <p align="center">
-  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/showcase/viewer-dark.webp"><source media="(prefers-color-scheme: light)" srcset="docs/showcase/viewer-light.webp"><img src="docs/showcase/viewer-dark.webp" width="49%" alt="Просмотр: изображение с тегами и сведениями"></picture>
-  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/showcase/explore-dark.webp"><source media="(prefers-color-scheme: light)" srcset="docs/showcase/explore-light.webp"><img src="docs/showcase/explore-dark.webp" width="49%" alt="Обзор: популярные публикации"></picture>
+  <picture><source media="(prefers-color-scheme: dark)" srcset="../showcase/viewer-dark.webp"><source media="(prefers-color-scheme: light)" srcset="../showcase/viewer-light.webp"><img src="../showcase/viewer-dark.webp" width="49%" alt="Просмотр: изображение с тегами и сведениями"></picture>
+  <picture><source media="(prefers-color-scheme: dark)" srcset="../showcase/explore-dark.webp"><source media="(prefers-color-scheme: light)" srcset="../showcase/explore-light.webp"><img src="../showcase/explore-dark.webp" width="49%" alt="Обзор: популярные публикации"></picture>
 </p>
 
 <p align="center">
-  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/showcase/search-dark.webp"><source media="(prefers-color-scheme: light)" srcset="docs/showcase/search-light.webp"><img src="docs/showcase/search-dark.webp" width="49%" alt="Поиск с автодополнением тегов"></picture>
-  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/showcase/upload-dark.webp"><source media="(prefers-color-scheme: light)" srcset="docs/showcase/upload-light.webp"><img src="docs/showcase/upload-dark.webp" width="49%" alt="Страница загрузки с очередью файлов"></picture>
+  <picture><source media="(prefers-color-scheme: dark)" srcset="../showcase/search-dark.webp"><source media="(prefers-color-scheme: light)" srcset="../showcase/search-light.webp"><img src="../showcase/search-dark.webp" width="49%" alt="Поиск с автодополнением тегов"></picture>
+  <picture><source media="(prefers-color-scheme: dark)" srcset="../showcase/upload-dark.webp"><source media="(prefers-color-scheme: light)" srcset="../showcase/upload-light.webp"><img src="../showcase/upload-dark.webp" width="49%" alt="Страница загрузки с очередью файлов"></picture>
 </p>
 
 <p align="center">
-  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/showcase/phone-gallery-dark.webp"><source media="(prefers-color-scheme: light)" srcset="docs/showcase/phone-gallery-light.webp"><img src="docs/showcase/phone-gallery-dark.webp" width="32%" alt="Галерея на телефоне"></picture>
-  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/showcase/phone-viewer-dark.webp"><source media="(prefers-color-scheme: light)" srcset="docs/showcase/phone-viewer-light.webp"><img src="docs/showcase/phone-viewer-dark.webp" width="32%" alt="Просмотр на телефоне"></picture>
-  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/showcase/phone-explore-dark.webp"><source media="(prefers-color-scheme: light)" srcset="docs/showcase/phone-explore-light.webp"><img src="docs/showcase/phone-explore-dark.webp" width="32%" alt="Обзор на телефоне"></picture>
+  <picture><source media="(prefers-color-scheme: dark)" srcset="../showcase/phone-gallery-dark.webp"><source media="(prefers-color-scheme: light)" srcset="../showcase/phone-gallery-light.webp"><img src="../showcase/phone-gallery-dark.webp" width="32%" alt="Галерея на телефоне"></picture>
+  <picture><source media="(prefers-color-scheme: dark)" srcset="../showcase/phone-viewer-dark.webp"><source media="(prefers-color-scheme: light)" srcset="../showcase/phone-viewer-light.webp"><img src="../showcase/phone-viewer-dark.webp" width="32%" alt="Просмотр на телефоне"></picture>
+  <picture><source media="(prefers-color-scheme: dark)" srcset="../showcase/phone-explore-dark.webp"><source media="(prefers-color-scheme: light)" srcset="../showcase/phone-explore-light.webp"><img src="../showcase/phone-explore-dark.webp" width="32%" alt="Обзор на телефоне"></picture>
 </p>
 
 ## Возможности
@@ -102,7 +102,7 @@ export STARBOORU_SECRET=at-least-32-characters-kept-the-same
 STARBOORU_WEB_DIR=$PWD/dist/public ./target/release/starbooru-server
 ```
 
-ffmpeg (миниатюры видео), tesseract (текст на изображениях) и pg_dump (резервные копии) необязательны. Все настройки описаны в [docs/deployment.md](docs/deployment.md#configuration).
+ffmpeg (миниатюры видео), tesseract (текст на изображениях) и pg_dump (резервные копии) необязательны. Все настройки описаны в [docs/deployment.md](../deployment.md#configuration).
 
 ### Docker
 
@@ -131,7 +131,7 @@ dx bundle --desktop --release -p starbooru-app
 tools/brand/android-build.sh --release --target aarch64-linux-android
 ```
 
-Всё остальное, от запуска каждого клиента до тестов, описано в [docs/development.md](docs/development.md).
+Всё остальное, от запуска каждого клиента до тестов, описано в [docs/development.md](../development.md).
 
 ## Планы
 
@@ -155,18 +155,18 @@ tools/brand/android-build.sh --release --target aarch64-linux-android
   - [ ] Увеличение разрешения
   - [ ] Удаление фона
 
-Подробности: [docs/roadmap.md](docs/roadmap.md) (на английском).
+Подробности: [docs/roadmap.md](../roadmap.md) (на английском).
 
 ## Участие
 
-Сообщения об ошибках, идеи и pull request'ы приветствуются в [Issues](https://github.com/FilipNone/StarBooru/issues). Начните с [CONTRIBUTING.md](CONTRIBUTING.md); правила проекта описаны в [AGENTS.md](AGENTS.md). О проблемах безопасности сообщайте согласно [SECURITY.md](SECURITY.md), а не в открытых Issues.
+Сообщения об ошибках, идеи и pull request'ы приветствуются в [Issues](https://github.com/FilipNone/StarBooru/issues). Начните с [CONTRIBUTING.md](../../CONTRIBUTING.md); правила проекта описаны в [AGENTS.md](../../AGENTS.md). О проблемах безопасности сообщайте согласно [SECURITY.md](../../SECURITY.md), а не в открытых Issues.
 
 ## Вики
 
-Руководства по использованию и запуску StarBooru находятся в [вики](https://github.com/FilipNone/StarBooru/wiki) (на английском). [Архитектура](docs/architecture.md) и [HTTP API](docs/api.md) описаны в `docs/`.
+Руководства по использованию и запуску StarBooru находятся в [вики](https://github.com/FilipNone/StarBooru/wiki) (на английском). [Архитектура](../architecture.md) и [HTTP API](../api.md) описаны в `docs/`.
 
 ## Лицензия
 
-[AGPL-3.0-or-later](LICENSE). Сторонние ресурсы перечислены в [ATTRIBUTION.md](ATTRIBUTION.md), а изображения на скриншотах — общественное достояние из [Кливлендского музея искусств](https://www.clevelandart.org/open-access).
+[AGPL-3.0-or-later](../../LICENSE). Сторонние ресурсы перечислены в [ATTRIBUTION.md](../../ATTRIBUTION.md), а изображения на скриншотах — общественное достояние из [Кливлендского музея искусств](https://www.clevelandart.org/open-access).
 
 StarBooru — неофициальный личный проект, не связанный с TYPE-MOON или Aniplex и не одобренный ими.

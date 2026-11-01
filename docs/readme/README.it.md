@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/mark-gold.svg">
-    <img src="docs/brand/mark.svg" alt="Logo di StarBooru" width="150">
+    <source media="(prefers-color-scheme: dark)" srcset="../brand/mark-gold.svg">
+    <img src="../brand/mark.svg" alt="Logo di StarBooru" width="150">
   </picture>
 </p>
 
@@ -10,7 +10,7 @@
 <p align="center">Organizza e tagga la tua collezione privata di immagini e video, sul tuo server.</p>
 
 <p align="center">
-  <a href="README.md"><img src="https://img.shields.io/badge/English-1b1342?style=for-the-badge" alt="English"></a>
+  <a href="https://github.com/FilipNone/StarBooru/README.md"><img src="https://img.shields.io/badge/English-1b1342?style=for-the-badge" alt="English"></a>
   <a href="README.it.md"><img src="https://img.shields.io/badge/Italiano-f1c45e?style=for-the-badge" alt="Italiano"></a>
   <a href="README.zh-CN.md"><img src="https://img.shields.io/badge/%E7%AE%80%E4%BD%93%E4%B8%AD%E6%96%87-1b1342?style=for-the-badge" alt="简体中文"></a>
   <a href="README.ja.md"><img src="https://img.shields.io/badge/%E6%97%A5%E6%9C%AC%E8%AA%9E-1b1342?style=for-the-badge" alt="日本語"></a>
@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0--or--later-f1c45e?style=flat-square" alt="Licenza"></a>
+  <a href="../../LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0--or--later-f1c45e?style=flat-square" alt="Licenza"></a>
   <a href="https://github.com/FilipNone/StarBooru/releases"><img src="https://img.shields.io/badge/releases-download-f1c45e?style=flat-square" alt="Release"></a>
   <a href="https://github.com/FilipNone/StarBooru/actions/workflows/ci.yml"><img src="https://github.com/FilipNone/StarBooru/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/Rust-1b1342?style=flat-square&logo=rust&logoColor=white" alt="Rust"></a>
@@ -35,23 +35,23 @@
 ## Anteprima
 
 <p align="center">
-  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/showcase/gallery-dark.webp"><source media="(prefers-color-scheme: light)" srcset="docs/showcase/gallery-light.webp"><img src="docs/showcase/gallery-dark.webp" width="100%" alt="La galleria: una griglia di immagini con le ricerche salvate in alto"></picture>
+  <picture><source media="(prefers-color-scheme: dark)" srcset="../showcase/gallery-dark.webp"><source media="(prefers-color-scheme: light)" srcset="../showcase/gallery-light.webp"><img src="../showcase/gallery-dark.webp" width="100%" alt="La galleria: una griglia di immagini con le ricerche salvate in alto"></picture>
 </p>
 
 <p align="center">
-  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/showcase/viewer-dark.webp"><source media="(prefers-color-scheme: light)" srcset="docs/showcase/viewer-light.webp"><img src="docs/showcase/viewer-dark.webp" width="49%" alt="Il visualizzatore: un'immagine con tag e dettagli"></picture>
-  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/showcase/explore-dark.webp"><source media="(prefers-color-scheme: light)" srcset="docs/showcase/explore-light.webp"><img src="docs/showcase/explore-dark.webp" width="49%" alt="Esplora: i post di tendenza"></picture>
+  <picture><source media="(prefers-color-scheme: dark)" srcset="../showcase/viewer-dark.webp"><source media="(prefers-color-scheme: light)" srcset="../showcase/viewer-light.webp"><img src="../showcase/viewer-dark.webp" width="49%" alt="Il visualizzatore: un'immagine con tag e dettagli"></picture>
+  <picture><source media="(prefers-color-scheme: dark)" srcset="../showcase/explore-dark.webp"><source media="(prefers-color-scheme: light)" srcset="../showcase/explore-light.webp"><img src="../showcase/explore-dark.webp" width="49%" alt="Esplora: i post di tendenza"></picture>
 </p>
 
 <p align="center">
-  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/showcase/search-dark.webp"><source media="(prefers-color-scheme: light)" srcset="docs/showcase/search-light.webp"><img src="docs/showcase/search-dark.webp" width="49%" alt="Ricerca con completamento automatico dei tag"></picture>
-  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/showcase/upload-dark.webp"><source media="(prefers-color-scheme: light)" srcset="docs/showcase/upload-light.webp"><img src="docs/showcase/upload-dark.webp" width="49%" alt="Pagina di caricamento con una coda di file"></picture>
+  <picture><source media="(prefers-color-scheme: dark)" srcset="../showcase/search-dark.webp"><source media="(prefers-color-scheme: light)" srcset="../showcase/search-light.webp"><img src="../showcase/search-dark.webp" width="49%" alt="Ricerca con completamento automatico dei tag"></picture>
+  <picture><source media="(prefers-color-scheme: dark)" srcset="../showcase/upload-dark.webp"><source media="(prefers-color-scheme: light)" srcset="../showcase/upload-light.webp"><img src="../showcase/upload-dark.webp" width="49%" alt="Pagina di caricamento con una coda di file"></picture>
 </p>
 
 <p align="center">
-  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/showcase/phone-gallery-dark.webp"><source media="(prefers-color-scheme: light)" srcset="docs/showcase/phone-gallery-light.webp"><img src="docs/showcase/phone-gallery-dark.webp" width="32%" alt="La galleria su un telefono"></picture>
-  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/showcase/phone-viewer-dark.webp"><source media="(prefers-color-scheme: light)" srcset="docs/showcase/phone-viewer-light.webp"><img src="docs/showcase/phone-viewer-dark.webp" width="32%" alt="Il visualizzatore su un telefono"></picture>
-  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/showcase/phone-explore-dark.webp"><source media="(prefers-color-scheme: light)" srcset="docs/showcase/phone-explore-light.webp"><img src="docs/showcase/phone-explore-dark.webp" width="32%" alt="Esplora su un telefono"></picture>
+  <picture><source media="(prefers-color-scheme: dark)" srcset="../showcase/phone-gallery-dark.webp"><source media="(prefers-color-scheme: light)" srcset="../showcase/phone-gallery-light.webp"><img src="../showcase/phone-gallery-dark.webp" width="32%" alt="La galleria su un telefono"></picture>
+  <picture><source media="(prefers-color-scheme: dark)" srcset="../showcase/phone-viewer-dark.webp"><source media="(prefers-color-scheme: light)" srcset="../showcase/phone-viewer-light.webp"><img src="../showcase/phone-viewer-dark.webp" width="32%" alt="Il visualizzatore su un telefono"></picture>
+  <picture><source media="(prefers-color-scheme: dark)" srcset="../showcase/phone-explore-dark.webp"><source media="(prefers-color-scheme: light)" srcset="../showcase/phone-explore-light.webp"><img src="../showcase/phone-explore-dark.webp" width="32%" alt="Esplora su un telefono"></picture>
 </p>
 
 ## Funzionalità
@@ -102,7 +102,7 @@ export STARBOORU_SECRET=at-least-32-characters-kept-the-same
 STARBOORU_WEB_DIR=$PWD/dist/public ./target/release/starbooru-server
 ```
 
-ffmpeg (anteprime dei video), tesseract (testo nelle immagini) e pg_dump (backup) sono facoltativi. Tutte le impostazioni sono in [docs/deployment.md](docs/deployment.md#configuration).
+ffmpeg (anteprime dei video), tesseract (testo nelle immagini) e pg_dump (backup) sono facoltativi. Tutte le impostazioni sono in [docs/deployment.md](../deployment.md#configuration).
 
 ### Docker
 
@@ -131,7 +131,7 @@ dx bundle --desktop --release -p starbooru-app
 tools/brand/android-build.sh --release --target aarch64-linux-android
 ```
 
-Il resto, dall'avvio di ogni client ai test, è in [docs/development.md](docs/development.md).
+Il resto, dall'avvio di ogni client ai test, è in [docs/development.md](../development.md).
 
 ## Roadmap
 
@@ -155,18 +155,18 @@ Il resto, dall'avvio di ogni client ai test, è in [docs/development.md](docs/de
   - [ ] Upscaling
   - [ ] Rimozione dello sfondo
 
-Dettagli: [docs/roadmap.md](docs/roadmap.md) (in inglese).
+Dettagli: [docs/roadmap.md](../roadmap.md) (in inglese).
 
 ## Contribuire
 
-Segnalazioni, idee e pull request sono benvenute nelle [Issues](https://github.com/FilipNone/StarBooru/issues). Parti da [CONTRIBUTING.md](CONTRIBUTING.md); le regole del progetto sono in [AGENTS.md](AGENTS.md). I problemi di sicurezza passano da [SECURITY.md](SECURITY.md), non dalle issue pubbliche.
+Segnalazioni, idee e pull request sono benvenute nelle [Issues](https://github.com/FilipNone/StarBooru/issues). Parti da [CONTRIBUTING.md](../../CONTRIBUTING.md); le regole del progetto sono in [AGENTS.md](../../AGENTS.md). I problemi di sicurezza passano da [SECURITY.md](../../SECURITY.md), non dalle issue pubbliche.
 
 ## Wiki
 
-Le guide all'uso e all'installazione di StarBooru sono nella [wiki](https://github.com/FilipNone/StarBooru/wiki) (in inglese). L'[architettura](docs/architecture.md) e l'[API HTTP](docs/api.md) sono documentate in `docs/`.
+Le guide all'uso e all'installazione di StarBooru sono nella [wiki](https://github.com/FilipNone/StarBooru/wiki) (in inglese). L'[architettura](../architecture.md) e l'[API HTTP](../api.md) sono documentate in `docs/`.
 
 ## Licenza
 
-[AGPL-3.0-or-later](LICENSE). Le risorse di terze parti sono elencate in [ATTRIBUTION.md](ATTRIBUTION.md), e le immagini negli screenshot sono opere di pubblico dominio del [Cleveland Museum of Art](https://www.clevelandart.org/open-access).
+[AGPL-3.0-or-later](../../LICENSE). Le risorse di terze parti sono elencate in [ATTRIBUTION.md](../../ATTRIBUTION.md), e le immagini negli screenshot sono opere di pubblico dominio del [Cleveland Museum of Art](https://www.clevelandart.org/open-access).
 
 StarBooru è un progetto personale non ufficiale, non affiliato né approvato da TYPE-MOON o Aniplex.

@@ -24,7 +24,7 @@ Open the pull request against `main`. Keep it to one change, and write commit su
 ## Translations
 
 - **The interface:** each language is a Fluent catalogue in `apps/app/locales/`. Copy `en.ftl` and translate its messages. A test checks that every catalogue has every message with the same variables.
-- **The README:** there are five copies (`README.md`, `README.it.md`, `README.zh-CN.md`, `README.ja.md`, `README.ru.md`). A change to one belongs in all of them, and corrections from native speakers are very welcome.
+- **The README:** there are five copies: `README.md`, and `README.it.md`, `README.zh-CN.md`, `README.ja.md` and `README.ru.md` in `docs/readme/`. A change to one belongs in all of them, and corrections from native speakers are very welcome.
 
 ## License
 

@@ -94,7 +94,7 @@ docker build -t starbooru:dev .      # if you touched the Dockerfile, migrations
 
 Then append a terse entry to `log/devlog.md`: what landed, what you verified, what's still open. Also update `docs/roadmap.md` when a checklist item changes state.
 
-When a change affects what people see or do, update the wiki too. The README exists in five languages (`README.md`, `README.it.md`, `README.zh-CN.md`, `README.ja.md`, `README.ru.md`), so a change to one goes into all of them. `docs/showcase/` holds its screenshots: replace them when the interface changes visibly, using generated or public-domain pictures and corners baked into the files, as GitHub strips CSS from READMEs.
+When a change affects what people see or do, update the wiki too. The README exists in five languages (`README.md`, and `README.it.md`, `README.zh-CN.md`, `README.ja.md`, `README.ru.md` in `docs/readme/`), so a change to one goes into all of them. `docs/showcase/` holds its screenshots: replace them when the interface changes visibly, using generated or public-domain pictures and corners baked into the files, as GitHub strips CSS from READMEs.
 
 ## 5. Tooling notes
 
