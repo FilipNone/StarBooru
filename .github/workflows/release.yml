@@ -25,8 +25,8 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
-      - name: Install dx
-        run: tools/release/install-dx.sh x86_64-unknown-linux-gnu.tar.gz 4363e4ed2a3f1eb7f4d38d2d59aed59ce43271c44c16b425e92c89a64761fbe7
+      # The prebuilt dx needs a newer glibc than this runner has.
+      - run: cargo install dioxus-cli@0.7.10 --locked
       - run: dx bundle --web --release -p starbooru-app --out-dir dist
       - run: cargo build --release --locked -p starbooru-server
       - name: Pack
@@ -51,8 +51,6 @@ jobs:
         include:
           - name: Linux
             os: ubuntu-22.04
-            dx: x86_64-unknown-linux-gnu.tar.gz
-            dx_sha256: 4363e4ed2a3f1eb7f4d38d2d59aed59ce43271c44c16b425e92c89a64761fbe7
             types: --package-types deb --package-types appimage
             suffix: linux-x86_64
           - name: Windows
@@ -84,7 +82,12 @@ jobs:
             patchelf file libfuse2 xvfb imagemagick
           echo APPIMAGE_EXTRACT_AND_RUN=1 >> "$GITHUB_ENV"
       - name: Install dx
-        run: tools/release/install-dx.sh ${{ matrix.dx }} ${{ matrix.dx_sha256 }}
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            cargo install dioxus-cli@0.7.10 --locked
+          else
+            tools/release/install-dx.sh ${{ matrix.dx }} ${{ matrix.dx_sha256 }}
+          fi
       - run: dx bundle --desktop --release -p starbooru-app ${{ matrix.types }}
       - name: Start the app
         run: tools/release/smoke-desktop.sh
@@ -121,9 +124,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Install dx
         run: tools/release/install-dx.sh x86_64-unknown-linux-gnu.tar.gz 4363e4ed2a3f1eb7f4d38d2d59aed59ce43271c44c16b425e92c89a64761fbe7
-      - run: tools/brand/android-build.sh --release --unsigned --target aarch64-linux-android
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}
+      - run: ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME" tools/brand/android-build.sh --release --unsigned --target aarch64-linux-android
       - uses: actions/upload-artifact@v7
         with:
           name: android-unsigned
