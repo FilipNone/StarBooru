@@ -11,6 +11,9 @@ starbooru-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+bytes = "1"
+chrono.workspace = true
+futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
 reqwest = { version = "0.13", default-features = false, features = ["json", "multipart", "query"] }
 url = "2"
 
@@ -21,6 +24,7 @@ rustls-pki-types = { version = "1", features = ["std"] }
 webpki = { package = "rustls-webpki", version = "0.103", default-features = false, features = ["alloc"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+chrono = { workspace = true, features = ["wasmbind"] }
 gloo-timers = { version = "0.3", features = ["futures"] }
 
 [dev-dependencies]

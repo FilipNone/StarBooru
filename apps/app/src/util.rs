@@ -107,6 +107,42 @@ async fn file_head(file: &FileData) -> Option<Vec<u8>> {
     Some(head)
 }
 
+/// A piece of a file, without reading the rest.
+#[cfg(target_arch = "wasm32")]
+pub async fn read_range(file: &FileData, offset: u64, len: u64) -> Result<bytes::Bytes, String> {
+    let piece = file
+        .inner()
+        .downcast_ref::<web_sys::File>()
+        .ok_or_else(|| "not a file".to_owned())?
+        .slice_with_f64_and_f64(offset as f64, offset.saturating_add(len) as f64)
+        .map_err(|e| format!("{e:?}"))?;
+    let buffer = wasm_bindgen_futures::JsFuture::from(piece.array_buffer())
+        .await
+        .map_err(|e| format!("{e:?}"))?;
+    Ok(js_sys::Uint8Array::new(&buffer).to_vec().into())
+}
+
+/// A piece of a file, without reading the rest.
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn read_range(file: &FileData, offset: u64, len: u64) -> Result<bytes::Bytes, String> {
+    use tokio::io::{AsyncReadExt, AsyncSeekExt};
+
+    let mut opened = tokio::fs::File::open(file.path())
+        .await
+        .map_err(|e| e.to_string())?;
+    opened
+        .seek(std::io::SeekFrom::Start(offset))
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut piece = Vec::new();
+    opened
+        .take(len)
+        .read_to_end(&mut piece)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(piece.into())
+}
+
 /// The name of the folder holding `path`, as a tag (`Summer 2024/a.jpg` →
 /// `summer_2024`).
 pub fn folder_tag(path: &Path) -> Option<String> {
@@ -349,6 +385,25 @@ mod tests {
         let kept: Vec<String> = media.iter().map(FileData::name).collect();
         assert_eq!(kept, ["anime", "named.jpg", "1000", "saved.jpg_large"]);
         assert_eq!(skipped, 6);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn reads_a_piece_of_a_file() {
+        let dir = std::env::temp_dir().join(format!("starbooru-range-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("a.mp4");
+        std::fs::write(&path, b"0123456789").unwrap();
+        let file = FileData::new(DiskFile(path));
+
+        assert_eq!(read_range(&file, 0, 4).await.unwrap().as_ref(), b"0123");
+        assert_eq!(read_range(&file, 7, 3).await.unwrap().as_ref(), b"789");
+        // Past the end there is less than was asked for, which the client notices.
+        assert_eq!(read_range(&file, 8, 5).await.unwrap().as_ref(), b"89");
+        assert_eq!(read_range(&file, 20, 5).await.unwrap().as_ref(), b"");
+
+        let gone = FileData::new(DiskFile(dir.join("gone")));
+        assert!(read_range(&gone, 0, 1).await.is_err());
         std::fs::remove_dir_all(dir).unwrap();
     }
 

@@ -19,7 +19,9 @@ Desktop and Android users sign in with the same URL (`https://your-domain`).
 
 ### Upload size
 
-`STARBOORU_MAX_UPLOAD_MB` (default 512) is the server's limit. Dokploy's Traefik doesn't cap request bodies by default. If you put another proxy (nginx, Cloudflare) in front, raise its limit too. Cloudflare's free plan caps request bodies at 100 MB.
+`STARBOORU_MAX_UPLOAD_MB` (default 512) is the server's limit. Dokploy's Traefik doesn't cap request bodies by default. The apps send anything over 2 MiB in chunks of 2 MiB, so a proxy's limit on request bodies doesn't get in their way, including Cloudflare's 100 MB on the free plan. Only other tools that use `POST /posts` with a whole file still have to fit it.
+
+**Cloudflare and HTTP/3.** Uploads over HTTP/3 through Cloudflare were measured at 80 to 220 KB/s, against about 20 MB/s over HTTP/2 on the same connection, and Cloudflare gave up on a request after about 70 s. Chunks get through at that speed, as the apps drop to one at a time, but slowly. Browsers use HTTP/3 where they can, so turn it off under *Speed › Protocol Optimization › HTTP/3 (with QUIC)* in Cloudflare's dashboard. Browsers remember it for a day, so restart them after the change.
 
 ### Video thumbnails
 

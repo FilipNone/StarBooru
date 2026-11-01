@@ -6184,6 +6184,9 @@ dependencies = [
 name = "starbooru-client"
 version = "0.1.0"
 dependencies = [
+ "bytes",
+ "chrono",
+ "futures-util",
  "gloo-timers",
  "reqwest 0.13.5",
  "rustls-pki-types",

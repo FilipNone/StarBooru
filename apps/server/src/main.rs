@@ -25,6 +25,7 @@ mod storage;
 #[cfg(test)]
 mod testing;
 mod throttle;
+mod uploads;
 
 use std::process::ExitCode;
 use std::time::Duration;
@@ -79,6 +80,7 @@ async fn run() -> Result<(), StartupError> {
     let state = AppState::new(config, db, storage);
     let app = routes::router(state.clone());
     tokio::spawn(routes::auto_purge(state.clone()));
+    tokio::spawn(uploads::sweep(state.clone()));
     tokio::spawn(backup::auto_backup(state.clone()));
     tokio::spawn(routes::run_imports(state.clone()));
     tokio::spawn(routes::run_library_imports(state.clone()));

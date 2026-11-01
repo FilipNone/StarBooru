@@ -16,6 +16,7 @@ All endpoints are under `/api/v1`. Bodies are JSON unless noted. The Rust types 
 | 404 | not found |
 | 409 | conflict (`duplicate`, `username_taken`, `deleted`, `not_deleted`, `implication_cycle`, `name_taken`) |
 | 413 | upload too large |
+| 507 | `storage_full`: the server's disk is full |
 | 415 | unsupported file type |
 | 424 | `fetch_failed`: another site the request depends on failed, such as an address to import or an AI provider. |
 | 429 | rate limited; `starbooru-client` waits out `Retry-After` (up to 30 s) and retries twice |
@@ -150,6 +151,19 @@ A `Backup`'s `url` is a signed path relative to the server, valid for an hour. F
 | PUT | `/posts/{id}/vote` | `{value: -1 \| 0 \| 1}` | `Post` with the new `score` and `my_vote` |
 
 A `Post` carries `file_url`, `thumb_url` and `sample_url`. These are signed paths relative to the server, valid for at least 6 hours. Fetch them without the bearer token. `thumb_url` is null when no thumbnail exists. `sample_url` is a smaller JPEG copy of a big image, meant for viewing; it is null for most posts, and `file_url` stays the original to download. `duration_ms` is the length of a video, or null. `file_date` is the date in the file, or null: EXIF for images (its wall clock, marked UTC, because EXIF has no time zone) and the creation time for videos. `palette` lists the picture's main colours as `#rrggbb`, most common first; it is left out when there are none. `GET /posts/{id}` (and `POST /posts/{id}/ocr`) also carry `ocr_text`, the text found in a still image by OCR, lines separated by `\n`; it is left out when there is none, when the image is not read yet, and in lists.
+
+### Chunked uploads
+
+For a file bigger than `UPLOAD_CHUNK_SIZE` (2 MiB). One `POST /posts` of a big file can exceed a proxy's limit on request bodies or its patience; Cloudflare's free plan stops at 100 MB. Each chunk is its own request, sent in any order and in parallel. The clients send one chunk first, then up to 8 at once while answers stay quick.
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| POST | `/uploads` | `UploadStart {size, tags?, rating?, source?}`. `tags` is a list. | `UploadSession {id, chunk_size, chunks}`. 400 for an empty file or a bad tag or source; 413 over the upload limit; 403 `quota_exceeded`. A server older than this answers 404: send the file to `POST /posts` instead. |
+| PUT | `/uploads/{id}/chunks/{index}` | The chunk's raw bytes, `chunk_size` of them, or what's left for the last. | 204. Sending a chunk again is harmless. 400 for a wrong length or an index past the end; 413 for more than a chunk. Chunk 0 is checked for a known format, and a file that isn't one answers 415 and ends the upload. 507 `storage_full`. |
+| POST | `/uploads/{id}/finish` | | `Post`, as `POST /posts` gives. 409 `chunks_missing` until every chunk has arrived; 409 `duplicate` if the same file exists. Asking again after an answer was lost gives the same answer, waiting for a finish still under way. Can take a while for a long video. |
+| DELETE | `/uploads/{id}` | | 204, whether or not the upload still exists. What already became a post stays. |
+
+409 `upload_gone` means the upload no longer exists, and the file has to be sent again: it sat idle for an hour, the server restarted, the account opened more than 8 at once (the one left alone longest goes), or it belongs to someone else.
 
 ### People in a post
 

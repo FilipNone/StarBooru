@@ -3,9 +3,11 @@
 //! Works on native targets (rustls) and on `wasm32-unknown-unknown`
 //! (browser `fetch`), so the web, desktop and Android apps share it.
 
+mod chunked;
 #[cfg(not(target_arch = "wasm32"))]
 mod roots;
 
+pub use chunked::FileUpload;
 use reqwest::{Method, RequestBuilder, StatusCode, header};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -52,6 +54,9 @@ pub enum ClientError {
     /// Writing a download to disk failed.
     #[error("cannot save the file: {0}")]
     Io(#[from] std::io::Error),
+    /// Reading a file to upload failed.
+    #[error("cannot read the file: {0}")]
+    Read(String),
 }
 
 impl ClientError {

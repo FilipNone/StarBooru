@@ -25,6 +25,8 @@ pub enum AppError {
     QuotaExceeded,
     #[error("upload is larger than the server limit")]
     PayloadTooLarge,
+    #[error("the server's disk is full")]
+    StorageFull,
     #[error("{0}")]
     Unsupported(String),
     /// Too many failed attempts; try again after `retry_after` seconds.
@@ -53,6 +55,7 @@ impl AppError {
             AppError::NotFound => (StatusCode::NOT_FOUND, "not_found"),
             AppError::Conflict { code, .. } => (StatusCode::CONFLICT, code),
             AppError::PayloadTooLarge => (StatusCode::PAYLOAD_TOO_LARGE, "too_large"),
+            AppError::StorageFull => (StatusCode::INSUFFICIENT_STORAGE, "storage_full"),
             AppError::Unsupported(_) => (StatusCode::UNSUPPORTED_MEDIA_TYPE, "unsupported"),
             AppError::TooManyRequests { .. } => (StatusCode::TOO_MANY_REQUESTS, "rate_limited"),
             // Not 502 or 504: Cloudflare swaps those for a page of its own, and the
@@ -111,6 +114,9 @@ impl From<sqlx::Error> for AppError {
 
 impl From<std::io::Error> for AppError {
     fn from(e: std::io::Error) -> Self {
+        if e.kind() == std::io::ErrorKind::StorageFull {
+            return AppError::StorageFull;
+        }
         AppError::internal(e)
     }
 }
@@ -147,5 +153,16 @@ mod tests {
     fn a_failing_site_uses_a_status_that_proxies_leave_alone() {
         let response = AppError::Upstream("that site is down".into()).into_response();
         assert_eq!(response.status(), StatusCode::FAILED_DEPENDENCY);
+    }
+
+    #[test]
+    fn a_full_disk_says_so() {
+        let full = std::io::Error::from(std::io::ErrorKind::StorageFull);
+        let response = AppError::from(full).into_response();
+        assert_eq!(response.status(), StatusCode::INSUFFICIENT_STORAGE);
+
+        let other = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+        let response = AppError::from(other).into_response();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 }

@@ -19,6 +19,7 @@ mod searches;
 mod shares;
 mod tags;
 mod trash;
+mod uploads;
 
 pub use autotag::backfill_meta_tags;
 pub use imports::run_imports;
@@ -55,6 +56,7 @@ use crate::state::AppState;
 
 pub fn router(state: AppState) -> Router {
     let upload_limit = state.config.max_upload_bytes;
+    let chunk_limit = usize::try_from(starbooru_core::UPLOAD_CHUNK_SIZE).unwrap_or(usize::MAX);
 
     let api = Router::new()
         .route("/info", get(info))
@@ -126,6 +128,13 @@ pub fn router(state: AppState) -> Router {
                 .delete(posts::delete),
         )
         .route("/posts/import", post(posts::import))
+        .route("/uploads", post(uploads::start))
+        .route("/uploads/{id}", axum::routing::delete(uploads::cancel))
+        .route(
+            "/uploads/{id}/chunks/{index}",
+            put(uploads::put_chunk).layer(DefaultBodyLimit::max(chunk_limit)),
+        )
+        .route("/uploads/{id}/finish", post(uploads::finish))
         .route(
             "/imports",
             get(imports::list)

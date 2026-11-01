@@ -354,6 +354,51 @@ pub struct ImportRequest {
     pub source: Option<String>,
 }
 
+/// The size of a chunk in a chunked upload. A file no bigger than this goes in
+/// one `POST /posts`. Small, because each chunk has to get through proxies that
+/// cut off slow requests: Cloudflare over HTTP/3 was measured as low as 80 KB/s,
+/// and gives up on a request after about a minute.
+pub const UPLOAD_CHUNK_SIZE: u64 = 2 << 20;
+
+/// `POST /uploads`: starts a chunked upload of a file of `size` bytes. What
+/// goes on the post is given here, so a bad tag fails before anything is sent.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct UploadStart {
+    pub size: u64,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub rating: Rating,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+}
+
+/// The answer to [`UploadStart`]: where to send the chunks, and how to cut them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UploadSession {
+    pub id: String,
+    pub chunk_size: u64,
+    pub chunks: u32,
+}
+
+/// How many chunks a file of `size` bytes is cut into.
+pub fn upload_chunks(size: u64, chunk_size: u64) -> u32 {
+    let Some(whole) = size.checked_div(chunk_size) else {
+        return 0;
+    };
+    let partial = u64::from(size.checked_rem(chunk_size).is_some_and(|rest| rest != 0));
+    u32::try_from(whole.saturating_add(partial)).unwrap_or(u32::MAX)
+}
+
+/// Where chunk `index` of a file of `size` bytes starts and how long it is, or
+/// `None` past the end of the file.
+pub fn upload_chunk_range(size: u64, chunk_size: u64, index: u32) -> Option<(u64, u64)> {
+    let offset = u64::from(index).checked_mul(chunk_size)?;
+    let left = size.checked_sub(offset).filter(|left| *left > 0)?;
+    let len = left.min(chunk_size);
+    (len > 0).then_some((offset, len))
+}
+
 /// Most addresses one `POST /imports` takes.
 pub const MAX_IMPORT_BATCH: usize = 500;
 
@@ -645,6 +690,23 @@ pub struct ApiError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cuts_a_file_into_chunks() {
+        assert_eq!(upload_chunks(10, 5), 2);
+        assert_eq!(upload_chunks(11, 5), 3);
+        assert_eq!(upload_chunks(1, 5), 1);
+        assert_eq!(upload_chunks(0, 5), 0);
+        assert_eq!(upload_chunks(10, 0), 0);
+        assert_eq!(upload_chunks(u64::MAX, 1), u32::MAX);
+
+        assert_eq!(upload_chunk_range(11, 5, 0), Some((0, 5)));
+        assert_eq!(upload_chunk_range(11, 5, 2), Some((10, 1)));
+        assert_eq!(upload_chunk_range(11, 5, 3), None);
+        assert_eq!(upload_chunk_range(10, 5, 2), None);
+        assert_eq!(upload_chunk_range(10, 0, 0), None);
+        assert_eq!(upload_chunk_range(u64::MAX, u64::MAX, u32::MAX), None);
+    }
 
     #[test]
     fn safe_is_called_safe_and_general_still_means_it() {

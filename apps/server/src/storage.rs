@@ -6,7 +6,7 @@
 //! <data>/sample/ab/cd/<sha256>.jpg
 //! ```
 
-use std::io::{Cursor, Read};
+use std::io::{Cursor, Read, Seek};
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
@@ -18,7 +18,7 @@ use image::{
 };
 use sha2::{Digest, Sha256};
 use starbooru_core::color::Palette;
-use starbooru_core::{FORMATS, MediaKind, SAMPLE_SIZE, detect_mime};
+use starbooru_core::{FORMATS, MediaKind, SAMPLE_SIZE, SNIFF_BYTES, detect_mime};
 
 use crate::error::{AppError, AppResult};
 use crate::probe::Tools;
@@ -224,12 +224,7 @@ impl Storage {
     /// Hashes, sniffs, thumbnails and stores an upload. CPU-bound: call it
     /// from `spawn_blocking`.
     pub fn ingest(&self, bytes: &[u8]) -> AppResult<Ingested> {
-        let detected = detect_mime(bytes)
-            .ok_or_else(|| AppError::Unsupported("unrecognised file type".into()))?;
-        let &(mime, ext, kind, decodable) = FORMATS
-            .iter()
-            .find(|(m, ..)| *m == detected)
-            .ok_or_else(|| AppError::Unsupported(format!("{detected} files are not supported")))?;
+        let &(mime, ext, kind, decodable) = sniff(bytes)?;
 
         let sha256: [u8; 32] = Sha256::digest(bytes).into();
         let sha_hex = hex::encode(sha256);
@@ -258,35 +253,100 @@ impl Storage {
             )
             .ok_or_else(|| AppError::internal("bad storage path"))?;
         self.write_atomic(&original, bytes)?;
+        if !decodable {
+            return self.ingest_stored(sha256, mime, ext, kind);
+        }
         if let Some(jpeg) = &thumb {
             self.write_thumb(&sha_hex, ext, jpeg)?;
         }
         if let Some(jpeg) = &sample {
             self.write_sample(&sha_hex, jpeg)?;
         }
-        let mut derived = Derived {
+        let palette = if thumb.is_some() {
+            self.thumb_palette(&sha_hex, ext)
+        } else {
+            None
+        };
+
+        Ok(Ingested {
+            sha256,
+            ext,
+            mime,
+            kind,
             width,
             height,
             duration_ms: None,
             has_audio: None,
             has_thumb: thumb.is_some(),
             print: thumb.as_deref().and_then(fingerprint_jpeg),
-            file_date: None,
-        };
-        if !decodable {
-            derived = self.derive(&sha_hex, ext, kind)?;
+            has_sample,
+            file_date: (kind == MediaKind::Image)
+                .then(|| exif_date(bytes))
+                .flatten(),
+            palette,
+        })
+    }
+
+    /// `ingest` for an upload already on disk, moving it into place if it
+    /// doesn't have to be decoded, so a big video never sits in memory. An
+    /// image is read whole, as `image` needs it to be. The file may be left
+    /// behind, for the caller to remove. Call from a blocking thread.
+    pub fn ingest_file(&self, path: &Path) -> AppResult<Ingested> {
+        let mut file = std::fs::File::open(path)?;
+        let mut head = Vec::new();
+        file.by_ref()
+            .take(u64::from(SNIFF_BYTES))
+            .read_to_end(&mut head)?;
+        let &(mime, ext, kind, decodable) = sniff(&head)?;
+        if decodable {
+            return self.ingest(&std::fs::read(path)?);
         }
+
+        file.rewind()?;
+        let mut hasher = Sha256::new();
+        let mut buffer = vec![0u8; 1 << 20];
+        loop {
+            let read = file.read(&mut buffer)?;
+            if read == 0 {
+                break;
+            }
+            hasher.update(buffer.get(..read).unwrap_or_default());
+        }
+        let sha256: [u8; 32] = hasher.finalize().into();
+
+        let original = self
+            .original_path(&hex::encode(sha256), ext)
+            .ok_or_else(|| AppError::internal("bad storage path"))?;
+        // Content-addressed: same name, same bytes.
+        if !original.exists() {
+            if let Some(parent) = original.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::rename(path, &original)?;
+        }
+        self.ingest_stored(sha256, mime, ext, kind)
+    }
+
+    /// What ffmpeg finds in an original just stored, for a format `image`
+    /// can't decode.
+    fn ingest_stored(
+        &self,
+        sha256: [u8; 32],
+        mime: &'static str,
+        ext: &'static str,
+        kind: MediaKind,
+    ) -> AppResult<Ingested> {
+        let sha_hex = hex::encode(sha256);
+        let derived = self.derive(&sha_hex, ext, kind)?;
         let file_date = match kind {
-            MediaKind::Image => exif_date(bytes),
             MediaKind::Video => derived.file_date,
-            MediaKind::Animation => None,
+            _ => self.file_date(&sha_hex, ext, kind)?,
         };
         let palette = if derived.has_thumb {
             self.thumb_palette(&sha_hex, ext)
         } else {
             None
         };
-
         Ok(Ingested {
             sha256,
             ext,
@@ -298,7 +358,7 @@ impl Storage {
             has_audio: derived.has_audio,
             has_thumb: derived.has_thumb,
             print: derived.print,
-            has_sample,
+            has_sample: Some(false),
             file_date,
             palette,
         })
@@ -519,6 +579,16 @@ impl Storage {
             let _ = std::fs::remove_file(&tmp);
         })
     }
+}
+
+/// The format of a file starting with `head`, or the reason it isn't accepted.
+pub fn sniff(head: &[u8]) -> AppResult<&'static (&'static str, &'static str, MediaKind, bool)> {
+    let detected =
+        detect_mime(head).ok_or_else(|| AppError::Unsupported("unrecognised file type".into()))?;
+    FORMATS
+        .iter()
+        .find(|(m, ..)| *m == detected)
+        .ok_or_else(|| AppError::Unsupported(format!("{detected} files are not supported")))
 }
 
 /// Decodes an image upright: the EXIF orientation is applied, as browsers
@@ -896,6 +966,46 @@ mod tests {
         assert!(!thumb_path(&storage, &sha).exists());
         // Removing twice is fine.
         storage.remove(&sha, "png").unwrap();
+    }
+
+    #[tokio::test]
+    async fn ingests_a_file_on_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(dir.path()).await.unwrap();
+        let path = storage.scratch_path("upload");
+
+        // Bigger than the hash buffer, to see it read every part.
+        let mut video = b"\0\0\0\x18ftypisom\0\0\x02\0isomiso2".to_vec();
+        video.resize((3 << 20) + 5, 7);
+        std::fs::write(&path, &video).unwrap();
+        let info = storage.ingest_file(&path).unwrap();
+        assert_eq!(info.ext, "mp4");
+        assert_eq!(info.kind, MediaKind::Video);
+        let sha: [u8; 32] = Sha256::digest(&video).into();
+        assert_eq!(info.sha256, sha);
+        let stored = storage.original_path(&hex::encode(sha), "mp4").unwrap();
+        assert_eq!(std::fs::read(&stored).unwrap(), video);
+        assert!(!path.exists(), "moved into place");
+
+        // Already stored: the original stays, and the upload is left over.
+        std::fs::write(&path, &video).unwrap();
+        storage.ingest_file(&path).unwrap();
+        assert!(path.exists());
+        assert_eq!(std::fs::read(&stored).unwrap(), video);
+
+        // An image is decoded, like any other, and not moved.
+        let png = png_bytes(1024, 300);
+        std::fs::write(&path, &png).unwrap();
+        let info = storage.ingest_file(&path).unwrap();
+        assert_eq!((info.width, info.height), (Some(1024), Some(300)));
+        assert!(info.has_thumb);
+        assert!(path.exists());
+
+        std::fs::write(&path, b"%PDF-1.7 not a picture").unwrap();
+        assert!(matches!(
+            storage.ingest_file(&path),
+            Err(AppError::Unsupported(_))
+        ));
     }
 
     fn thumb_path(storage: &Storage, sha: &str) -> PathBuf {

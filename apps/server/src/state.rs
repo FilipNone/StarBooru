@@ -14,6 +14,7 @@ use crate::ocr::Ocr;
 use crate::oidc::Oidc;
 use crate::storage::Storage;
 use crate::throttle::Guards;
+use crate::uploads::Uploads;
 
 /// Cheap-to-clone handle shared by all handlers.
 #[derive(Clone)]
@@ -31,6 +32,8 @@ pub struct Inner {
     pub trusted_fetcher: Option<Fetcher>,
     /// Sign-in and sign-up limits.
     pub guards: Guards,
+    /// Chunked uploads under way.
+    pub uploads: Uploads,
     pub backups: Backups,
     /// Sign-in through an OpenID Connect provider, when set up.
     pub oidc: Option<Oidc>,
@@ -76,6 +79,7 @@ impl AppState {
             fetcher,
             trusted_fetcher,
             guards: Guards::default(),
+            uploads: Uploads::default(),
             backups,
             oidc,
             ocr,

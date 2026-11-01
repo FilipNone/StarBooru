@@ -956,7 +956,19 @@ pub(super) async fn store_post(
 
     let worker = state.clone();
     let info = tokio::task::spawn_blocking(move || worker.storage.ingest(&bytes)).await??;
+    record_post(state, user_id, &info, file_size, rating, source, tags).await
+}
 
+/// Inserts the post for a stored file, unless the same file is already here.
+pub(super) async fn record_post(
+    state: &AppState,
+    user_id: i64,
+    info: &Ingested,
+    file_size: i64,
+    rating: Rating,
+    source: Option<String>,
+    tags: &[String],
+) -> AppResult<Stored> {
     let existing: Option<i64> = sqlx::query_scalar("SELECT id FROM posts WHERE sha256 = $1")
         .bind(info.sha256.as_slice())
         .fetch_optional(&state.db)
@@ -965,14 +977,14 @@ pub(super) async fn store_post(
         return Ok(Stored::Exists(id));
     }
 
-    match insert_post(state, user_id, &info, file_size, rating, source, tags).await {
+    match insert_post(state, user_id, info, file_size, rating, source, tags).await {
         Ok(id) => {
             crate::ai::autotag_later(state, id);
             crate::ocr::spawn_scan(state, id);
             Ok(Stored::Added(id))
         }
         Err(e) => {
-            discard_orphan(state, &info).await;
+            discard_orphan(state, info).await;
             // Someone else's upload of the same file got in first.
             if matches!(
                 e,
@@ -1117,7 +1129,11 @@ async fn apply_vote(
 
 /// Refuses a file that would take the uploader past their storage limit.
 /// Locks the account row, so one account's uploads can't race past it.
-async fn check_quota(db: impl sqlx::PgExecutor<'_>, user_id: i64, adding: i64) -> AppResult<()> {
+pub(super) async fn check_quota(
+    db: impl sqlx::PgExecutor<'_>,
+    user_id: i64,
+    adding: i64,
+) -> AppResult<()> {
     let (quota, used): (Option<i64>, i64) = sqlx::query_as(
         "SELECT quota_bytes, CASE WHEN quota_bytes IS NULL THEN 0 ELSE \
              (SELECT coalesce(sum(file_size), 0)::bigint FROM posts WHERE uploader_id = $1) END \
@@ -1594,7 +1610,7 @@ pub async fn backfill_colors(state: AppState) {
 
 /// The refusal of a file that is already post `id`, saying where it is: a post
 /// in the recycle bin shows up nowhere else.
-async fn duplicate_of(state: &AppState, id: i64) -> AppResult<AppError> {
+pub(super) async fn duplicate_of(state: &AppState, id: i64) -> AppResult<AppError> {
     let binned: bool = sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM posts WHERE id = $1 AND deleted_at IS NOT NULL)",
     )

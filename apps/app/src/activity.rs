@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 use dioxus::core::spawn_forever;
 use dioxus::html::FileData;
 use dioxus::prelude::*;
-use starbooru_client::Upload as UploadRequest;
+use starbooru_client::{ClientError, FileUpload};
 use starbooru_core::{
     ImportJob, ImportRequest, JobState, MAX_IMPORT_BATCH, Rating, parse_tag_list,
 };
@@ -247,19 +247,17 @@ async fn upload(file: FileData, tags: Vec<String>, rating: Rating) -> Status {
     let Some(client) = store::client() else {
         return Status::Failed(t!("activity-signed-out"));
     };
-    let bytes = match file.read_bytes().await {
-        Ok(bytes) => bytes,
-        Err(e) => return Status::Failed(t!("upload-unreadable", error = e.to_string())),
-    };
-    let request = UploadRequest {
+    let request = FileUpload {
         file_name: file.name(),
-        bytes: bytes.to_vec(),
+        size: file.size(),
         tags,
         rating,
         source: None,
     };
-    match client.upload(request).await {
+    let read = |offset, len| crate::util::read_range(&file, offset, len);
+    match client.upload_file(request, read).await {
         Ok(post) => Status::Done(post.id),
+        Err(ClientError::Read(e)) => Status::Failed(t!("upload-unreadable", error = e)),
         Err(e) => Status::Failed(e.to_string()),
     }
 }
