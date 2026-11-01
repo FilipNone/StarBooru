@@ -12,6 +12,7 @@ Third-party assets bundled with StarBooru.
 | `tools/brand/wordmark.json`, and the wordmark in `apps/app/src/brand_paths.rs` and `docs/brand/` (letter outlines only, no font file) | M PLUS Rounded 1c ExtraBold | The M+ Project, Coji Morishita | https://github.com/coz-m/MPLUS_FONTS | SIL OFL 1.1 |
 | `vendor/tao` (Rust source, patched) | tao 0.34.8 with tao#1218, and `_exit` on Android | Tauri Programme within The Commons Conservancy, the winit contributors | https://github.com/tauri-apps/tao | Apache-2.0 OR MIT |
 | `vendor/wry` (Rust source, patched) | wry 0.53.5, with custom protocol requests on Android that no longer wait under a lock or abort on a timeout, and a back key that asks the page | Tauri Programme within The Commons Conservancy | https://github.com/tauri-apps/wry | Apache-2.0 OR MIT |
+| `docs/showcase/` (the artworks in the screenshots) | Works by Hokusai, Hiroshige, Monet, Renoir, van Gogh and others | Cleveland Museum of Art, Open Access | https://www.clevelandart.org/open-access | CC0 |
 
 Not bundled: downloaded from Hugging Face by each server when its admin installs them, each pinned to a commit in `crates/core/src/ai_files.rs`.
 

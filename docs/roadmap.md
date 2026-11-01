@@ -1,6 +1,6 @@
 # Roadmap
 
-_Status as of 2026-10-31. Scope comes from `docs/checklist.md`._
+_Status as of 2026-11-01. Scope comes from `docs/checklist.md`._
 
 **Legend:**
 - ✅ done
@@ -98,7 +98,8 @@ The checklist's *better tagging system* request, built in five phases. Each phas
 
 | Item | Status |
 |---|---|
-| documentation up to date | ✅ `docs/` |
+| documentation up to date | ✅ `docs/`, and guides for users and admins in the [wiki](https://github.com/FilipNone/StarBooru/wiki). The README is in English, Italian, Chinese, Japanese and Russian. |
+| releases | ⬜ No release yet, and no pipeline to build one, so the README's download links lead to an empty page. Windows and macOS builds have never been run. Android release builds aren't signed yet (`[bundle.android]` isn't configured). |
 | cheat sheet | ✅ `/help`: every search term with examples that run the search, a box that explains a query as you type, and the viewer's keyboard shortcuts. Linked from Settings and from a failed or empty search. |
 | Privacy Policy, Terms of Service pages | ✅ `/privacy` and `/terms`, open without signing in and linked from the sign-in card and Settings. They describe what the software stores; the operator of each server is responsible for it. |
 

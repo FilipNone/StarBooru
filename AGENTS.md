@@ -21,6 +21,7 @@ Read this file first, then `docs/`.
 | `docs/roadmap.md` | What is done, partial or missing against `docs/checklist.md`, and known gaps |
 | `docs/checklist.md` | The owner's feature backlog (source of truth for scope; don't rewrite it) |
 | `log/devlog.md` | Local dev log (gitignored): what landed, what's still open |
+| [The wiki](https://github.com/FilipNone/StarBooru/wiki) | Guides for people using and running StarBooru. Its own Git repository: `StarBooru.wiki.git`. |
 
 ## 2. Workspace map
 
@@ -92,6 +93,8 @@ docker build -t starbooru:dev .      # if you touched the Dockerfile, migrations
 ```
 
 Then append a terse entry to `log/devlog.md`: what landed, what you verified, what's still open. Also update `docs/roadmap.md` when a checklist item changes state.
+
+When a change affects what people see or do, update the wiki too. The README exists in five languages (`README.md`, `README.it.md`, `README.zh-CN.md`, `README.ja.md`, `README.ru.md`), so a change to one goes into all of them. `docs/showcase/` holds its screenshots: replace them when the interface changes visibly, using generated or public-domain pictures and corners baked into the files, as GitHub strips CSS from READMEs.
 
 ## 5. Tooling notes
 
