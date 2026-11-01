@@ -18,7 +18,7 @@ use image::{
 };
 use sha2::{Digest, Sha256};
 use starbooru_core::color::Palette;
-use starbooru_core::{MediaKind, SAMPLE_SIZE};
+use starbooru_core::{FORMATS, MediaKind, SAMPLE_SIZE, detect_mime};
 
 use crate::error::{AppError, AppResult};
 use crate::probe::Tools;
@@ -106,22 +106,6 @@ pub struct Derived {
     pub print: Option<Fingerprint>,
     pub file_date: Option<DateTime<Utc>>,
 }
-
-/// Accepted formats: (mime, ext, kind, decodable by `image` for thumbnails).
-const FORMATS: &[(&str, &str, MediaKind, bool)] = &[
-    ("image/jpeg", "jpg", MediaKind::Image, true),
-    ("image/png", "png", MediaKind::Image, true),
-    ("image/webp", "webp", MediaKind::Image, true),
-    ("image/bmp", "bmp", MediaKind::Image, true),
-    ("image/tiff", "tiff", MediaKind::Image, true),
-    ("image/gif", "gif", MediaKind::Animation, true),
-    ("image/avif", "avif", MediaKind::Image, false),
-    ("image/jxl", "jxl", MediaKind::Image, false),
-    ("video/mp4", "mp4", MediaKind::Video, false),
-    ("video/webm", "webm", MediaKind::Video, false),
-    ("video/x-matroska", "mkv", MediaKind::Video, false),
-    ("video/quicktime", "mov", MediaKind::Video, false),
-];
 
 /// The date in a file's EXIF data: when it was taken or, failing that,
 /// digitised or last changed.
@@ -240,14 +224,12 @@ impl Storage {
     /// Hashes, sniffs, thumbnails and stores an upload. CPU-bound: call it
     /// from `spawn_blocking`.
     pub fn ingest(&self, bytes: &[u8]) -> AppResult<Ingested> {
-        let detected = infer::get(bytes)
+        let detected = detect_mime(bytes)
             .ok_or_else(|| AppError::Unsupported("unrecognised file type".into()))?;
         let &(mime, ext, kind, decodable) = FORMATS
             .iter()
-            .find(|(m, ..)| *m == detected.mime_type())
-            .ok_or_else(|| {
-                AppError::Unsupported(format!("{} files are not supported", detected.mime_type()))
-            })?;
+            .find(|(m, ..)| *m == detected)
+            .ok_or_else(|| AppError::Unsupported(format!("{detected} files are not supported")))?;
 
         let sha256: [u8; 32] = Sha256::digest(bytes).into();
         let sha_hex = hex::encode(sha256);

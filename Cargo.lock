@@ -6158,12 +6158,15 @@ dependencies = [
 name = "starbooru-app"
 version = "0.1.0"
 dependencies = [
+ "bytes",
  "chrono",
  "dioxus",
  "directories",
  "fluent-bundle",
  "fluent-syntax",
+ "futures-util",
  "jni 0.21.1",
+ "js-sys",
  "robius-android-env",
  "serde",
  "serde_json",
@@ -6172,6 +6175,7 @@ dependencies = [
  "sys-locale",
  "tokio",
  "unic-langid",
+ "wasm-bindgen-futures",
  "web-sys",
  "webbrowser",
 ]
@@ -6197,6 +6201,7 @@ name = "starbooru-core"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "infer",
  "serde",
  "serde_json",
  "thiserror 2.0.21",

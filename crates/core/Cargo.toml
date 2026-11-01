@@ -8,6 +8,7 @@ license.workspace = true
 
 [dependencies]
 chrono.workspace = true
+infer = { version = "0.19", default-features = false }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

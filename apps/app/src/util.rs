@@ -1,7 +1,8 @@
 use std::path::Path;
 
 use chrono::{DateTime, Utc};
-use starbooru_core::Rating;
+use dioxus::html::FileData;
+use starbooru_core::{Rating, is_media};
 
 /// `1536` → `1.5 KB`.
 pub fn human_size(bytes: i64) -> String {
@@ -42,7 +43,7 @@ pub fn escape_attr(text: &str) -> String {
         .replace('>', "&gt;")
 }
 
-/// File types the server accepts, to skip other files in an imported folder.
+/// Names the server's file types go by, which save reading the file.
 const MEDIA_EXTENSIONS: [&str; 16] = [
     "jpg", "jpeg", "jfif", "png", "gif", "webp", "bmp", "tif", "tiff", "avif", "jxl", "mp4", "m4v",
     "webm", "mkv", "mov",
@@ -54,6 +55,56 @@ pub fn is_media_name(name: &str) -> bool {
         && name
             .rsplit_once('.')
             .is_some_and(|(_, ext)| MEDIA_EXTENSIONS.iter().any(|m| m.eq_ignore_ascii_case(ext)))
+}
+
+/// The images and videos among `files`, and how many others were left out. A
+/// name can only say yes: a saved picture may be called just `anime`, so the
+/// rest count by what they hold. The server checks every file again.
+pub async fn media_files(files: Vec<FileData>) -> (Vec<FileData>, usize) {
+    let total = files.len();
+    let mut media = Vec::with_capacity(total);
+    for file in files {
+        let name = file.name();
+        if is_media_name(&name)
+            || (!name.starts_with('.') && file_head(&file).await.is_some_and(|h| is_media(&h)))
+        {
+            media.push(file);
+        }
+    }
+    let skipped = total.saturating_sub(media.len());
+    (media, skipped)
+}
+
+/// The start of a file, without reading the rest: `FileData`'s own stream reads
+/// it all. `None` when it can't be read, as with a folder that was dropped.
+#[cfg(target_arch = "wasm32")]
+async fn file_head(file: &FileData) -> Option<Vec<u8>> {
+    let head = file
+        .inner()
+        .downcast_ref::<web_sys::File>()?
+        .slice_with_i32_and_i32(0, i32::from(starbooru_core::SNIFF_BYTES))
+        .ok()?;
+    let buffer = wasm_bindgen_futures::JsFuture::from(head.array_buffer())
+        .await
+        .ok()?;
+    Some(js_sys::Uint8Array::new(&buffer).to_vec())
+}
+
+/// The start of a file, without reading the rest: `FileData`'s own stream reads
+/// it all. `None` when it can't be read, as with a folder that was dropped.
+#[cfg(not(target_arch = "wasm32"))]
+async fn file_head(file: &FileData) -> Option<Vec<u8>> {
+    use tokio::io::AsyncReadExt;
+
+    let mut head = Vec::new();
+    tokio::fs::File::open(file.path())
+        .await
+        .ok()?
+        .take(u64::from(starbooru_core::SNIFF_BYTES))
+        .read_to_end(&mut head)
+        .await
+        .ok()?;
+    Some(head)
 }
 
 /// The name of the folder holding `path`, as a tag (`Summer 2024/a.jpg` →
@@ -153,6 +204,13 @@ pub fn short_date(date: DateTime<Utc>) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::future::Future;
+    use std::path::PathBuf;
+    use std::pin::Pin;
+
+    use bytes::Bytes;
+    use dioxus::CapturedError;
+
     use super::*;
 
     #[test]
@@ -214,6 +272,84 @@ mod tests {
         assert!(!is_media_name("README"));
         assert!(!is_media_name("._a.jpg"));
         assert!(!is_media_name(".DS_Store"));
+    }
+
+    /// A file on disk, as the desktop app gets it.
+    struct DiskFile(PathBuf);
+
+    impl dioxus::html::NativeFileData for DiskFile {
+        fn name(&self) -> String {
+            self.0.file_name().unwrap().to_string_lossy().into_owned()
+        }
+        fn size(&self) -> u64 {
+            self.0.metadata().map_or(0, |m| m.len())
+        }
+        fn last_modified(&self) -> u64 {
+            0
+        }
+        fn path(&self) -> PathBuf {
+            self.0.clone()
+        }
+        fn content_type(&self) -> Option<String> {
+            None
+        }
+        fn read_bytes(&self) -> Pin<Box<dyn Future<Output = Result<Bytes, CapturedError>>>> {
+            panic!("the type of a file comes from its start alone")
+        }
+        fn byte_stream(
+            &self,
+        ) -> Pin<Box<dyn futures_util::Stream<Item = Result<Bytes, CapturedError>> + Send>>
+        {
+            panic!("the type of a file comes from its start alone")
+        }
+        fn read_string(&self) -> Pin<Box<dyn Future<Output = Result<String, CapturedError>>>> {
+            panic!("the type of a file comes from its start alone")
+        }
+        fn inner(&self) -> &dyn std::any::Any {
+            &self.0
+        }
+    }
+
+    #[tokio::test]
+    async fn media_files_look_inside_what_their_name_does_not_settle() {
+        let dir = std::env::temp_dir().join(format!("starbooru-media-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("album")).unwrap();
+        let webp = b"RIFF\x24\0\0\0WEBPVP8 ".as_slice();
+        for (name, bytes) in [
+            ("anime", webp),
+            ("1000", webp),
+            ("saved.jpg_large", webp),
+            ("named.jpg", b"not looked at".as_slice()),
+            ("README", b"# Read me\n".as_slice()),
+            ("notes.txt", b"nothing here".as_slice()),
+            ("empty", b"".as_slice()),
+            ("._hidden", webp),
+        ] {
+            std::fs::write(dir.join(name), bytes).unwrap();
+        }
+        let names = [
+            "anime",
+            "README",
+            "named.jpg",
+            "album",
+            "notes.txt",
+            "1000",
+            "empty",
+            "._hidden",
+            "gone",
+            "saved.jpg_large",
+        ];
+        let files = names
+            .iter()
+            .map(|n| FileData::new(DiskFile(dir.join(n))))
+            .collect();
+
+        let (media, skipped) = media_files(files).await;
+
+        let kept: Vec<String> = media.iter().map(FileData::name).collect();
+        assert_eq!(kept, ["anime", "named.jpg", "1000", "saved.jpg_large"]);
+        assert_eq!(skipped, 6);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

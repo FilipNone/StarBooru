@@ -13,7 +13,16 @@ use crate::activity::{self, Item, JOBS, QUEUE, Source, Status};
 use crate::icons::{Ico, Icon};
 use crate::motion;
 use crate::store;
-use crate::util::{folder_tag, human_size, is_media_name, parse_urls};
+use crate::util::{folder_tag, human_size, media_files, parse_urls};
+
+/// What the file picker lists. Android opens its gallery for this. Elsewhere it
+/// would hide pictures with no extension and, on the desktop, every type but a
+/// few, with no way to show them; `media_files` sorts out what gets chosen.
+const PICKER_ACCEPT: Option<&str> = if cfg!(target_os = "android") {
+    Some("image/*,video/*")
+} else {
+    None
+};
 
 /// Kept across pages, like the list they apply to.
 static SHARED_TAGS: GlobalSignal<String> = Signal::global(String::new);
@@ -35,27 +44,20 @@ pub fn Upload() -> Element {
     });
     use_hook(activity::refresh);
 
-    let add = move |files: Vec<FileData>| {
-        for file in files {
-            activity::add(Source::File(file), String::new());
-        }
-    };
-    // A folder: only images and videos, each tagged with its folder's name.
-    let mut add_folder = move |files: Vec<FileData>| {
-        let mut skipped = 0usize;
-        for file in files {
-            if !is_media_name(&file.name()) {
-                skipped += 1;
-                continue;
+    // Only images and videos. Those from a folder get its name as a tag.
+    let add = move |files: Vec<FileData>, from_folder: bool| {
+        spawn(async move {
+            let (media, skipped) = media_files(files).await;
+            for file in media {
+                let tags = if from_folder && folder_tags() {
+                    folder_tag(&file.path()).unwrap_or_default()
+                } else {
+                    String::new()
+                };
+                activity::add(Source::File(file), tags);
             }
-            let tags = if folder_tags() {
-                folder_tag(&file.path()).unwrap_or_default()
-            } else {
-                String::new()
-            };
-            activity::add(Source::File(file), tags);
-        }
-        notice.set((skipped > 0).then(|| t!("upload-skipped", count = skipped)));
+            notice.set((skipped > 0).then(|| t!("upload-skipped", count = skipped)));
+        });
     };
     let mut add_urls = move || {
         let found = parse_urls(&url_text());
@@ -94,7 +96,7 @@ pub fn Upload() -> Element {
                 ondrop: move |e| {
                     e.prevent_default();
                     dragging.set(false);
-                    add(e.files());
+                    add(e.files(), false);
                 },
                 Ico { icon: Icon::Upload, size: 40 }
                 strong { {t!("upload-drop")} }
@@ -102,9 +104,9 @@ pub fn Upload() -> Element {
                 input {
                     r#type: "file",
                     multiple: true,
-                    accept: "image/*,video/*",
+                    accept: PICKER_ACCEPT,
                     class: "visually-hidden",
-                    onchange: move |e| add(e.files()),
+                    onchange: move |e| add(e.files(), false),
                 }
             }
             div { class: "import-row",
@@ -116,7 +118,7 @@ pub fn Upload() -> Element {
                         directory: true,
                         multiple: true,
                         class: "visually-hidden",
-                        onchange: move |e| add_folder(e.files()),
+                        onchange: move |e| add(e.files(), true),
                     }
                 }
                 label { class: "check",
@@ -322,35 +324,30 @@ pub fn DropToUpload() -> Element {
         if *closing.peek() || !store::can_upload() {
             return;
         }
-        let total = files.len();
-        let media: Vec<FileData> = files
-            .into_iter()
-            .filter(|f| is_media_name(&f.name()))
-            .collect();
-        let skipped = total.saturating_sub(media.len());
-        if skipped > 0 {
-            notify(t!("upload-skipped", count = skipped));
-        }
-        if media.is_empty() {
-            return;
-        }
-        for file in media {
-            // The desktop keeps the last drag's paths, and hands them over again
-            // for text dropped inside the sheet.
-            let known = QUEUE.peek().iter().any(|i| {
-                keys.peek().contains(&i.key)
-                    && matches!(&i.source, Source::File(f) if f.path() == file.path() && f.size() == file.size())
-            });
-            if !known {
-                let key = activity::add(Source::File(file), String::new());
-                keys.write().push(key);
+        spawn(async move {
+            let (media, skipped) = media_files(files).await;
+            if skipped > 0 {
+                notify(t!("upload-skipped", count = skipped));
             }
-        }
-        if from.peek().is_none() {
-            spawn(async move {
+            if media.is_empty() || *closing.peek() {
+                return;
+            }
+            for file in media {
+                // The desktop keeps the last drag's paths, and hands them over again
+                // for text dropped inside the sheet.
+                let known = QUEUE.peek().iter().any(|i| {
+                    keys.peek().contains(&i.key)
+                        && matches!(&i.source, Source::File(f) if f.path() == file.path() && f.size() == file.size())
+                });
+                if !known {
+                    let key = activity::add(Source::File(file), String::new());
+                    keys.write().push(key);
+                }
+            }
+            if from.peek().is_none() {
                 from.set(Some(motion::upload_tab().await));
-            });
-        }
+            }
+        });
     };
 
     // Waits for the way back, in this scope so that nothing stops it halfway.
@@ -589,6 +586,14 @@ fn JobRow(job: ImportJob, onerror: EventHandler<String>) -> Element {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_picker_hides_no_files_except_for_androids_gallery() {
+        #[cfg(target_os = "android")]
+        assert_eq!(PICKER_ACCEPT, Some("image/*,video/*"));
+        #[cfg(not(target_os = "android"))]
+        assert_eq!(PICKER_ACCEPT, None);
+    }
 
     #[test]
     fn a_batch_needs_good_tags_on_every_file() {
