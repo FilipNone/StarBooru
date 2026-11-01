@@ -88,6 +88,10 @@ jobs:
           else
             tools/release/install-dx.sh ${{ matrix.dx }} ${{ matrix.dx_sha256 }}
           fi
+      # dx strips with rust-objcopy, and only tells it where LLVM is the Linux way.
+      - name: Point rust-objcopy at LLVM
+        if: runner.os == 'macOS'
+        run: echo "DYLD_FALLBACK_LIBRARY_PATH=$(rustc --print sysroot)/lib" >> "$GITHUB_ENV"
       - run: dx bundle --desktop --release -p starbooru-app ${{ matrix.types }}
       - name: Start the app
         run: tools/release/smoke-desktop.sh
