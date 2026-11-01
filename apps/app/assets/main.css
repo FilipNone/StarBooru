@@ -660,7 +660,7 @@ a.brand:hover .mark-star, a.search-home:hover .mark-star { transform: rotate(90d
     conic-gradient(#f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00);
 }
 /* the box on the wheel's centre line, with the colour and the button either side */
-.color-hex { grid-template-columns: 1fr 124px 1fr; align-items: center; gap: 2px; width: 222px; margin: 0; }
+.color-hex { grid-template-columns: 1fr 124px 1fr; align-items: center; gap: 8px; width: 222px; margin: 0; }
 .color-hex input { text-align: center; }
 /* the margin matches the empty space around the button's tick, so both sit as far from the box */
 .color-preview {
