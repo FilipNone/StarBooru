@@ -157,7 +157,7 @@ impl Icon {
                 "M10.5 2a8.5 8.5 0 0 1 8.5 8.5a8.46 8.46 0 0 1-1.826 5.26l3.654 3.654a1.001 1.001 0 0 1-1.414 1.415l-3.654-3.655A8.46 8.46 0 0 1 10.5 19a8.5 8.5 0 0 1 0-17m0 2a6.5 6.5 0 1 0 0 13a6.5 6.5 0 0 0 0-13zM5.75 10.5A4.75 4.75 0 0 1 10.5 5.75a.75.75 0 0 1 0 1.5A3.25 3.25 0 0 0 7.25 10.5a.75.75 0 0 1-1.5 0z",
             ),
             Icon::Share => Shape::Fill(
-                "M5.74 11.28L16.24 5.78L17.26 7.72L6.76 13.22zM6.82 11.31L18.82 18.56L17.68 20.44L5.68 13.19zM12 6.75a4.75 4.75 0 1 1 9.5 0a4.75 4.75 0 1 1 -9.5 0zM2.5 12.25a3.75 3.75 0 1 1 7.5 0a3.75 3.75 0 1 1 -7.5 0zM15.75 19.5a2.5 2.5 0 1 1 5 0a2.5 2.5 0 1 1 -5 0z",
+                "M5.74 11.28L16.24 5.78L17.26 7.72L6.76 13.22zM6.87 11.34L14.99 16.84L13.76 18.66L5.63 13.16zM12 6.75a4.75 4.75 0 1 1 9.5 0a4.75 4.75 0 1 1 -9.5 0zM2.5 12.25a3.75 3.75 0 1 1 7.5 0a3.75 3.75 0 1 1 -7.5 0zM11.125 17.75a3.25 3.25 0 1 1 6.5 0a3.25 3.25 0 1 1 -6.5 0z",
             ),
             Icon::Shield => Shape::Fill(
                 "M11.298 2.196a2 2 0 0 1 1.404 0l7 2.625A2 2 0 0 1 21 6.694v5.362a9 9 0 0 1-4.975 8.05l-3.354 1.677a1.5 1.5 0 0 1-1.342 0l-3.354-1.677A9 9 0 0 1 3 12.056V6.694A2 2 0 0 1 4.298 4.82zM12 8a1 1 0 0 0-1 1v2H9a1 1 0 0 0 0 2h2v2a1 1 0 1 0 2 0v-2h2a1 1 0 1 0 0-2h-2V9a1 1 0 0 0-1-1",
@@ -306,6 +306,27 @@ mod tests {
             .step_by(2)
             .filter_map(|arc| arc.split(' ').next()?.parse().ok())
             .collect();
-        assert_eq!(radii, [4.75, 3.75, 2.5], "top, middle, bottom");
+        assert_eq!(radii, [4.75, 3.75, 3.25], "top, middle, bottom");
+    }
+
+    #[test]
+    fn the_bottom_share_dot_sits_under_the_left_half_of_the_top_one() {
+        // Each dot starts at its left edge: `M<x> <y>a<radius> …`.
+        let centres: Vec<(f32, f32)> = path_data(Icon::Share)
+            .split('M')
+            .filter_map(|dot| {
+                let (start, arc) = dot.split_once('a')?;
+                let (x, y) = start.split_once(' ')?;
+                let radius: f32 = arc.split(' ').next()?.parse().ok()?;
+                Some((x.parse::<f32>().ok()? + radius, y.parse().ok()?))
+            })
+            .collect();
+        let [top, middle, bottom] = centres[..] else {
+            panic!("three dots, not {centres:?}");
+        };
+        // Halfway from the top dot's centre to its left edge, and as far below
+        // the middle dot as the top one is above it.
+        assert_eq!(bottom.0, top.0 - 4.75 / 2.0);
+        assert_eq!(bottom.1 - middle.1, middle.1 - top.1);
     }
 }
