@@ -67,6 +67,7 @@ People trust StarBooru with their collection. A malformed upload, a bad query, a
    1. Build the web bundle and serve it from a local server (`docs/development.md` › Visual checks).
    2. Screenshot light and dark themes at desktop and phone (390px) width.
    3. Look at the PNGs.
+   4. **Before committing, show the owner a visual preview and ask them to confirm or request changes.** Commit only once they confirm. This applies to every commit that changes how something looks.
 
    Test images must be generated or public domain, never personal photos.
 7. **Tests are the gate.** Every change comes with tests. Parsers and validators (`core`) get unit tests. Server behaviour gets tests or a documented manual check in the dev log.
