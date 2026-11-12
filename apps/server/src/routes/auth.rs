@@ -88,6 +88,9 @@ pub async fn register(
             return Err(AppError::Forbidden);
         }
     }
+    if starbooru_core::password_is_weak(&creds.password, &username) {
+        return Err(AppError::WeakPassword);
+    }
     let password_hash = hash_password(creds.password).await?;
 
     let mut tx = state.db.begin().await?;
@@ -327,6 +330,31 @@ mod tests {
         let r = app.send(req).await;
         let token = r.json()["token"].as_str().unwrap_or_default().to_owned();
         (r.status.as_u16(), token)
+    }
+
+    #[tokio::test]
+    async fn refuses_weak_passwords_for_new_accounts() {
+        let Some(app) = testing::app().await else {
+            return;
+        };
+        let register = |username: &str, password: &str| {
+            let body = json!({ "username": username, "password": password });
+            app.call(Method::POST, "/api/v1/auth/register", None, Some(body))
+        };
+        for weak in ["password123", "qwertyuiop", "P@ssw0rd!", "alice2024"] {
+            let r = register("alice", weak).await;
+            assert_eq!(r.status, StatusCode::BAD_REQUEST, "{weak}");
+            assert_eq!(r.json()["code"], "weak_password", "{weak}");
+        }
+        // Nothing was created, so the next account is still the first.
+        let info = app
+            .call(Method::GET, "/api/v1/info", None, None)
+            .await
+            .json();
+        assert_eq!(info["has_users"], false);
+        let r = register("alice", testing::PASSWORD).await;
+        assert_eq!(r.status, StatusCode::OK);
+        assert_eq!(r.json()["user"]["role"], "admin");
     }
 
     #[tokio::test]

@@ -10,7 +10,7 @@ All endpoints are under `/api/v1`. Bodies are JSON unless noted. The Rust types 
 
 | Status | Meaning |
 |---|---|
-| 400 | bad input |
+| 400 | bad input (`bad_request`, or `weak_password` for a new account whose password is too easy to guess) |
 | 401 | missing or expired token |
 | 403 | not allowed (`forbidden`, or `quota_exceeded` for an upload past the account's storage limit) |
 | 404 | not found |
@@ -35,7 +35,7 @@ All endpoints are under `/api/v1`. Bodies are JSON unless noted. The Rust types 
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
-| POST | `/auth/register` | `{username, password}` | `AuthResponse {token, user}`. The first account becomes admin. Later accounts need `STARBOORU_ALLOW_REGISTRATION`. 429 after 10 attempts from one address in an hour. |
+| POST | `/auth/register` | `{username, password}` | `AuthResponse {token, user}`. The first account becomes admin. Later accounts need `STARBOORU_ALLOW_REGISTRATION`. 400 `weak_password` if the password is too easy to guess. 429 after 10 attempts from one address in an hour. |
 | POST | `/auth/login` | `{username, password}` | `AuthResponse`. 401 for a wrong username or password. 429 `rate_limited` with `Retry-After` once an account has 10 failures in 15 minutes (the right password waits too) or an address has 50. A successful sign-in resets the account's count. |
 | POST | `/auth/logout` | | 204; revokes this token |
 | GET | `/auth/me` | | `User` |
@@ -48,6 +48,7 @@ All endpoints are under `/api/v1`. Bodies are JSON unless noted. The Rust types 
 Account rules:
 - Usernames are 2 to 32 characters of `A–Z a–z 0–9 _ . -` and are unique regardless of case.
 - Passwords are 8 characters or more.
+- A new account's password must also not be too easy to guess. `starbooru_core::password_is_weak` decides, and the app uses the same function, so the two always agree. It looks for common passwords and words (letter swaps like `P@ssw0rd` included), keyboard runs, sequences, repeats, years and the username. Changing a password or an administrator's reset only checks the length.
 - Tokens last 90 days.
 - With an API key, the `/auth/logout`, `/auth/password` and `/auth/sessions` endpoints return 403 `forbidden`.
 - A disabled account gets 403 `forbidden` at sign-in (after the right password), and its sessions and keys answer 401.

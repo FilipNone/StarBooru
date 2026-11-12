@@ -19,7 +19,7 @@ use crate::state::AppState;
 use crate::storage::Storage;
 
 /// The password `register` gives every account.
-pub const PASSWORD: &str = "password123";
+pub const PASSWORD: &str = "lantern-otter-41";
 
 pub struct TestApp {
     pub state: AppState,

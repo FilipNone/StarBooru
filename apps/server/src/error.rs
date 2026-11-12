@@ -10,6 +10,9 @@ use tracing::error;
 pub enum AppError {
     #[error("{0}")]
     BadRequest(String),
+    /// A new account's password is too easy to guess.
+    #[error("this password is too easy to guess")]
+    WeakPassword,
     #[error("authentication required")]
     Unauthorized,
     #[error("you are not allowed to do that")]
@@ -49,6 +52,7 @@ impl AppError {
     fn status_and_code(&self) -> (StatusCode, &'static str) {
         match self {
             AppError::BadRequest(_) => (StatusCode::BAD_REQUEST, "bad_request"),
+            AppError::WeakPassword => (StatusCode::BAD_REQUEST, "weak_password"),
             AppError::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized"),
             AppError::Forbidden | AppError::Denied(_) => (StatusCode::FORBIDDEN, "forbidden"),
             AppError::QuotaExceeded => (StatusCode::FORBIDDEN, "quota_exceeded"),

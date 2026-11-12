@@ -21,6 +21,7 @@ pub mod media;
 pub mod model;
 pub mod oidc;
 pub mod panels;
+pub mod password;
 pub mod query;
 pub mod remote;
 pub mod saved;
@@ -58,6 +59,7 @@ pub use media::{FORMATS, SNIFF_BYTES, detect_mime, is_media};
 pub use model::*;
 pub use oidc::{Identity, OidcBegin, OidcError, OidcFinish, OidcStart, SignInMethods};
 pub use panels::{PanelTranslation, TextBlock, panel_prompt, parse_panel_blocks};
+pub use password::{password_is_weak, password_strength, strength_hue};
 pub use query::{
     FigureTerm, Order, SearchQuery, SortKey, parse_query, with_color, with_exact, with_order,
 };
