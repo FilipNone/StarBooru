@@ -224,7 +224,8 @@ h1, h2 { line-height: 1.2; margin: 0; }
 input[type="range"] { width: 100%; accent-color: var(--primary); margin-top: 12px; }
 
 /* Password strength: the box takes a colour from red through orange to green.
-   The two numbers are registered so a change glides instead of jumping. */
+   Registering the two numbers with @property lets the browser animate them,
+   so the colour and the line follow the typing smoothly. */
 @property --pw-hue { syntax: "<number>"; inherits: true; initial-value: 25; }
 @property --pw-fill { syntax: "<number>"; inherits: true; initial-value: 0; }
 .pw-field {
@@ -237,8 +238,8 @@ input[type="range"] { width: 100%; accent-color: var(--primary); margin-top: 12p
   background: color-mix(in oklch, var(--surface), var(--pw) 9%);
 }
 .field .pw-field.rated input:focus { box-shadow: 0 0 0 3px oklch(from var(--pw) l c h / 0.28); }
-/* A thin line along the inside of the box, as long as the password is strong,
-   so the colour is never the only sign. */
+/* A thin line inside the bottom of the box grows with the score. It shows the
+   strength to people who can't tell the colours apart. */
 .pw-fill {
   position: absolute; inset-inline: 10px; bottom: 5px; height: 3px; border-radius: 3px;
   background: linear-gradient(90deg, oklch(from var(--pw) l c h / 0.35), var(--pw));

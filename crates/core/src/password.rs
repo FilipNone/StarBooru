@@ -199,7 +199,8 @@ const ROWS: &[&str] = &[
 
 /// How hard `password` is to guess, from 0 (very weak) to 1 (strong).
 ///
-/// It is the estimated guessing work in bits, scaled between two limits.
+/// It is the estimated guessing work in bits, scaled so that `FLOOR_BITS`
+/// gives 0 and `STRONG_BITS` gives 1.
 /// `username` counts as known to an attacker; pass `""` when there is none.
 pub fn password_strength(password: &str, username: &str) -> f32 {
     let bits = guess_bits(password, username);
@@ -217,8 +218,8 @@ pub fn password_is_weak(password: &str, username: &str) -> bool {
 /// around 0.5, green at 1, with every value in between.
 pub fn strength_hue(score: f32) -> f32 {
     let s = score.clamp(0.0, 1.0);
-    // A curve rather than a straight line, so the middle reads orange
-    // instead of yellow.
+    // The power keeps the hue in the reds and oranges for longer, so a
+    // middling score looks orange and only a strong one turns green.
     25.0 + 120.0 * s.powf(2.2)
 }
 
@@ -231,8 +232,8 @@ fn guess_bits(password: &str, username: &str) -> f64 {
         return 0.0;
     }
     let lower: Vec<char> = chars.iter().flat_map(|c| c.to_lowercase()).collect();
-    // Lowercasing can change the length (rare non-ASCII letters); fall back to
-    // the original characters then, so positions keep lining up.
+    // A few non-ASCII letters lowercase to more than one character. Then the
+    // original characters are used, so positions still line up.
     let lower = if lower.len() == chars.len() {
         lower
     } else {
@@ -299,7 +300,7 @@ fn patterns_at(
         found.push((len, base + case_bits(caps) + swaps.min(4) as f64));
     }
 
-    // The username, or a good part of it.
+    // The whole username, in any case.
     if name.len() >= 3 && rest.starts_with(name) {
         let caps = rest_chars.get(..name.len()).unwrap_or_default();
         found.push((name.len(), 2.0 + case_bits(caps)));
