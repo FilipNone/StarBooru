@@ -6,6 +6,7 @@
 
 const vscode = require('vscode');
 const http = require('http');
+const net = require('net');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -38,6 +39,29 @@ const TARGETS = [
 ];
 
 const byId = (/** @type {string} */ id) => TARGETS.find((t) => t.id === id);
+
+/**
+ * The setting that holds each target's host port. The desktop and Android apps have none.
+ * @type {Record<string, 'webPort' | 'serverPort' | 'databasePort' | 'dockerPort'>}
+ */
+const PORT_KEYS = { web: 'webPort', server: 'serverPort', database: 'databasePort', docker: 'dockerPort' };
+const MIN_PORT = 1024;
+const MAX_PORT = 65535;
+
+/** True if `id` is `ancestor` or needs it, directly or through another target. */
+function dependsOn(/** @type {string} */ id, /** @type {string} */ ancestor) {
+  for (let t = byId(id); t; t = t.needs ? byId(t.needs) : undefined) {
+    if (t.id === ancestor) return true;
+  }
+  return false;
+}
+
+/** How many targets `id` needs before it can start (database 0, server 1, web 2). */
+function depth(/** @type {string} */ id) {
+  let n = 0;
+  for (let t = byId(id); t?.needs; t = byId(t.needs)) n++;
+  return n;
+}
 
 function settings() {
   const c = vscode.workspace.getConfiguration('starbooru');
@@ -90,6 +114,15 @@ function probe(/** @type {string} */ url) {
     });
     req.on('timeout', () => req.destroy());
     req.on('error', () => resolve(false));
+  });
+}
+
+/** True if nothing listens on 127.0.0.1:`port`, which is where every target binds. */
+function portFree(/** @type {number} */ port) {
+  return new Promise((resolve) => {
+    const server = net.createServer();
+    server.once('error', () => resolve(false));
+    server.listen({ port, host: '127.0.0.1', exclusive: true }, () => server.close(() => resolve(true)));
   });
 }
 
@@ -221,6 +254,94 @@ class Runner {
     return job;
   }
 
+  /**
+   * Starts a target after checking that the ports it and its needs bind are free.
+   * A taken port offers Change Port…; the start goes on with the new one.
+   * @param {string} id
+   */
+  async startChecked(id) {
+    return (await this.ensurePortsFree(id)) && this.start(id);
+  }
+
+  /** @param {string} id */
+  async ensurePortsFree(id) {
+    for (let t = byId(id); t; t = t.needs ? byId(t.needs) : undefined) {
+      const key = PORT_KEYS[t.id];
+      // Compose reports its own port clash in the terminal; a stack from an earlier session would look like one here.
+      if (!key || t.id === 'docker') continue;
+      const running = t.id === 'database' ? await this.databaseRunning() : this.state(t.id) !== 'stopped';
+      if (running) continue;
+      while (!(await portFree(settings()[key]))) {
+        const pick = await vscode.window.showErrorMessage(
+          `StarBooru: port ${settings()[key]} for the ${t.label.toLowerCase()} is taken by another program.`,
+          'Change Port…',
+        );
+        if (pick !== 'Change Port…' || (await this.changePort(t.id)) === undefined) return false;
+      }
+    }
+    return true;
+  }
+
+  /**
+   * Asks for a new port, saves it, and offers to restart what still uses the old one.
+   * @param {string} id @returns {Promise<number | undefined>} the new port, or undefined if cancelled
+   */
+  async changePort(id) {
+    const target = byId(id);
+    const key = PORT_KEYS[id];
+    if (!target || !key) return undefined;
+    const s = settings();
+    const current = s[key];
+    const taken = Object.entries(PORT_KEYS).filter(([other]) => other !== id).map(([other, k]) => ({ label: byId(other)?.label, port: s[k] }));
+    const text = await vscode.window.showInputBox({
+      title: `StarBooru: port for the ${target.label.toLowerCase()}`,
+      prompt: id === 'database'
+        ? 'Host port of the dev PostgreSQL container. Its data stays in its volume when the port changes.'
+        : `Host port the ${target.label.toLowerCase()} listens on (127.0.0.1).`,
+      value: String(current),
+      validateInput: async (input) => {
+        const port = Number(input.trim());
+        if (!/^\d+$/.test(input.trim()) || port < MIN_PORT || port > MAX_PORT) {
+          return `Enter a whole number from ${MIN_PORT} to ${MAX_PORT}.`;
+        }
+        const clash = taken.find((t) => t.port === port);
+        if (clash) return `The ${clash.label?.toLowerCase()} already uses port ${port}.`;
+        if (port !== current && !(await portFree(port))) {
+          return { message: `Port ${port} is in use right now.`, severity: vscode.InputBoxValidationSeverity.Warning };
+        }
+        return undefined;
+      },
+    });
+    if (text === undefined) return undefined;
+    const port = Number(text.trim());
+    if (port === current) return port;
+
+    // Write where the value comes from now, so a workspace value doesn't hide a user one.
+    const config = vscode.workspace.getConfiguration('starbooru');
+    const where = config.inspect(key);
+    const scope = where?.workspaceFolderValue !== undefined
+      ? vscode.ConfigurationTarget.WorkspaceFolder
+      : where?.workspaceValue !== undefined
+        ? vscode.ConfigurationTarget.Workspace
+        : vscode.ConfigurationTarget.Global;
+    await config.update(key, port, scope);
+
+    // The target itself and anything running on top of it (the server's DATABASE_URL, the apps' server address).
+    const affected = TARGETS.filter((t) => this.state(t.id) !== 'stopped' && dependsOn(t.id, id));
+    if (affected.length > 0) {
+      const names = affected.map((t) => t.label).join(', ');
+      const pick = await vscode.window.showInformationMessage(
+        `StarBooru: ${target.label} now uses port ${port}. Restart ${names} to switch?`,
+        'Restart',
+      );
+      if (pick === 'Restart') {
+        for (const t of [...affected].sort((a, b) => depth(b.id) - depth(a.id))) await this.stop(t.id);
+        for (const t of [...affected].sort((a, b) => depth(a.id) - depth(b.id))) await this.start(t.id, { open: t.id === id });
+      }
+    }
+    return port;
+  }
+
   /** @param {Target} target @param {boolean} open */
   async startFresh(target, open) {
     const id = target.id;
@@ -301,7 +422,21 @@ class Runner {
       { location: vscode.ProgressLocation.Notification, title: 'Starting the database' },
       async (progress) => {
         const port = settings().databasePort;
-        const exists = (await run('docker', ['container', 'inspect', DB_CONTAINER])).ok;
+        let exists = (await run('docker', ['container', 'inspect', DB_CONTAINER])).ok;
+        if (exists) {
+          // A container's port is fixed when it is made; after a port change, make it again on the same volume.
+          const bound = await run('docker', ['inspect', '-f', '{{range $p, $b := .HostConfig.PortBindings}}{{range $b}}{{.HostPort}}{{end}}{{end}}', DB_CONTAINER]);
+          if (bound.ok && bound.out !== String(port)) {
+            progress.report({ message: `moving to port ${port} (data stays in ${DB_VOLUME})…` });
+            const removed = await run('docker', ['rm', DB_CONTAINER]);
+            if (!removed.ok) {
+              this.setState(id, 'stopped');
+              vscode.window.showErrorMessage(`StarBooru: could not move the database to port ${port}.\n${removed.out}`);
+              return false;
+            }
+            exists = false;
+          }
+        }
         progress.report({ message: exists ? 'starting container…' : `creating container (first time pulls ${DB_IMAGE})…` });
         const started = exists
           ? await run('docker', ['start', DB_CONTAINER])
@@ -386,7 +521,7 @@ class Runner {
   /** @param {string} id */
   async restart(id) {
     await this.stop(id);
-    await this.start(id);
+    await this.startChecked(id);
   }
 
   /** @param {string} id */
@@ -433,7 +568,9 @@ class TargetTree {
     const item = new vscode.TreeItem(t.label, vscode.TreeItemCollapsibleState.None);
     item.id = t.id;
     const url = this.runner.url(t.id);
-    item.description = state === 'starting' ? 'starting…' : state === 'running' ? (url || 'running') : '';
+    const key = PORT_KEYS[t.id];
+    item.description =
+      state === 'starting' ? 'starting…' : state === 'running' ? (url || 'running') : key ? `port ${settings()[key]}` : '';
     item.tooltip = new vscode.MarkdownString(
       `**${t.label}** (${state})\n\n${t.summary}${t.needs ? `\n\nStarts ${byId(t.needs)?.label.toLowerCase()} first.` : ''}`,
     );
@@ -441,7 +578,7 @@ class TargetTree {
       state === 'starting'
         ? new vscode.ThemeIcon('loading~spin')
         : new vscode.ThemeIcon(t.icon, state === 'running' ? new vscode.ThemeColor('testing.iconPassed') : undefined);
-    item.contextValue = [state, t.openable && 'openable', t.id !== 'database' && 'terminal'].filter(Boolean).join(' ');
+    item.contextValue = [state, t.openable && 'openable', t.id !== 'database' && 'terminal', key && 'port'].filter(Boolean).join(' ');
     if (state !== 'stopped' && t.id !== 'database') {
       item.command = { command: 'starbooru.showTerminal', title: 'Show Output', arguments: [t] };
     }
@@ -450,11 +587,16 @@ class TargetTree {
 }
 
 /** Commands get a tree element, an id, or nothing (palette: ask). */
-async function pickTarget(/** @type {unknown} */ arg, /** @type {string} */ verb) {
+async function pickTarget(/** @type {unknown} */ arg, /** @type {string} */ verb, onlyWithPort = false) {
   if (typeof arg === 'string') return byId(arg)?.id;
   if (arg && typeof arg === 'object' && 'id' in arg) return byId(String(arg.id))?.id;
+  const s = settings();
   const choice = await vscode.window.showQuickPick(
-    TARGETS.map((t) => ({ label: t.label, description: t.summary, id: t.id })),
+    TARGETS.filter((t) => !onlyWithPort || PORT_KEYS[t.id]).map((t) => ({
+      label: t.label,
+      description: onlyWithPort ? `port ${s[PORT_KEYS[t.id]]}` : t.summary,
+      id: t.id,
+    })),
     { placeHolder: `${verb} which part of StarBooru?` },
   );
   return choice?.id;
@@ -469,10 +611,10 @@ function activate(context) {
 
   const runner = new Runner(folder.uri.fsPath);
   const tree = new TargetTree(runner);
-  /** @param {string} name @param {(id: string) => unknown} fn @param {string} verb */
-  const targetCommand = (name, fn, verb) =>
+  /** @param {string} name @param {(id: string) => unknown} fn @param {string} verb @param {boolean} [onlyWithPort] */
+  const targetCommand = (name, fn, verb, onlyWithPort = false) =>
     vscode.commands.registerCommand(name, async (arg) => {
-      const id = await pickTarget(arg, verb);
+      const id = await pickTarget(arg, verb, onlyWithPort);
       if (id) await fn(id);
     });
 
@@ -480,11 +622,15 @@ function activate(context) {
     runner.changed,
     vscode.window.registerTreeDataProvider('starbooru.targets', tree),
     vscode.window.onDidCloseTerminal((t) => runner.onTerminalClosed(t)),
-    targetCommand('starbooru.start', (id) => runner.start(id), 'Start'),
+    targetCommand('starbooru.start', (id) => runner.startChecked(id), 'Start'),
     targetCommand('starbooru.stop', (id) => runner.stop(id), 'Stop'),
     targetCommand('starbooru.restart', (id) => runner.restart(id), 'Restart'),
     targetCommand('starbooru.open', (id) => runner.open(id), 'Open'),
     targetCommand('starbooru.showTerminal', (id) => runner.showTerminal(id), 'Show'),
+    targetCommand('starbooru.changePort', (id) => runner.changePort(id), 'Change the port of', true),
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration('starbooru')) runner.changed.fire();
+    }),
     vscode.commands.registerCommand('starbooru.stopAll', () => runner.stopAll()),
     vscode.commands.registerCommand('starbooru.refresh', () => runner.refresh()),
   );

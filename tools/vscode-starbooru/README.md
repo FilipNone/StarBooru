@@ -16,11 +16,22 @@ Each target runs in its own terminal, named `StarBooru: <target>`. Click a runni
 - **■** stops the target; closing its terminal does the same.
 - **⟳** restarts it.
 - **⧉** opens it again.
+- **⚙** (on a stopped target, or right-click any of them) changes its port.
 - **Stop Everything** in the view title stops everything.
 
 Stopping the Docker stack runs `docker compose stop`, so its volumes are kept.
 
-Every action is also in the Command Palette under **StarBooru:** (Start, Stop, Restart, Open, Stop Everything).
+Every action is also in the Command Palette under **StarBooru:** (Start, Stop, Restart, Open, Change Port…, Stop Everything).
+
+## Ports
+
+A stopped target shows its port next to its name. If another program already holds that port, ▶ says so before
+anything starts and offers **Change Port…**; the start goes on with the new port. The new port is saved in your user
+settings (or in the workspace, if the port is set there). If the target is running, the runner offers to restart it
+and whatever runs on top of it: the server for a database port, the apps for a server port.
+
+The database container's port is fixed when the container is made. After a change, the next start removes
+`starbooru-dev-pg` and makes it again on the new port. The data is in the `starbooru-dev-pgdata` volume, so it stays.
 
 The first start compiles everything and can take several minutes; the progress notification
 shows while it builds. On the web, the app's sign-in page is prefilled with the dev server. The
@@ -38,7 +49,7 @@ Reload the window after a change to `extension.js`.
 ## Settings
 
 - `starbooru.dxPath`: path to `dx`. Empty means PATH, then `~/.cargo/bin/dx`.
-- `starbooru.serverPort`, `starbooru.webPort`, `starbooru.dockerPort`, `starbooru.databasePort`.
+- `starbooru.serverPort`, `starbooru.webPort`, `starbooru.dockerPort`, `starbooru.databasePort` (1024–65535; ⚙ sets them for you).
 
 The extension is plain JavaScript because VS Code extensions run on Node. It uses Node built-ins
 only: no `node_modules` and no build step.
