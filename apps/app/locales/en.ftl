@@ -90,6 +90,7 @@ login-create = Create account
 login-sign-in = Sign in
 login-have-account = I already have an account
 login-want-account = Create an account
+login-weak-password = This password is easy to guess. Try a longer one, or a few words that don't go together.
 
 ## Shared
 
@@ -198,6 +199,9 @@ password-mismatch = The passwords don't match.
 password-changed = Password changed. Your other devices were signed out.
 password-changing = Changing…
 password-change = Change password
+password-strength-weak = Easy to guess
+password-strength-fair = Could be stronger
+password-strength-strong = Strong password
 sessions-title = Signed-in devices
 sessions-unknown = Unknown client
 sessions-this-device = This device

@@ -37,6 +37,9 @@ body { background: #111; }
   --warn-container: oklch(0.93 0.07 85);
   --on-warn-container: oklch(0.36 0.08 70);
   --ok: oklch(0.5 0.13 150);
+  /* password strength: lightness and chroma; the hue comes from the score */
+  --meter-l: 0.6;
+  --meter-c: 0.17;
   --glass: oklch(0.975 0.012 var(--h) / 0.78);
   /* a floating capsule's lit top edge, and the hairline around it */
   --glass-edge: oklch(1 0 0 / 0.6);
@@ -97,6 +100,8 @@ body { background: #111; }
   --warn-container: oklch(0.37 0.07 80);
   --on-warn-container: oklch(0.93 0.05 85);
   --ok: oklch(0.78 0.13 150);
+  --meter-l: 0.74;
+  --meter-c: 0.15;
   --glass: oklch(0.205 0.016 var(--h) / 0.82);
   --glass-edge: oklch(1 0 0 / 0.14);
   --glass-line: oklch(1 0 0 / 0.08);
@@ -131,6 +136,8 @@ body { background: #111; }
     --warn-container: oklch(0.37 0.07 80);
     --on-warn-container: oklch(0.93 0.05 85);
     --ok: oklch(0.78 0.13 150);
+    --meter-l: 0.74;
+    --meter-c: 0.15;
     --glass: oklch(0.205 0.016 var(--h) / 0.82);
   --glass-edge: oklch(1 0 0 / 0.14);
   --glass-line: oklch(1 0 0 / 0.08);
@@ -215,6 +222,32 @@ h1, h2 { line-height: 1.2; margin: 0; }
   outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px oklch(from var(--primary) l c h / 0.25);
 }
 input[type="range"] { width: 100%; accent-color: var(--primary); margin-top: 12px; }
+
+/* Password strength: the box takes a colour from red through orange to green.
+   The two numbers are registered so a change glides instead of jumping. */
+@property --pw-hue { syntax: "<number>"; inherits: true; initial-value: 25; }
+@property --pw-fill { syntax: "<number>"; inherits: true; initial-value: 0; }
+.pw-field {
+  --pw: oklch(var(--meter-l) var(--meter-c) var(--pw-hue));
+  position: relative; display: grid;
+  transition: --pw-hue var(--slow) var(--ease), --pw-fill var(--slow) var(--ease);
+}
+.field .pw-field.rated input {
+  border-color: var(--pw);
+  background: color-mix(in oklch, var(--surface), var(--pw) 9%);
+}
+.field .pw-field.rated input:focus { box-shadow: 0 0 0 3px oklch(from var(--pw) l c h / 0.28); }
+/* A thin line along the inside of the box, as long as the password is strong,
+   so the colour is never the only sign. */
+.pw-fill {
+  position: absolute; inset-inline: 10px; bottom: 5px; height: 3px; border-radius: 3px;
+  background: linear-gradient(90deg, oklch(from var(--pw) l c h / 0.35), var(--pw));
+  box-shadow: 0 0 8px oklch(from var(--pw) l c h / 0.55);
+  transform: scaleX(max(0.05, var(--pw-fill))); transform-origin: left;
+  opacity: 0; pointer-events: none;
+  transition: opacity var(--med) var(--ease);
+}
+.pw-field.rated .pw-fill { opacity: 1; }
 
 .segmented { display: inline-flex; align-self: flex-start; max-width: 100%; border: 1px solid var(--outline); border-radius: 999px; overflow: hidden; }
 .seg {

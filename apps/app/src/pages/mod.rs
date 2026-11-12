@@ -19,6 +19,7 @@ mod select;
 mod settings;
 mod share;
 mod shell;
+mod strength;
 mod tags;
 mod trash;
 mod upload;

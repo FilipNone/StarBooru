@@ -1,8 +1,9 @@
 use dioxus::prelude::*;
 use starbooru_client::Client;
-use starbooru_core::{Credentials, ServerInfo};
+use starbooru_core::{Credentials, ServerInfo, password_is_weak};
 
 use super::LegalLinks;
+use super::strength::StrengthField;
 use crate::brand::{Mark, Wordmark};
 use crate::icons::{Ico, Icon};
 use crate::oidc::{self, Done};
@@ -63,6 +64,10 @@ pub fn Login() -> Element {
             password: password(),
         };
         let register = creating();
+        if register && password_is_weak(&creds.password, &creds.username) {
+            error.set(Some(t!("login-weak-password")));
+            return;
+        }
         busy.set(true);
         error.set(None);
         spawn(async move {
@@ -76,6 +81,9 @@ pub fn Login() -> Element {
                 Ok(auth) => store::sign_in(url, auth),
                 Err(e) if e.is_unauthorized() => {
                     error.set(Some(t!("login-wrong")));
+                }
+                Err(e) if e.code() == Some("weak_password") => {
+                    error.set(Some(t!("login-weak-password")));
                 }
                 Err(e) => error.set(Some(e.to_string())),
             }
@@ -157,13 +165,25 @@ pub fn Login() -> Element {
                 }
                 label { class: "field",
                     span { {t!("login-password")} }
-                    input {
-                        r#type: "password",
-                        autocomplete: if creating() { "new-password" } else { "current-password" },
-                        required: true,
-                        minlength: if creating() { "8" } else { "1" },
-                        value: "{password}",
-                        oninput: move |e| password.set(e.value()),
+                    if creating() {
+                        StrengthField { value: password(), username: username(),
+                            input {
+                                r#type: "password",
+                                autocomplete: "new-password",
+                                required: true,
+                                minlength: "8",
+                                value: "{password}",
+                                oninput: move |e| password.set(e.value()),
+                            }
+                        }
+                    } else {
+                        input {
+                            r#type: "password",
+                            autocomplete: "current-password",
+                            required: true,
+                            value: "{password}",
+                            oninput: move |e| password.set(e.value()),
+                        }
                     }
                 }
                 if let Some(e) = error() {

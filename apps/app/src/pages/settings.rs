@@ -6,6 +6,7 @@ use starbooru_core::{Identity, Role, SessionInfo, SignInMethods, Usage};
 use super::api_keys::ApiKeysCard;
 use super::library_import::LibraryImportCard;
 use super::share::SharesCard;
+use super::strength::StrengthField;
 use super::{Choice, ColorPicker, ErrorBanner, Select, Spinner};
 use crate::Route;
 use crate::cache;
@@ -614,6 +615,11 @@ fn PasswordCard(has_password: bool, onchanged: EventHandler<()>) -> Element {
     let mut error = use_signal(|| None::<String>);
     let mut done = use_signal(|| false);
 
+    let username = SESSION
+        .read()
+        .as_ref()
+        .map(|s| s.user.username.clone())
+        .unwrap_or_default();
     let too_short = !new().is_empty() && new().chars().count() < MIN_PASSWORD_CHARS;
     let mismatch = !confirm().is_empty() && confirm() != new();
     let ready = (!has_password || !current().is_empty())
@@ -666,12 +672,14 @@ fn PasswordCard(has_password: bool, onchanged: EventHandler<()>) -> Element {
                 }
                 label { class: "field",
                     span { {t!("password-new")} }
-                    input {
-                        r#type: "password",
-                        autocomplete: "new-password",
-                        aria_invalid: too_short,
-                        value: "{new}",
-                        oninput: move |e| new.set(e.value()),
+                    StrengthField { value: new(), username,
+                        input {
+                            r#type: "password",
+                            autocomplete: "new-password",
+                            aria_invalid: too_short,
+                            value: "{new}",
+                            oninput: move |e| new.set(e.value()),
+                        }
                     }
                     if too_short {
                         small { class: "field-error", {t!("password-too-short", count = MIN_PASSWORD_CHARS)} }

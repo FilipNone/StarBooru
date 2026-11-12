@@ -219,7 +219,7 @@ pub fn strength_hue(score: f32) -> f32 {
     let s = score.clamp(0.0, 1.0);
     // A curve rather than a straight line, so the middle reads orange
     // instead of yellow.
-    25.0 + 120.0 * s.powf(1.6)
+    25.0 + 120.0 * s.powf(2.2)
 }
 
 /// The estimated number of guesses, in bits, that `password` takes: the
@@ -530,7 +530,7 @@ mod tests {
         assert_eq!(strength_hue(7.0), 145.0);
         assert_eq!(strength_hue(-1.0), 25.0);
         let mid = strength_hue(0.5);
-        assert!((55.0..75.0).contains(&mid), "{mid}");
+        assert!((40.0..60.0).contains(&mid), "{mid}");
         assert!(strength_hue(0.4) < strength_hue(0.41));
     }
 }

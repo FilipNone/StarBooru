@@ -90,6 +90,7 @@ login-create = Crea account
 login-sign-in = Accedi
 login-have-account = Ho già un account
 login-want-account = Crea un account
+login-weak-password = Questa password è facile da indovinare. Prova con una più lunga, o con qualche parola che non c'entra con le altre.
 
 ## Shared
 
@@ -198,6 +199,9 @@ password-mismatch = Le password non coincidono.
 password-changed = Password cambiata. Gli altri tuoi dispositivi sono stati disconnessi.
 password-changing = Modifica in corso…
 password-change = Cambia password
+password-strength-weak = Facile da indovinare
+password-strength-fair = Potrebbe essere più sicura
+password-strength-strong = Password sicura
 sessions-title = Dispositivi connessi
 sessions-unknown = Client sconosciuto
 sessions-this-device = Questo dispositivo
