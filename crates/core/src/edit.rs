@@ -1,4 +1,4 @@
-//! Simple media edits: turn, flip and crop an image, trim a video.
+//! Simple media edits: turn, flip, straighten and crop an image, trim a video.
 //!
 //! Media is never changed in place: an edit makes a new post with the
 //! original's tags, rating and source, and can move the original to the
@@ -11,6 +11,10 @@ use crate::model::MediaKind;
 
 /// Shortest clip a trim may leave.
 pub const MIN_TRIM_MS: i64 = 100;
+
+/// The furthest an image can be straightened either way, in tenths of a
+/// degree: 45°. Past that a quarter turn the other way is closer.
+pub const MAX_STRAIGHTEN: i16 = 450;
 
 /// Image formats the server can decode and write back in the same format.
 /// GIF is left out: only its first frame would survive.
@@ -56,7 +60,7 @@ pub struct Trim {
     pub end_ms: i64,
 }
 
-/// `POST /posts/{id}/edit`. Applied in this order: turn, flip, crop.
+/// `POST /posts/{id}/edit`. Applied in this order: turn, flip, straighten, crop.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MediaEdit {
     /// Clockwise degrees: 0, 90, 180 or 270.
@@ -68,6 +72,12 @@ pub struct MediaEdit {
     /// Mirror top to bottom, after turning.
     #[serde(default)]
     pub flip_v: bool,
+    /// A small clockwise turn after the flips, in tenths of a degree, from
+    /// -450 to 450. The picture grows around its middle just enough to fill
+    /// its frame again (see [`MediaEdit::straighten_scale`]), so no empty
+    /// corners show and the size stays the same.
+    #[serde(default)]
+    pub straighten: i16,
     #[serde(default)]
     pub crop: Option<Crop>,
     /// Videos only.
@@ -84,7 +94,7 @@ pub enum EditError {
     NotEditable,
     #[error("nothing to change")]
     NoChange,
-    #[error("turn by 0, 90, 180 or 270 degrees")]
+    #[error("turn by 0, 90, 180 or 270 degrees, and straighten by at most 45")]
     BadRotation,
     #[error("the crop must be inside the image")]
     CropOutside,
@@ -114,6 +124,17 @@ impl MediaEdit {
         }
     }
 
+    /// How much a `width` × `height` frame's picture grows once straightened,
+    /// so that the turned picture still covers the whole frame. 1 when it
+    /// isn't straightened.
+    pub fn straighten_scale(&self, width: u32, height: u32) -> f64 {
+        let (w, h) = (f64::from(width.max(1)), f64::from(height.max(1)));
+        let turn = (f64::from(self.straighten) / 10.0).abs().to_radians();
+        // The frame's corners have to stay inside the turned picture: the
+        // longer side over the shorter is what the sine pushes out the most.
+        turn.cos() + (w / h).max(h / w) * turn.sin()
+    }
+
     /// Size after turning a `width` × `height` image.
     pub fn turned_size(&self, width: u32, height: u32) -> (u32, u32) {
         if self.rotate % 180 == 90 {
@@ -132,7 +153,9 @@ impl MediaEdit {
         height: u32,
         duration_ms: Option<i64>,
     ) -> Result<(), EditError> {
-        if !matches!(self.rotate, 0 | 90 | 180 | 270) {
+        if !matches!(self.rotate, 0 | 90 | 180 | 270)
+            || !(-MAX_STRAIGHTEN..=MAX_STRAIGHTEN).contains(&self.straighten)
+        {
             return Err(EditError::BadRotation);
         }
         match kind {
@@ -162,12 +185,16 @@ impl MediaEdit {
                         return Err(EditError::CropOutside);
                     }
                 }
-                if self.orientation() == (0, false, false) && crop.is_none() {
+                if self.orientation() == (0, false, false) && self.straighten == 0 && crop.is_none()
+                {
                     return Err(EditError::NoChange);
                 }
             }
             EditKind::Video => {
-                if self.orientation() != (0, false, false) || self.crop.is_some() {
+                if self.orientation() != (0, false, false)
+                    || self.straighten != 0
+                    || self.crop.is_some()
+                {
                     return Err(EditError::WrongKind);
                 }
                 let Some(t) = self.trim else {
@@ -285,6 +312,68 @@ mod tests {
             ..MediaEdit::default()
         };
         assert_eq!(check(trim), Err(EditError::WrongKind));
+    }
+
+    #[test]
+    fn checks_straightening() {
+        let tilt = |straighten| MediaEdit {
+            straighten,
+            ..MediaEdit::default()
+        };
+        let check = |e: MediaEdit| e.check(EditKind::Image, 40, 30, None);
+        assert!(check(tilt(1)).is_ok());
+        assert!(check(tilt(450)).is_ok());
+        assert!(check(tilt(-450)).is_ok());
+        assert_eq!(check(tilt(451)), Err(EditError::BadRotation));
+        assert_eq!(check(tilt(i16::MIN)), Err(EditError::BadRotation));
+        let trim = MediaEdit {
+            trim: Some(Trim {
+                start_ms: 0,
+                end_ms: 10,
+            }),
+            ..tilt(10)
+        };
+        assert_eq!(
+            trim.check(EditKind::Video, 40, 30, Some(1_000)),
+            Err(EditError::WrongKind)
+        );
+        // An old client leaves it out.
+        let e: MediaEdit = serde_json::from_str(r#"{"rotate": 90}"#).unwrap();
+        assert_eq!(e.straighten, 0);
+    }
+
+    #[test]
+    fn straightened_pictures_fill_their_frame() {
+        let tilt = |straighten| MediaEdit {
+            straighten,
+            ..MediaEdit::default()
+        };
+        assert_eq!(tilt(0).straighten_scale(40, 30), 1.0);
+        // A square at 45° grows by the square root of two, either way.
+        let s = tilt(450).straighten_scale(10, 10);
+        assert!((s - 2_f64.sqrt()).abs() < 1e-9, "{s}");
+        assert_eq!(tilt(-450).straighten_scale(10, 10), s);
+        // Each corner of a 2 × 1 frame, turned back by the angle and shrunk
+        // by the scale, lands inside the picture.
+        for tenths in [-450, -123, 7, 300, 450] {
+            let e = tilt(tenths);
+            let s = e.straighten_scale(200, 100);
+            let (sin, cos) = (f64::from(tenths) / 10.0).to_radians().sin_cos();
+            for (x, y) in [
+                (100.0, 50.0),
+                (-100.0, 50.0),
+                (100.0, -50.0),
+                (-100.0, -50.0),
+            ] {
+                let (u, v) = ((x * cos + y * sin) / s, (-x * sin + y * cos) / s);
+                assert!(
+                    u.abs() <= 100.0 + 1e-9 && v.abs() <= 50.0 + 1e-9,
+                    "{tenths}: {u} {v}"
+                );
+            }
+        }
+        // Zero sides don't divide by zero.
+        assert!(tilt(100).straighten_scale(0, 0).is_finite());
     }
 
     #[test]

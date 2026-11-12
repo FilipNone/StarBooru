@@ -4,7 +4,9 @@
 use std::io::Cursor;
 
 use image::codecs::jpeg::JpegEncoder;
-use image::{DynamicImage, ImageFormat};
+use image::imageops::interpolate_bilinear;
+use image::{DynamicImage, ImageBuffer, ImageFormat, Pixel};
+use rayon::prelude::*;
 use starbooru_core::{EditKind, MediaEdit};
 
 use crate::error::{AppError, AppResult};
@@ -13,7 +15,7 @@ use crate::storage;
 /// JPEG quality for an edited photo: high, as it is encoded a second time.
 const JPEG_QUALITY: u8 = 92;
 
-/// Turns, flips and crops the image in `bytes` and encodes the result in the
+/// Turns, flips, straightens and crops the image in `bytes` and encodes the result in the
 /// same format. The edit is checked against the upright image. CPU-bound:
 /// call from a blocking thread.
 pub fn edit_image(bytes: &[u8], mime: &str, edit: &MediaEdit) -> AppResult<Vec<u8>> {
@@ -33,10 +35,66 @@ pub fn edit_image(bytes: &[u8], mime: &str, edit: &MediaEdit) -> AppResult<Vec<u
     if flip_v {
         img = img.flipv();
     }
+    if edit.straighten != 0 {
+        let scale = edit.straighten_scale(img.width(), img.height());
+        img = straighten(img, f64::from(edit.straighten) / 10.0, scale);
+    }
     if let Some(c) = edit.crop {
         img = img.crop_imm(c.x, c.y, c.width, c.height);
     }
     encode(&img, mime)
+}
+
+/// Turns `img` clockwise by `degrees` around its middle and enlarges it by
+/// `scale`, keeping its size. Formats without a buffer of their own here
+/// become 8-bit RGBA.
+fn straighten(img: DynamicImage, degrees: f64, scale: f64) -> DynamicImage {
+    use DynamicImage as D;
+    match img {
+        D::ImageLuma8(b) => D::ImageLuma8(turned(&b, degrees, scale)),
+        D::ImageLumaA8(b) => D::ImageLumaA8(turned(&b, degrees, scale)),
+        D::ImageRgb8(b) => D::ImageRgb8(turned(&b, degrees, scale)),
+        D::ImageRgba8(b) => D::ImageRgba8(turned(&b, degrees, scale)),
+        D::ImageLuma16(b) => D::ImageLuma16(turned(&b, degrees, scale)),
+        D::ImageLumaA16(b) => D::ImageLumaA16(turned(&b, degrees, scale)),
+        D::ImageRgb16(b) => D::ImageRgb16(turned(&b, degrees, scale)),
+        D::ImageRgba16(b) => D::ImageRgba16(turned(&b, degrees, scale)),
+        D::ImageRgb32F(b) => D::ImageRgb32F(turned(&b, degrees, scale)),
+        D::ImageRgba32F(b) => D::ImageRgba32F(turned(&b, degrees, scale)),
+        other => D::ImageRgba8(turned(&other.to_rgba8(), degrees, scale)),
+    }
+}
+
+/// Each pixel of the result looks up where it came from: turned back by the
+/// angle and shrunk by the scale, then read between the four nearest pixels.
+fn turned<P>(
+    src: &ImageBuffer<P, Vec<P::Subpixel>>,
+    degrees: f64,
+    scale: f64,
+) -> ImageBuffer<P, Vec<P::Subpixel>>
+where
+    P: Pixel + Send + Sync,
+    P::Subpixel: Send + Sync,
+{
+    let (w, h) = src.dimensions();
+    let mut out = ImageBuffer::new(w, h);
+    if w == 0 || h == 0 || !scale.is_finite() || scale <= 0.0 {
+        return out;
+    }
+    let (sin, cos) = degrees.to_radians().sin_cos();
+    let (cx, cy) = (f64::from(w) / 2.0, f64::from(h) / 2.0);
+    let (last_x, last_y) = (f64::from(w - 1), f64::from(h - 1));
+    out.par_enumerate_pixels_mut().for_each(|(x, y, px)| {
+        let dx = f64::from(x) + 0.5 - cx;
+        let dy = f64::from(y) + 0.5 - cy;
+        // Rounding can put the edges a hair outside; they read the edge.
+        let sx = ((dx * cos + dy * sin) / scale + cx - 0.5).clamp(0.0, last_x);
+        let sy = ((-dx * sin + dy * cos) / scale + cy - 0.5).clamp(0.0, last_y);
+        if let Some(p) = interpolate_bilinear(src, sx as f32, sy as f32) {
+            *px = p;
+        }
+    });
+    out
 }
 
 fn encode(img: &DynamicImage, mime: &str) -> AppResult<Vec<u8>> {
@@ -132,6 +190,43 @@ mod tests {
         };
         let out = storage::decode(&edit_image(&src, "image/png", &edit).unwrap()).unwrap();
         assert_eq!(pixel(&out, 3, 1), [0, 255, 0]);
+    }
+
+    #[test]
+    fn straightens_and_fills_the_frame() {
+        // Left half red, right half blue: turned a little, the frame still
+        // has the same size, no empty corners, and red stays on the left.
+        let img = DynamicImage::ImageRgb8(RgbImage::from_fn(40, 20, |x, _| {
+            if x < 20 {
+                Rgb([255, 0, 0])
+            } else {
+                Rgb([0, 0, 255])
+            }
+        }));
+        let edit = MediaEdit {
+            straighten: 100,
+            ..MediaEdit::default()
+        };
+        let out = storage::decode(&edit_image(&png(&img), "image/png", &edit).unwrap()).unwrap();
+        assert_eq!(out.dimensions(), (40, 20));
+        for (x, y) in [(0, 0), (39, 0), (0, 19), (39, 19)] {
+            let [r, g, b] = pixel(&out, x, y);
+            assert!(r + g + b > 200, "corner {x},{y} is empty: {r} {g} {b}");
+        }
+        assert_eq!(pixel(&out, 2, 10), [255, 0, 0]);
+        assert_eq!(pixel(&out, 37, 10), [0, 0, 255]);
+        // Clockwise: the line between the halves leans right at the top, so
+        // red reaches past the middle there and blue at the bottom.
+        assert_eq!(pixel(&out, 20, 0), [255, 0, 0]);
+        assert_eq!(pixel(&out, 19, 19), [0, 0, 255]);
+        // Formats without a buffer of their own still come out.
+        let odd = storage::decode(&png(&DynamicImage::ImageLumaA16(
+            image::ImageBuffer::from_pixel(5, 3, image::LumaA([9000_u16, 65535])),
+        )))
+        .unwrap();
+        let _ = straighten(odd, 45.0, 2.0);
+        let empty = DynamicImage::ImageRgb8(RgbImage::new(0, 0));
+        assert_eq!(straighten(empty, 10.0, 1.2).width(), 0);
     }
 
     #[test]

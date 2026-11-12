@@ -44,7 +44,7 @@ pub use ai::{
 };
 pub use ai_catalog::{AiMode, AiPreset, AiTool};
 pub use autotag::{META_TAGS, META_VERSION, MediaFacts, meta_tags, meta_tags_since};
-pub use edit::{Crop, EditError, EditKind, MediaEdit, Trim, edit_kind};
+pub use edit::{Crop, EditError, EditKind, MAX_STRAIGHTEN, MediaEdit, Trim, edit_kind};
 pub use figure::{
     COSPLAY_TAG, Figure, FigureError, FigureKind, FiguresUpdate, MAX_FIGURE_TAGS, MAX_FIGURES,
     Slot, clean_figures, cosplay_name, cosplay_tag, count_tags, is_count_tag, required_tags,
