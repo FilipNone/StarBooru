@@ -49,43 +49,92 @@ pub fn Shell() -> Element {
     }
 }
 
-/// The message the snackbar shows, numbered so a new one restarts its timer.
-static NOTICE: GlobalSignal<Option<(u64, String)>> = Signal::global(|| None);
+/// What the snackbar shows, numbered so a new one restarts its timer.
+#[derive(Clone)]
+struct Notice {
+    n: u64,
+    message: String,
+    action: Option<NoticeAction>,
+    ms: u32,
+}
+
+/// A button on a notice, such as Undo. It runs in the snackbar, which stays
+/// when the page changes.
+#[derive(Clone)]
+struct NoticeAction {
+    label: String,
+    run: Rc<dyn Fn()>,
+}
+
+static NOTICE: GlobalSignal<Option<Notice>> = Signal::global(|| None);
 
 /// Shows a short message at the bottom of the screen for a few seconds,
 /// for things that finish after the click (a download, say).
 pub fn notify(message: String) {
-    let n = NOTICE.peek().as_ref().map_or(0, |(n, _)| n.wrapping_add(1));
-    *NOTICE.write() = Some((n, message));
+    show_notice(message, None, NOTICE_MS);
+}
+
+/// A notice with a button that takes back what just happened. It stays a
+/// little longer than others, and a line under it runs out with the time.
+pub fn notify_undo(message: String, label: String, run: impl Fn() + 'static) {
+    let action = NoticeAction {
+        label,
+        run: Rc::new(run),
+    };
+    show_notice(message, Some(action), UNDO_MS);
+}
+
+fn show_notice(message: String, action: Option<NoticeAction>, ms: u32) {
+    let n = NOTICE.peek().as_ref().map_or(0, |m| m.n.wrapping_add(1));
+    *NOTICE.write() = Some(Notice {
+        n,
+        message,
+        action,
+        ms,
+    });
 }
 
 /// How long a notice stays, in milliseconds.
 const NOTICE_MS: u32 = 6000;
+/// How long an undo is offered.
+const UNDO_MS: u32 = 8000;
 
 #[component]
 fn Snackbar() -> Element {
     use_effect(|| {
-        let Some((n, _)) = *NOTICE.read() else {
+        let Some((n, ms)) = NOTICE.read().as_ref().map(|m| (m.n, m.ms)) else {
             return;
         };
         spawn(async move {
             // A timer that works the same in the browser and the webviews.
             let _ = document::eval(&format!(
-                "await new Promise((r) => setTimeout(r, {NOTICE_MS})); return true;"
+                "await new Promise((r) => setTimeout(r, {ms})); return true;"
             ))
             .join::<bool>()
             .await;
-            if NOTICE.peek().as_ref().is_some_and(|(m, _)| *m == n) {
+            if NOTICE.peek().as_ref().is_some_and(|m| m.n == n) {
                 *NOTICE.write() = None;
             }
         });
     });
     let notice = NOTICE.read().clone();
+    let timed = notice.as_ref().is_some_and(|m| m.action.is_some());
     rsx! {
         div { class: "snackbar-slot", role: "status", aria_live: "polite",
-            if let Some((n, message)) = notice {
-                div { key: "{n}", class: "snackbar",
+            if let Some(Notice { n, message, action, ms }) = notice {
+                div { key: "{n}", class: if timed { "snackbar timed" } else { "snackbar" },
+                    style: "--notice-ms: {ms}ms",
                     span { class: "break", "{message}" }
+                    if let Some(NoticeAction { label, run }) = action {
+                        button {
+                            class: "btn text snackbar-action",
+                            onclick: move |_| {
+                                *NOTICE.write() = None;
+                                run();
+                            },
+                            "{label}"
+                        }
+                    }
                     button {
                         class: "icon-btn",
                         aria_label: t!("notice-close"),

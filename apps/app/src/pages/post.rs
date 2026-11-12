@@ -9,10 +9,11 @@ use starbooru_core::{
     SAMPLE_SIZE, TagCorrection, TagSuggestion, TagSuggestions, TextBlock, edit_kind, normalize_tag,
 };
 
-use super::editor::EditorSheet;
+use super::editor::{EditorSheet, Saved};
 use super::gallery::{forget_lists, forget_post};
 use super::people::People;
 use super::share::{ShareSheet, copy_text};
+use super::shell::{notify, notify_undo};
 use super::tags::TagGroups;
 use super::{ErrorBanner, Spinner};
 use crate::Route;
@@ -722,15 +723,50 @@ pub fn PostView(id: i64, q: String) -> Element {
                     kind,
                     file_url: file_url.clone(),
                     onclose: move |()| media_editing.set(false),
-                    onsaved: move |new_id| {
+                    onsaved: move |saved: Saved| {
                         media_editing.set(false);
+                        let original = id;
+                        if saved.binned {
+                            forget_post(original);
+                        }
+                        forget_lists();
                         let q = current.peek().1.clone();
-                        navigator().push(Route::PostView { id: new_id, q });
+                        navigator().push(Route::PostView { id: saved.id, q: q.clone() });
+                        let message = if saved.binned { t!("editor-saved-binned") } else { t!("editor-saved") };
+                        notify_undo(message, t!("editor-undo-save"), move || undo_edit(original, saved, q.clone()));
                     },
                 }
             }
         }
     }
+}
+
+/// Takes an edit back from the notice after saving: the original comes out of
+/// the recycle bin, the edited copy is deleted, and the original shows again.
+fn undo_edit(original: i64, saved: Saved, q: String) {
+    let Some(client) = store::client() else {
+        return;
+    };
+    spawn(async move {
+        if saved.binned
+            && let Err(e) = client.restore_post(original).await
+        {
+            notify(e.to_string());
+            return;
+        }
+        // The copy goes for good: left in the recycle bin, it would make the
+        // same edit a duplicate the next time. If the purge fails, it just
+        // stays in the bin.
+        match client.delete_post(saved.id).await {
+            Ok(()) => {
+                let _ = client.purge_post(saved.id).await;
+            }
+            Err(e) => notify(e.to_string()),
+        }
+        forget_post(saved.id);
+        forget_lists();
+        navigator().push(Route::PostView { id: original, q });
+    });
 }
 
 /// The picture's own colours, blurred, as the light the viewer stands in, and all

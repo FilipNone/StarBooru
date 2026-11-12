@@ -212,6 +212,9 @@ pub struct Prefs {
     pub gallery_columns: Option<u8>,
     /// No space between thumbnails and no rounded corners.
     pub flush_tiles: bool,
+    /// The editor keeps the original post; otherwise it goes to the recycle
+    /// bin once the edited copy is saved.
+    pub keep_original: bool,
 }
 
 impl Default for Prefs {
@@ -231,6 +234,7 @@ impl Default for Prefs {
             gallery_view: GalleryView::default(),
             gallery_columns: None,
             flush_tiles: false,
+            keep_original: false,
         }
     }
 }

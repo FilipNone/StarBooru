@@ -371,6 +371,15 @@ input[type="range"] { width: 100%; accent-color: var(--primary); margin-top: 12p
   font-size: 14px; pointer-events: auto; animation: fade-up var(--med) var(--ease-spring);
 }
 .snackbar .icon-btn { color: inherit; }
+.snackbar-action { min-height: 36px; padding: 0 12px; color: var(--primary-container); }
+.snackbar-action:hover:not(:disabled) { background: oklch(from var(--surface) l c h / 0.12); }
+/* An undo's notice: a line under it runs out with the time it has left. */
+.snackbar.timed { position: relative; overflow: hidden; }
+.snackbar.timed::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: var(--primary-container);
+  transform-origin: left; animation: run-out var(--notice-ms, 6s) linear forwards;
+}
+@keyframes run-out { to { transform: scaleX(0); } }
 .spinner.small { width: 20px; height: 20px; border-width: 3px; }
 
 /* The bars float: every part is its own glass capsule over the page, and the
@@ -1417,6 +1426,7 @@ html.sb-hero-back .page.gallery { animation: fade-in var(--med) var(--ease); }
   }
   .chip:hover, .dropzone.over { transform: none; }
   .thumb .preview { display: none; }
+  .snackbar.timed::after { display: none; }
 }
 /* Battery saver: the same, except spinners keep turning (they say something
    is happening, and stop when it's done). */
@@ -1425,6 +1435,7 @@ html.sb-hero-back .page.gallery { animation: fade-in var(--med) var(--ease); }
   transition-duration: 1ms !important;
 }
 .app[data-saver="on"] .chip:hover { transform: none; }
+.app[data-saver="on"] .snackbar.timed::after { display: none; }
 
 /* Administration › Backups */
 .backup-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
@@ -1510,31 +1521,283 @@ pre.command {
   font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums;
 }
 
-/* Media editor */
-.sheet.editor { width: min(880px, 100%); }
-.editor-stage {
-  display: grid; place-items: center; margin: 12px 0; padding: 12px; overflow: hidden;
-  border-radius: var(--radius-s); background: var(--stage);
+/* ---------- media editor (pages/editor.rs) ----------
+   It fills the window. The picture takes the middle, capsules float over the
+   top, and the tools are a panel under the picture on tall windows (tabs at
+   the bottom, like the navigation) or beside it on wide ones, on the side
+   `data-hand` picks. While something is dragged (`.live`), nothing eases. */
+.editor {
+  --panel-w: clamp(272px, 30vw, 340px);
+  position: fixed; inset: 0; z-index: 40; display: grid; gap: var(--bar-gap);
+  grid-template: "top" auto "canvas" minmax(0, 1fr) "panel" auto / minmax(0, 1fr);
+  padding: var(--bar-top) max(var(--bar-gap), env(safe-area-inset-right))
+    max(var(--bar-gap), env(safe-area-inset-bottom)) max(var(--bar-gap), env(safe-area-inset-left));
+  background: var(--canvas); overscroll-behavior: contain;
+  animation: fade-in var(--med) var(--ease);
 }
-.editor-frame { position: relative; max-width: 100%; overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; }
-.editor-frame img { position: absolute; left: 50%; top: 50%; max-width: none; object-fit: fill; pointer-events: none; }
-.crop-box { position: absolute; box-shadow: 0 0 0 100vmax var(--scrim); outline: 1px solid var(--on-scrim); cursor: move; }
-.editor-frame.dragging, .editor-frame.dragging .crop-box { cursor: grabbing; }
-.crop-handle { position: absolute; width: 22px; height: 22px; border: 0 solid var(--on-scrim); }
-.crop-handle::before { content: ""; position: absolute; inset: -12px; }
-.crop-handle.tl { left: 0; top: 0; border-width: 4px 0 0 4px; cursor: nwse-resize; }
-.crop-handle.tr { right: 0; top: 0; border-width: 4px 4px 0 0; cursor: nesw-resize; }
-.crop-handle.bl { left: 0; bottom: 0; border-width: 0 0 4px 4px; cursor: nesw-resize; }
-.crop-handle.br { right: 0; bottom: 0; border-width: 0 4px 4px 0; cursor: nwse-resize; }
-.editor-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
-.editor-size { margin-left: auto; font-size: 14px; font-variant-numeric: tabular-nums; }
+.editor.closing { animation: fade-out 180ms var(--ease) forwards; }
+html:has(.editor) { overflow-y: hidden; }
+.editor-top {
+  grid-area: top; position: relative; z-index: 2; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 8px;
+  animation: drop-in var(--slow) var(--ease-spring);
+}
+.editor-top > :first-child { justify-self: start; }
+.editor-history { grid-column: 2; }
+/* Save, split: the narrow end opens the menu that says what happens to the
+   original. */
+.editor-save-group { grid-column: 3; justify-self: end; position: relative; }
+.editor-save-split { display: flex; gap: 2px; border-radius: 999px; box-shadow: var(--shadow-2); }
+.editor-save-split .btn { min-height: var(--bar-h); }
+.editor-save-split .btn:active:not(:disabled) { transform: none; }
+.editor-save { padding: 0 16px 0 18px; border-radius: 999px 6px 6px 999px; }
+.editor-save-more { width: 40px; padding: 0 4px 0 0; border-radius: 6px 999px 999px 6px; }
+.editor-save-more .icon { transition: rotate var(--med) var(--ease-spring); rotate: 90deg; }
+.editor-save-more[aria-expanded="true"] .icon { rotate: -90deg; }
+.save-menu {
+  position: absolute; top: calc(100% + 8px); right: 0; z-index: 31; display: grid; gap: 2px; min-width: 220px; padding: 6px;
+  border-radius: var(--radius-l); background: var(--surface); color: var(--on-surface);
+  border: 1px solid oklch(from var(--outline) l c h / 0.4); box-shadow: var(--shadow-2);
+  animation: drop-in var(--med) var(--ease); transform-origin: top right;
+}
+.save-option {
+  display: grid; grid-template-columns: 20px minmax(0, 1fr) 20px; align-items: center; gap: 12px;
+  min-height: 44px; padding: 0 12px; border: 0; border-radius: var(--radius-m); cursor: pointer; text-align: start;
+  background: transparent; color: var(--on-surface); font: inherit; font-size: 14px; font-weight: 600;
+  transition: background-color var(--med) var(--ease);
+}
+.save-option.on { background: var(--primary-container); color: var(--on-primary-container); }
+.save-option-check { display: grid; opacity: 0; }
+.save-option.on .save-option-check { opacity: 1; animation: pop var(--slow) var(--ease-spring); }
+@media (hover: hover) {
+  .save-option:not(.on):hover { background: var(--glass-line); }
+}
+.editor-save .spinner { border-color: oklch(from var(--on-primary) l c h / 0.35); border-top-color: var(--on-primary); }
+.editor-pill {
+  display: flex; align-items: center; gap: 2px; height: var(--bar-h); padding: 4px; border: 0;
+  border-radius: 999px; color: var(--on-surface);
+}
+.editor-pill.icon-only {
+  justify-content: center; width: var(--bar-h); padding: 0; cursor: pointer;
+  transition: transform var(--fast) var(--ease-spring);
+}
+.editor-pill.icon-only:active:not(:disabled) { transform: scale(0.9); }
+.editor-history .icon-btn:not(:disabled) { color: var(--on-surface); }
+.editor-history .icon-btn:not(:disabled) .icon { animation: pop var(--med) var(--ease-spring); }
+@media (hover: hover) {
+  .editor-history .icon-btn:hover:not(:disabled), .editor-pill.icon-only:hover { background: var(--glass-line); }
+}
+
+.editor-canvas {
+  grid-area: canvas; position: relative; display: grid; place-items: center; min-width: 0; min-height: 0;
+  touch-action: none; user-select: none; -webkit-user-select: none;
+  animation: zoom-in var(--slow) var(--ease);
+}
+.editor-canvas:has(video) { touch-action: auto; }
+.editor-canvas.dragging { cursor: grabbing; }
+.editor-frame { position: relative; transition: width var(--slow) var(--ease), height var(--slow) var(--ease); }
+.editor-clip {
+  position: absolute; inset: 0; overflow: hidden; border-radius: 4px;
+  box-shadow: 0 0 0 1px var(--glass-line), var(--shadow-2);
+}
+.editor-clip img {
+  position: absolute; left: 50%; top: 50%; max-width: none; max-height: none; object-fit: fill; pointer-events: none;
+  transition: transform var(--slow) var(--ease), width var(--slow) var(--ease), height var(--slow) var(--ease);
+}
+.crop-shade, .crop-box {
+  position: absolute;
+  transition: left var(--slow) var(--ease), top var(--slow) var(--ease), width var(--slow) var(--ease), height var(--slow) var(--ease);
+}
+.editor.live :is(.editor-clip img, .crop-shade, .crop-box) { transition: none; }
+.crop-shade { box-shadow: 0 0 0 100vmax var(--scrim); pointer-events: none; }
+/* White lines with a dark halo, so they show on light and dark pictures alike. */
+.crop-box {
+  outline: 1.5px solid var(--on-scrim); box-shadow: 0 0 0 2.5px oklch(from var(--scrim) l c h / 0.35);
+  cursor: move; color: var(--on-scrim);
+}
+/* Thirds while something moves: what most crops line up on. */
+.crop-grid {
+  --line: oklch(from var(--on-scrim) l c h / 0.55);
+  position: absolute; inset: 0; pointer-events: none; opacity: 0;
+  background:
+    linear-gradient(to right, transparent calc(100% / 3 - 0.5px), var(--line) 0 calc(100% / 3 + 0.5px), transparent 0 calc(200% / 3 - 0.5px), var(--line) 0 calc(200% / 3 + 0.5px), transparent 0),
+    linear-gradient(to bottom, transparent calc(100% / 3 - 0.5px), var(--line) 0 calc(100% / 3 + 0.5px), transparent 0 calc(200% / 3 - 0.5px), var(--line) 0 calc(200% / 3 + 0.5px), transparent 0);
+  transition: opacity var(--med) var(--ease);
+}
+.editor.live .crop-grid { opacity: 1; }
+/* Corners are brackets, sides are bars; each takes a finger-sized touch. */
+.crop-handle {
+  position: absolute; z-index: 1; border: 0 solid currentColor; filter: drop-shadow(0 0 1.5px var(--scrim));
+  transition: scale var(--fast) var(--ease-spring);
+}
+.crop-handle::before { content: ""; position: absolute; inset: -14px; }
+.crop-handle:active { scale: 1.15; }
+.crop-handle:is(.nw, .ne, .sw, .se) { width: 24px; height: 24px; }
+.crop-handle.nw { left: -4px; top: -4px; border-width: 4px 0 0 4px; border-top-left-radius: 7px; cursor: nwse-resize; }
+.crop-handle.ne { right: -4px; top: -4px; border-width: 4px 4px 0 0; border-top-right-radius: 7px; cursor: nesw-resize; }
+.crop-handle.sw { left: -4px; bottom: -4px; border-width: 0 0 4px 4px; border-bottom-left-radius: 7px; cursor: nesw-resize; }
+.crop-handle.se { right: -4px; bottom: -4px; border-width: 0 4px 4px 0; border-bottom-right-radius: 7px; cursor: nwse-resize; }
+.crop-handle:is(.n, .s, .e, .w) { background: currentColor; border-radius: 999px; }
+.crop-handle:is(.n, .s) { left: calc(50% - 14px); width: 28px; height: 4px; cursor: ns-resize; }
+.crop-handle:is(.e, .w) { top: calc(50% - 14px); width: 4px; height: 28px; cursor: ew-resize; }
+.crop-handle.n { top: -4px; }
+.crop-handle.s { bottom: -4px; }
+.crop-handle.w { left: -4px; }
+.crop-handle.e { right: -4px; }
+.crop-size {
+  position: absolute; left: 50%; bottom: 10px; translate: -50% 0; padding: 2px 10px; border-radius: 999px;
+  background: var(--scrim); font-size: 12px; font-weight: 600; white-space: nowrap; pointer-events: none;
+  font-variant-numeric: tabular-nums; opacity: 0; transition: opacity var(--med) var(--ease);
+}
+.editor.live .crop-size { opacity: 1; }
+.editor-video {
+  display: block; max-width: 100%; max-height: 100%; border-radius: var(--radius-m);
+  background: var(--stage); box-shadow: 0 0 0 1px var(--glass-line), var(--shadow-2);
+}
+
+.editor-panel {
+  grid-area: panel; display: grid; grid-template-rows: minmax(0, 1fr) auto; gap: 6px; min-width: 0; min-height: 0;
+  max-height: 100%; padding: 8px; border-radius: var(--radius-l);
+  animation: panel-in var(--slow) var(--ease-spring);
+  --from: 0 24px;
+}
+@keyframes panel-in { from { opacity: 0; translate: var(--from); } }
+.tool-tabs { order: 2; display: flex; justify-content: center; gap: 4px; }
+.tool-tab {
+  display: inline-flex; align-items: center; gap: 6px; height: 40px; padding: 0 18px; border: 0; border-radius: 999px;
+  background: transparent; color: var(--on-surface); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
+  transition: background-color var(--med) var(--ease), color var(--med) var(--ease);
+}
+.tool-tab .icon { width: 20px; height: 20px; }
+.tool-tab.on {
+  background: var(--primary-container); color: var(--on-primary-container);
+  box-shadow: inset 0 1px 0 var(--glass-edge), var(--shadow-1);
+}
+.tool-tab.on .icon { animation: pop var(--slow) var(--ease-spring); }
+.tool-body {
+  display: grid; grid-template-columns: minmax(0, 1fr); align-items: center; align-content: start; gap: 8px;
+  min-height: 0; overflow-y: auto; padding: 2px;
+}
+.tool-body .field { margin-bottom: 0; }
+.tool-body .field-error, .tool-body .banner { margin: 0; font-size: 13px; }
+
+/* Under the picture the chips scroll sideways; the right edge fades out so
+   it shows there are more. */
+.ratios {
+  display: flex; align-items: center; justify-content: safe center; gap: 4px;
+  overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none;
+  mask-image: linear-gradient(to right, black calc(100% - 20px), transparent);
+}
+.ratios::-webkit-scrollbar { display: none; }
+/* A chip keeps its size when pressed, so the row never shifts; only what's
+   inside it gives. */
+.ratio {
+  flex: none; display: grid; grid-template-rows: 24px auto; place-items: center; gap: 1px; min-width: 54px; height: 56px;
+  padding: 5px 8px 4px; border: 0; border-radius: var(--radius-m);
+  background: transparent; color: var(--on-surface-2); font: inherit; font-size: 12px; font-weight: 600; line-height: 1.2; cursor: pointer;
+  transition: background-color var(--med) var(--ease), color var(--med) var(--ease);
+}
+.ratio > * { transition: scale var(--fast) var(--ease-spring); }
+.ratio:active > * { scale: 0.88; }
+.ratio.on { background: var(--primary-container); color: var(--on-primary-container); }
+.ratio .num { font-variant-numeric: tabular-nums; }
+.ratio-glyph rect { transition: x var(--slow) var(--ease-spring), y var(--slow) var(--ease-spring), width var(--slow) var(--ease-spring), height var(--slow) var(--ease-spring); }
+.ratio.on .icon { animation: pop var(--slow) var(--ease-spring); }
+@media (hover: hover) {
+  .ratio:not(.on):hover, .turns .icon-btn:hover:not(:disabled), .ratios .swap:hover { background: var(--glass-line); }
+}
+.ratios .swap { flex: none; color: var(--on-surface); }
+.swap-icon { display: grid; transition: rotate var(--slow) var(--ease-spring); }
+.swap-icon.wide { rotate: 90deg; }
+.custom-ratio { display: flex; align-items: center; justify-content: center; gap: 8px; font-weight: 700; animation: drop-in var(--med) var(--ease); }
+.custom-ratio input {
+  width: 72px; height: 40px; padding: 0 8px; border: 1px solid var(--outline); border-radius: var(--radius-s);
+  background: var(--surface); color: var(--on-surface); font: inherit; text-align: center; font-variant-numeric: tabular-nums;
+}
+.custom-ratio input { -moz-appearance: textfield; appearance: textfield; }
+.custom-ratio input::-webkit-inner-spin-button, .custom-ratio input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.custom-ratio input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px oklch(from var(--primary) l c h / 0.25); }
+.custom-ratio input[aria-invalid="true"] { border-color: var(--danger); }
+
+/* Straighten: a ruler with a mark every 5°, the middle at 0, and a bar from
+   the middle to the thumb (`--at` is where the thumb is, 0 to 1). The angle
+   sits over the middle mark, in a box as wide as "-45.0°", so neither moves
+   while the number changes. */
+.dial { display: grid; justify-items: center; }
+.dial-track { justify-self: stretch; }
+.dial-value {
+  width: 76px; height: 28px; padding: 0; border: 0; border-radius: 999px; cursor: pointer; text-align: center;
+  background: transparent; color: var(--on-surface-2); font: inherit; font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums;
+  white-space: nowrap; transition: background-color var(--med) var(--ease), color var(--med) var(--ease);
+}
+.dial-value.set { background: var(--primary-container); color: var(--on-primary-container); }
+.dial-track {
+  position: relative; height: 44px;
+  background: repeating-linear-gradient(to right, var(--outline) 0 1px, transparent 1px calc((100% - 1px) / 18)) 0 50% / 100% 10px no-repeat;
+}
+.dial-track::before {
+  content: ""; position: absolute; left: calc(50% - 1px); top: 10px; bottom: 10px; width: 2px; border-radius: 1px; background: var(--on-surface-2);
+}
+.dial-track::after {
+  content: ""; position: absolute; top: calc(50% - 2px); height: 4px; border-radius: 2px; background: var(--primary);
+  left: min(50%, var(--at) * 100%); right: calc(100% - max(50%, var(--at) * 100%));
+}
+.dial-track input[type="range"] {
+  position: relative; z-index: 1; display: block; width: 100%; height: 44px; margin: 0; background: transparent;
+  -webkit-appearance: none; appearance: none; cursor: ew-resize; touch-action: pan-y;
+}
+.dial-track input[type="range"]::-webkit-slider-runnable-track { height: 44px; background: transparent; }
+.dial-track input[type="range"]::-moz-range-track { height: 44px; background: transparent; }
+.dial-track input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none; width: 8px; height: 32px; margin-top: 6px; border: 0; border-radius: 999px;
+  background: var(--primary); box-shadow: 0 0 0 3px var(--glass), var(--shadow-1); transition: transform var(--fast) var(--ease-spring);
+}
+.dial-track input[type="range"]::-moz-range-thumb {
+  width: 8px; height: 32px; border: 0; border-radius: 999px;
+  background: var(--primary); box-shadow: 0 0 0 3px var(--glass), var(--shadow-1); transition: transform var(--fast) var(--ease-spring);
+}
+.dial-track input[type="range"]:active::-webkit-slider-thumb { transform: scaleX(1.5); }
+.dial-track input[type="range"]:active::-moz-range-thumb { transform: scaleX(1.5); }
+
+.turns { display: flex; justify-content: center; gap: 2px; }
+.turns .icon-btn { width: 48px; height: 48px; color: var(--on-surface); }
 .icon-btn.flip-v .icon { transform: rotate(90deg); }
-.editor-video { display: block; width: 100%; max-height: 56dvh; margin: 12px 0; border-radius: var(--radius-s); background: var(--stage); }
 .trim-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
 .trim-row { display: flex; gap: 8px; align-items: center; }
 .trim-row input { flex: 1; min-width: 0; font-variant-numeric: tabular-nums; }
 .trim-row .btn { flex: none; }
-.sheet.editor > .check { margin: 4px 0 8px; }
+.tool-body > .hint { margin: 0; }
+
+/* Wider than tall: the tools stand beside the picture, centred on the
+   height like the rail, with their tabs on top. */
+@media (orientation: landscape) and (min-width: 640px) {
+  .editor { grid-template: "top panel" auto "canvas panel" minmax(0, 1fr) / minmax(0, 1fr) var(--panel-w); }
+  .app[data-hand="left"] .editor { grid-template: "panel top" auto "panel canvas" minmax(0, 1fr) / var(--panel-w) minmax(0, 1fr); }
+  .editor-panel { align-self: center; grid-template-rows: auto minmax(0, 1fr); --from: 24px 0; }
+  .app[data-hand="left"] .editor-panel { --from: -24px 0; }
+  .tool-tabs { order: 0; }
+  .ratios {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(48px, 1fr)); justify-items: stretch;
+    overflow: visible; mask-image: none;
+  }
+  .ratio { min-width: 0; padding-inline: 2px; }
+  .ratios .swap { justify-self: center; }
+  .tool-body { gap: 12px; padding: 4px 2px 2px; }
+}
+/* A phone on its side: smaller controls so the whole panel fits. */
+@media (orientation: landscape) and (min-width: 640px) and (max-height: 480px) {
+  .editor-panel { align-self: stretch; padding: 6px; gap: 4px; }
+  .tool-tab { height: 34px; }
+  .tool-body { gap: 4px; }
+  .ratio { height: 46px; grid-template-rows: 20px auto; padding-block: 3px 2px; }
+  .ratio .icon { width: 20px; height: 20px; }
+  .dial-track, .dial-track input[type="range"], .dial-track input[type="range"]::-webkit-slider-runnable-track { height: 36px; }
+  .dial-track input[type="range"]::-moz-range-track { height: 36px; }
+  .dial-track::before { top: 8px; bottom: 8px; }
+  .dial-track input[type="range"]::-webkit-slider-thumb { height: 26px; margin-top: 5px; }
+  .dial-track input[type="range"]::-moz-range-thumb { height: 26px; }
+  .dial-value { height: 24px; }
+  .turns .icon-btn { width: 40px; height: 40px; }
+}
 @media (max-width: 600px) {
   .trim-fields { grid-template-columns: 1fr; }
   .editor-stage { padding: 0; margin: 8px -4px; }

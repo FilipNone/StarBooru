@@ -60,7 +60,7 @@
 - **Bring your library:** import from szurubooru, Shimmie2, Danbooru, Stash, Blombooru, Monbooru and LANBooru with tags, ratings and sources, or pick posts from Danbooru, Gelbooru, Moebooru and e621.
 - **Tags with structure:** categories, a parent and child tree, aliases, implications, tags per person in a picture, and typo correction.
 - **Fast search:** by tag, rating, date, size, colour and text in the image, with autocomplete and saved searches. Tag searches take 3–19 ms at a million posts.
-- **A viewer made for looking:** zoom, fullscreen, keyboard shortcuts, video, votes and related posts. Crop, turn and flip pictures, or trim videos.
+- **A viewer made for looking:** zoom, fullscreen, keyboard shortcuts, video, votes and related posts. Crop, straighten, turn and flip pictures, or trim videos.
 - **Text and AI, all optional:** OCR for text search, tag suggestions, and comic and manga translation drawn over the page, on local models or any OpenAI-compatible API.
 - **Safe with your files:** originals stay byte-exact, duplicates are caught, deleted posts go to a recycle bin, and database backups run on a schedule.
 - **Ready for others:** accounts, storage limits, OpenID Connect sign-in, API keys, share links with an expiry, and server statistics.

@@ -31,8 +31,12 @@ pub enum Icon {
     Layout,
     Link,
     Logout,
+    Orientation,
     Palette,
     Play,
+    RatioCustom,
+    RatioFree,
+    Redo,
     Restore,
     RotateLeft,
     RotateRight,
@@ -47,6 +51,7 @@ pub enum Icon {
     TrendingUp,
     Translate,
     Tune,
+    Undo,
     Upload,
     ZoomIn,
     ZoomOut,
@@ -148,6 +153,28 @@ impl Icon {
             Icon::Play => Shape::EvenOdd(
                 "M5.669 4.76a1.47 1.47 0 0 1 2.04-1.177c1.062.453 3.442 1.532 6.462 3.276c3.021 1.744 5.146 3.266 6.069 3.958c.788.59.79 1.763.001 2.355c-.914.687-3.013 2.191-6.07 3.956c-3.06 1.766-5.412 2.832-6.464 3.28a1.467 1.467 0 0 1-2.038-1.177c-.138-1.141-.396-3.734-.396-7.236c0-3.5.257-6.092.396-7.235",
             ),
+            // MingCute back_2_fill and forward_2_fill.
+            Icon::Undo => Shape::Fill(
+                "M7.16 10.972A7 7 0 0 1 19.5 15.5a1.5 1.5 0 1 0 3 0c0-5.523-4.477-10-10-10a9.973 9.973 0 0 0-7.418 3.295L4.735 6.83a1.5 1.5 0 1 0-2.954.52l1.042 5.91c.069.391.29.74.617.968.403.282.934.345 1.385.202l5.644-.996a1.5 1.5 0 1 0-.52-2.954l-2.788.491z",
+            ),
+            Icon::Redo => Shape::Fill(
+                "M16.84 10.972A7 7 0 0 0 4.5 15.5a1.5 1.5 0 0 1-3 0c0-5.523 4.477-10 10-10a9.972 9.972 0 0 1 7.418 3.295l.347-1.964a1.5 1.5 0 1 1 2.954.52l-1.042 5.91a1.5 1.5 0 0 1-.617.968 1.607 1.607 0 0 1-1.385.202l-5.644-.996a1.5 1.5 0 1 1 .52-2.954l2.788.491z",
+            ),
+            // MingCute rotate_to_vertical_fill.
+            Icon::Orientation => Shape::Fill(
+                "M3 5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zm11 15a1 1 0 0 1 1-1h4v-6h-4a1 1 0 1 1 0-2h4a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-4a1 1 0 0 1-1-1m4-16a1 1 0 0 1 .705 1.709c.684.438 1.383.965 2.002 1.584a1 1 0 0 1-1.414 1.414c-1.084-1.084-2.526-1.863-3.523-2.317l-.398-.174a6.62 6.62 0 0 0-.174-.072c-.618-.251-.737-.867-.667-1.237.07-.372.41-.907 1.085-.907z",
+            ),
+            // Drawn for StarBooru in the pack's 2-unit line: a square with
+            // rounded corners, cut into dashes for a free crop and into
+            // dots on a 4-unit grid for a custom one.
+            Icon::RatioFree => Shape::Stroke(
+                "2",
+                "M4 7v-.5A2.5 2.5 0 0 1 6.5 4H7m10 0h.5A2.5 2.5 0 0 1 20 6.5V7m0 10v.5a2.5 2.5 0 0 1-2.5 2.5H17M7 20h-.5A2.5 2.5 0 0 1 4 17.5V17M11 4h2m7 7v2m-7 7h-2m-7-7v-2",
+            ),
+            Icon::RatioCustom => Shape::Stroke(
+                "2",
+                "M4 4h0m4 0h0m4 0h0m4 0h0m4 0h0m0 4h0m0 4h0m0 4h0m0 4h0m-4 0h0m-4 0h0m-4 0h0m-4 0h0m0-4h0m0-4h0m0-4h0",
+            ),
             Icon::Restore => Shape::EvenOdd(
                 "M13.941 19.244a7.5 7.5 0 0 1-7.534-2.245A1.5 1.5 0 1 0 4.172 19a10.5 10.5 0 0 0 10.545 3.142c5.602-1.501 8.926-7.259 7.425-12.86c-1.5-5.602-7.258-8.926-12.86-7.425a10.5 10.5 0 0 0-7.784 10.06c-.01 1.314 1.449 2.04 2.492 1.337l2.674-1.801c1.466-.988.483-3.274-1.243-2.889l-.1.022a7.5 7.5 0 1 1 8.62 10.658",
             ),
@@ -235,7 +262,7 @@ pub fn Ico(icon: Icon, #[props(default = 24)] size: u32) -> Element {
 mod tests {
     use super::*;
 
-    const ALL: [Icon; 46] = [
+    const ALL: [Icon; 51] = [
         Icon::Add,
         Icon::ArrowBack,
         Icon::Article,
@@ -263,8 +290,12 @@ mod tests {
         Icon::Layout,
         Icon::Link,
         Icon::Logout,
+        Icon::Orientation,
         Icon::Palette,
         Icon::Play,
+        Icon::RatioCustom,
+        Icon::RatioFree,
+        Icon::Redo,
         Icon::Restore,
         Icon::RotateLeft,
         Icon::RotateRight,
@@ -279,6 +310,7 @@ mod tests {
         Icon::TrendingUp,
         Icon::Translate,
         Icon::Tune,
+        Icon::Undo,
         Icon::Upload,
         Icon::ZoomIn,
         Icon::ZoomOut,
@@ -299,6 +331,41 @@ mod tests {
                 d.chars()
                     .all(|c| c.is_ascii_alphanumeric() || " .,-".contains(c)),
                 "{icon:?} has a character that is not path data",
+            );
+        }
+    }
+
+    #[test]
+    fn the_custom_ratio_dots_ring_a_square_on_a_four_unit_grid() {
+        // Each dot is a move followed by `h0`.
+        let mut at = (0.0_f32, 0.0_f32);
+        let mut dots = Vec::new();
+        for step in path_data(Icon::RatioCustom).split_terminator("h0") {
+            let (kind, numbers) = step.split_at(1);
+            let numbers = numbers.replace('-', " -");
+            let xy: Vec<f32> = numbers
+                .split_whitespace()
+                .map(|n| n.parse().unwrap())
+                .collect();
+            at = match kind {
+                "M" => (xy[0], xy[1]),
+                _ => (at.0 + xy[0], at.1 + xy[1]),
+            };
+            dots.push(at);
+        }
+        assert_eq!(dots.len(), 16);
+        for (i, &(x, y)) in dots.iter().enumerate() {
+            assert!(
+                x % 4.0 == 0.0 && y % 4.0 == 0.0,
+                "dot {i} at {x},{y} is off the grid"
+            );
+            assert!(
+                [4.0, 20.0].contains(&x) || [4.0, 20.0].contains(&y),
+                "dot {i} at {x},{y} is inside the square",
+            );
+            assert!(
+                !dots[..i].contains(&(x, y)),
+                "dot {i} at {x},{y} is drawn twice"
             );
         }
     }
