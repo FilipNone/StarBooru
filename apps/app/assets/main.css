@@ -224,31 +224,19 @@ h1, h2 { line-height: 1.2; margin: 0; }
 input[type="range"] { width: 100%; accent-color: var(--primary); margin-top: 12px; }
 
 /* Password strength: the box takes a colour from red through orange to green.
-   Registering the two numbers with @property lets the browser animate them,
-   so the colour and the line follow the typing smoothly. */
+   Registering the hue with @property lets the browser animate it, so the
+   colour follows the typing smoothly. */
 @property --pw-hue { syntax: "<number>"; inherits: true; initial-value: 25; }
-@property --pw-fill { syntax: "<number>"; inherits: true; initial-value: 0; }
 .pw-field {
   --pw: oklch(var(--meter-l) var(--meter-c) var(--pw-hue));
-  position: relative; display: grid;
-  transition: --pw-hue var(--slow) var(--ease), --pw-fill var(--slow) var(--ease);
+  display: grid;
+  transition: --pw-hue var(--slow) var(--ease);
 }
 .field .pw-field.rated input {
   border-color: var(--pw);
   background: color-mix(in oklch, var(--surface), var(--pw) 9%);
 }
 .field .pw-field.rated input:focus { box-shadow: 0 0 0 3px oklch(from var(--pw) l c h / 0.28); }
-/* A thin line inside the bottom of the box grows with the score. It shows the
-   strength to people who can't tell the colours apart. */
-.pw-fill {
-  position: absolute; inset-inline: 10px; bottom: 5px; height: 3px; border-radius: 3px;
-  background: linear-gradient(90deg, oklch(from var(--pw) l c h / 0.35), var(--pw));
-  box-shadow: 0 0 8px oklch(from var(--pw) l c h / 0.55);
-  transform: scaleX(max(0.05, var(--pw-fill))); transform-origin: left;
-  opacity: 0; pointer-events: none;
-  transition: opacity var(--med) var(--ease);
-}
-.pw-field.rated .pw-fill { opacity: 1; }
 
 .segmented { display: inline-flex; align-self: flex-start; max-width: 100%; border: 1px solid var(--outline); border-radius: 999px; overflow: hidden; }
 .seg {

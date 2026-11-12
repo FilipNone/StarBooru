@@ -17,9 +17,8 @@ pub fn StrengthField(value: String, username: String, children: Element) -> Elem
     rsx! {
         div {
             class: if rated { "pw-field rated" } else { "pw-field" },
-            style: "--pw-fill: {score:.3}; --pw-hue: {hue:.1}",
+            style: "--pw-hue: {hue:.1}",
             {children}
-            span { class: "pw-fill", aria_hidden: "true" }
         }
         if rated {
             span { class: "visually-hidden", aria_live: "polite", {word} }
