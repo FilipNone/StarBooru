@@ -210,7 +210,13 @@ fn NavSlider(place: &'static str, route: Route) -> Element {
             aria_label: t!("nav-main"),
             style: "--n: {cells}; --i: {at}",
             "data-dir": way,
-            span { class: if here.is_some() { "slider-thumb" } else { "slider-thumb off" } }
+            span { class: if here.is_some() { "slider-thumb" } else { "slider-thumb off" },
+                span { class: "slider-clip",
+                    span { class: "slider-unclip",
+                        span { class: "slider-fill" }
+                    }
+                }
+            }
             for (i, (to, icon, label)) in items.into_iter().enumerate() {
                 NavLink {
                     key: "{label}",
@@ -250,7 +256,8 @@ fn NavLink(
             aria_current: if active { "page" } else { "false" },
             to,
             span { class: "nav-icon",
-                Ico { icon }
+                // Its own box for the pop, apart from the press on `nav-icon`.
+                span { class: "nav-pop", Ico { icon } }
                 if badge > 0 {
                     span { class: "nav-badge", aria_hidden: "true", "{badge.min(99)}" }
                 }

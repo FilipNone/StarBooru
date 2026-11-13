@@ -60,6 +60,8 @@ body { background: #111; }
   --paper: oklch(0.985 0.006 var(--h));
   --on-paper: oklch(0.2 0.02 var(--h));
   --shadow-1: 0 1px 2px oklch(0.2 0.04 var(--h) / 0.08), 0 2px 8px oklch(0.2 0.04 var(--h) / 0.06);
+  /* --shadow-1 as a filter, for a shape a box shadow doesn't follow. */
+  --drop-1: drop-shadow(0 1px 2px oklch(0.2 0.04 var(--h) / 0.08)) drop-shadow(0 2px 8px oklch(0.2 0.04 var(--h) / 0.06));
   --shadow-2: 0 2px 4px oklch(0.2 0.04 var(--h) / 0.08), 0 12px 32px oklch(0.2 0.04 var(--h) / 0.14);
 
   --radius-s: 12px;
@@ -115,6 +117,7 @@ body { background: #111; }
   --stage: oklch(0.12 0.01 var(--h));
   --glow-a: 0.34;
   --shadow-1: 0 1px 2px oklch(0 0 0 / 0.3), 0 2px 8px oklch(0 0 0 / 0.2);
+  --drop-1: drop-shadow(0 1px 2px oklch(0 0 0 / 0.3)) drop-shadow(0 2px 8px oklch(0 0 0 / 0.2));
   --shadow-2: 0 2px 4px oklch(0 0 0 / 0.3), 0 12px 32px oklch(0 0 0 / 0.4);
 }
 
@@ -151,6 +154,7 @@ body { background: #111; }
     --stage: oklch(0.12 0.01 var(--h));
     --glow-a: 0.34;
     --shadow-1: 0 1px 2px oklch(0 0 0 / 0.3), 0 2px 8px oklch(0 0 0 / 0.2);
+    --drop-1: drop-shadow(0 1px 2px oklch(0 0 0 / 0.3)) drop-shadow(0 2px 8px oklch(0 0 0 / 0.2));
     --shadow-2: 0 2px 4px oklch(0 0 0 / 0.3), 0 12px 32px oklch(0 0 0 / 0.4);
   }
 }
@@ -484,18 +488,39 @@ a.brand:hover .mark-star, a.search-home:hover .mark-star { transform: rotate(90d
 /* The navigation is a slider: equal cells in a capsule, and one thumb that
    travels between them with the selected item's icon and label inside it. Its
    edges move apart, the one going ahead first, so it stretches on the way.
-   `--n` is the cells, `--i` the selected one, `data-dir` the way it last went. */
+   `--n` is the cells, `--i` the selected one, `data-dir` the way it last went.
+
+   The edges move by `transform` alone, which the compositor runs while the page
+   is busy drawing the page it goes to. The thumb spans the whole track. In it
+   `.slider-fill` is the part after the start edge, round at its start, and
+   `.slider-clip` cuts it off at the end edge, round at its end. `.slider-unclip`
+   moves the other way to the clip, with the same timing, so the fill inside it
+   keeps to the track. */
 .nav-top, .nav-bottom { display: none; }
-.slider { --pad: 4px; --cell: calc((100% - 2 * var(--pad)) / var(--n)); position: relative; padding: var(--pad); border-radius: 999px; }
+.slider { --pad: 4px; position: relative; padding: var(--pad); border-radius: 999px; }
 .slider-thumb {
-  position: absolute; border-radius: 999px;
-  top: var(--pad); bottom: var(--pad);
-  left: calc(var(--pad) + var(--i) * var(--cell));
-  right: calc(var(--pad) + (var(--n) - 1 - var(--i)) * var(--cell));
+  --step: calc(100% / var(--n));
+  position: absolute; inset: var(--pad); pointer-events: none;
+  filter: var(--drop-1);
+  transform-origin: calc((var(--i) + 0.5) * var(--step)) 50%;
+  transition: opacity var(--med) var(--ease), transform var(--med) var(--ease-spring);
+}
+.slider-clip, .slider-unclip, .slider-fill { position: absolute; top: 0; bottom: 0; left: 0; width: 100%; }
+.slider-clip {
+  left: auto; right: calc(100% - var(--step)); overflow: hidden; border-radius: 0 999px 999px 0;
+  transform: translateX(calc(var(--i) * var(--step)));
+  transition: transform var(--to-r) var(--ease);
+}
+.slider-unclip {
+  transform: translateX(calc((var(--n) - 1 - var(--i)) * var(--step)));
+  transition: transform var(--to-r) var(--ease);
+}
+.slider-fill {
+  border-radius: 999px 0 0 999px;
   background: var(--primary-container);
-  box-shadow: inset 0 1px 0 var(--glass-edge), var(--shadow-1);
-  transition: left var(--to-l) var(--ease), right var(--to-r) var(--ease), top var(--to-l) var(--ease), bottom var(--to-r) var(--ease),
-    opacity var(--med) var(--ease), transform var(--med) var(--ease-spring);
+  box-shadow: inset 0 1px 0 var(--glass-edge);
+  transform: translateX(calc(var(--i) * var(--step)));
+  transition: transform var(--to-l) var(--ease);
 }
 .slider[data-dir="next"] { --to-l: 460ms; --to-r: 240ms; }
 .slider[data-dir="back"] { --to-l: 240ms; --to-r: 460ms; }
@@ -513,7 +538,10 @@ a.brand:hover .mark-star, a.search-home:hover .mark-star { transform: rotate(90d
 .nav-icon { position: relative; display: grid; place-items: center; transition: transform var(--med) var(--ease-spring); }
 .nav-item .icon { width: 20px; height: 20px; }
 .nav-item:active .nav-icon { transform: scale(0.86); }
-.nav-item.active .nav-icon .icon { animation: pop var(--slow) var(--ease-spring); }
+/* On a box of its own: the compositor runs no animation of an <svg>, nor one of
+   an element whose transform also has a transition going. */
+.nav-pop { display: grid; place-items: center; }
+.nav-item.active .nav-pop { animation: pop var(--slow) var(--ease-spring); }
 .nav-badge {
   position: absolute; top: -7px; right: -10px; min-width: 18px; height: 18px; padding: 0 5px;
   display: grid; place-items: center; border-radius: 999px; box-shadow: 0 0 0 2px var(--surface);
@@ -575,10 +603,17 @@ a.brand:hover .mark-star, a.search-home:hover .mark-star { transform: rotate(90d
     display: grid; grid-auto-rows: 1fr; border-radius: calc(var(--rail-w) / 2);
   }
   .app[data-hand="right"] .nav-bottom { left: auto; right: var(--bar-gap); }
-  .nav-bottom .slider-thumb {
-    left: var(--pad); right: var(--pad); border-radius: calc(var(--rail-w) / 2 - var(--pad));
-    top: calc(var(--pad) + var(--i) * var(--cell));
-    bottom: calc(var(--pad) + (var(--n) - 1 - var(--i)) * var(--cell));
+  /* Standing up: the same, down the rail. */
+  .nav-bottom .slider-thumb { --end: calc(var(--rail-w) / 2 - var(--pad)); transform-origin: 50% calc((var(--i) + 0.5) * var(--step)); }
+  .nav-bottom :is(.slider-clip, .slider-unclip, .slider-fill) { left: 0; right: 0; width: auto; top: 0; bottom: auto; height: 100%; }
+  .nav-bottom .slider-clip {
+    top: auto; bottom: calc(100% - var(--step)); border-radius: 0 0 var(--end) var(--end);
+    transform: translateY(calc(var(--i) * var(--step)));
+  }
+  .nav-bottom .slider-unclip { transform: translateY(calc((var(--n) - 1 - var(--i)) * var(--step))); }
+  .nav-bottom .slider-fill {
+    border-radius: var(--end) var(--end) 0 0;
+    transform: translateY(calc(var(--i) * var(--step)));
   }
   /* At least as tall as the thumb is wide, or a full radius rounds its left and
      right instead of following the rail. */
@@ -916,7 +951,8 @@ button.thumb { width: 100%; padding: 0; border: 0; font: inherit; color: inherit
 .library-reason { margin: 0; color: var(--danger); overflow-wrap: anywhere; }
 .library-meter { max-width: none; }
 .meter.unknown span { width: 30%; animation: library-sweep 1.6s var(--ease) infinite alternate; }
-@keyframes library-sweep { from { margin-left: 0; } to { margin-left: 70%; } }
+/* A move, so it runs off the page's thread: 70% of the bar is 7/3 of the span. */
+@keyframes library-sweep { from { transform: none; } to { transform: translateX(233.333%); } }
 .library-account { display: grid; gap: 10px; padding: 12px; border-radius: var(--radius-m); background: var(--surface-2); }
 .library-actions { margin: 0; flex-wrap: wrap; }
 .library-failures { display: grid; gap: 4px; max-height: 240px; margin: 0; padding: 0; overflow: auto; list-style: none; overflow-wrap: anywhere; }

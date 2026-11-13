@@ -193,7 +193,7 @@ window.__sbStage = (() => {
     // How dark it is behind the picture now: a pull has let some of the page through.
     const dark = on ? 0 : 1 - read(h, '--pull');
     const me = {};
-    let clock = null;
+    let runs = [];
     // Told of the change before the page paints it, whoever makes it and when.
     const changed = new MutationObserver(() => {
       if (stage.matches('.full') === on) begin();
@@ -202,42 +202,63 @@ window.__sbStage = (() => {
     me.stop = () => {
       changed.disconnect();
       clearTimeout(late);
-      clock?.cancel();
+      for (const run of runs) run.cancel();
+      runs = [];
       if (flight === me) flight = null;
       if (h.dataset.swipe === 'fly') clear(h);
     };
+    // The flight runs on the compositor, so a page busy with Rust doesn't stop
+    // it: `translate` and `scale` from where the picture was to none, on it and
+    // on what lies over it.
     const begin = () => {
       changed.disconnect();
       clearTimeout(late);
       clearTimeout(back);
-      let at = { x: read(h, '--swipe-x'), y: read(h, '--swipe-y'), s: read(h, '--swipe-s') || 1 };
+      const at = { x: read(h, '--swipe-x'), y: read(h, '--swipe-y'), s: read(h, '--swipe-s') || 1 };
+      // Its place in the stage as it is now: where it shows, less the offset it has.
+      const place = (v, off) => ({ w: v.w / off.s, cx: v.cx - off.x, cy: v.cy - off.y });
+      let here = place(seen(m), at);
       h.dataset.swipe = 'fly';
-      h.style.removeProperty('--pull');
+      for (const name of ['--swipe-x', '--swipe-y', '--swipe-s', '--pull']) h.style.removeProperty(name);
       if (!on) h.dataset.full = 'out';
-      // Moves nothing itself: it keeps the time and the easing.
-      clock = m.animate([], { duration: 300, easing: 'cubic-bezier(0.2, 0, 0, 1)' });
-      const frame = () => {
-        if (flight !== me) return;
-        const t = clock.effect.getComputedTiming().progress;
-        if (t == null || t >= 1 || !m.isConnected) {
-          me.stop();
-          return;
-        }
-        // Its place in the stage as it is now, which the window may still be
-        // changing: where it shows, less the offset it has.
-        const v = seen(m);
-        const to = { w: v.w / at.s, cx: v.cx - at.x, cy: v.cy - at.y };
-        const w = from.w + (to.w - from.w) * t;
-        at = {
-          x: from.cx + (to.cx - from.cx) * t - to.cx,
-          y: from.cy + (to.cy - from.cy) * t - to.cy,
-          s: to.w > 0 ? w / to.w : 1,
-        };
-        place(h, at.x, at.y, at.s);
-        if (!on) h.style.setProperty('--pull', (dark * (1 - t)).toFixed(3));
-        requestAnimationFrame(frame);
+      const parts = [...stage.querySelectorAll(':scope > :is(#stage-img, video, .panel-layer)')];
+      const glow = on ? null : h.querySelector('.post-glow');
+      let leg = null;
+      // From an offset (`start`) to none, in `ms`.
+      const go = (start, ms, curve, fade) => {
+        for (const run of runs) run.cancel();
+        const timing = { duration: ms, easing: curve, fill: 'both' };
+        runs = parts.map((el) => el.animate([
+          { translate: `${start.x}px ${start.y}px`, scale: `${start.s}` },
+          { translate: '0px 0px', scale: '1' },
+        ], timing));
+        // The dark behind it fades as it goes.
+        if (glow) runs.push(glow.animate([{ opacity: fade }, { opacity: 0 }], timing));
+        leg = { start, fade, began: performance.now(), ms, run: runs[0] };
+        const mine = leg;
+        leg.run.finished.then(() => leg === mine && flight === me && me.stop(), () => {});
       };
-      frame();
+      go({ x: from.cx - here.cx, y: from.cy - here.cy, s: here.w > 0 ? from.w / here.w : 1 }, 300, 'cubic-bezier(0.2, 0, 0, 1)', dark);
+      // The window may still be changing where it goes. Read only, unless it has.
+      const look = () => {
+        if (flight !== me || !leg || !m.isConnected) return;
+        const t = leg.run.effect.getComputedTiming().progress;
+        if (t == null || t >= 1) return;
+        const now = {
+          x: leg.start.x * (1 - t), y: leg.start.y * (1 - t), s: leg.start.s + (1 - leg.start.s) * t,
+        };
+        const next = place(seen(m), now);
+        if (Math.abs(next.cx - here.cx) > 0.5 || Math.abs(next.cy - here.cy) > 0.5 || Math.abs(next.w - here.w) > 0.5) {
+          // It stays where it shows, and goes on from there for the time left.
+          const shown = { cx: here.cx + now.x, cy: here.cy + now.y, w: here.w * now.s };
+          here = next;
+          const left = Math.max(60, leg.ms - (performance.now() - leg.began));
+          go({ x: shown.cx - here.cx, y: shown.cy - here.cy, s: here.w > 0 ? shown.w / here.w : 1 },
+            left, 'cubic-bezier(0, 0, 0, 1)', leg.fade * (1 - t));
+        }
+        requestAnimationFrame(look);
+      };
+      requestAnimationFrame(look);
     };
     changed.observe(stage, { attributes: true, attributeFilter: ['class'] });
     flight = me;
@@ -2710,9 +2731,10 @@ mod tests {
         assert!(lift.contains("attributeFilter: ['class']"));
         // From where it shows, a swipe's offset included, to where it lies now.
         assert!(lift.contains("const from = seen(m);"));
-        assert!(
-            lift.contains("read(h, '--swipe-x')") && lift.contains("requestAnimationFrame(frame)")
-        );
+        assert!(lift.contains("read(h, '--swipe-x')"));
+        // On the compositor: no frame of it waits for the page's thread.
+        assert!(lift.contains("el.animate(["));
+        assert!(!lift.contains("place(h,"));
         assert!(
             rule(".stage > :is(#stage-img, video, .panel-layer)")
                 .contains("scale: var(--swipe-s, 1)")

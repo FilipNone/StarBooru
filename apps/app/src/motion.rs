@@ -5,10 +5,69 @@
 
 use dioxus::prelude::*;
 
+/// Moves a frame that clips pictures from one box to another on the compositor,
+/// so the move goes on while the page waits on Rust. Moving `left`, `top`,
+/// `width` and `height` would lay the page out each frame on its main thread.
+///
+/// The frame takes the box it lands in at once, and a `transform` puts it back
+/// at each place on the way, sampled in steps, as a scale can't follow a box
+/// whose shape changes. Each picture inside is scaled back the other way, so it
+/// keeps its shape and only its crop changes. Only the corners are left to the
+/// page's thread: if that one is busy, they lag a little and nothing else does.
+/// Both `HERO` and `TO_TOP` start with it.
+macro_rules! flip_js {
+    () => {
+        r##"
+window.__sbFlip ??= (frame, start, to, timing, r0, r1) => {
+  const STEPS = 24;
+  const pics = [...frame.querySelectorAll("img")];
+  for (const running of [frame, ...pics].flatMap((el) => el.getAnimations())) running.cancel();
+  Object.assign(frame.style, {
+    left: `${to.left}px`, top: `${to.top}px`, width: `${to.width}px`, height: `${to.height}px`, borderRadius: "",
+  });
+  const mix = (a, b, p) => a + (b - a) * p;
+  // The size of a picture of shape `aspect` that covers a box of `w` by `h`.
+  const cover = (aspect, w, h) => (w / h > aspect ? [w, w / aspect] : [h * aspect, h]);
+  const inside = pics.map((pic) => {
+    const given = Number(pic.dataset.aspect);
+    const aspect = pic.naturalWidth && pic.naturalHeight
+      ? pic.naturalWidth / pic.naturalHeight
+      : Number.isFinite(given) && given > 0 ? given : to.width / to.height;
+    const [cw, ch] = cover(aspect, to.width, to.height);
+    Object.assign(pic.style, {
+      left: `${(to.width - cw) / 2}px`, top: `${(to.height - ch) / 2}px`, width: `${cw}px`, height: `${ch}px`,
+    });
+    return { pic, aspect, cw, frames: [] };
+  });
+  const frames = [], corners = [];
+  for (let i = 0; i <= STEPS; i++) {
+    const p = i / STEPS;
+    const w = Math.max(1, mix(start.width, to.width, p)), h = Math.max(1, mix(start.height, to.height, p));
+    const sx = w / to.width, sy = h / to.height;
+    const dx = mix(start.left, to.left, p) + w / 2 - (to.left + to.width / 2);
+    const dy = mix(start.top, to.top, p) + h / 2 - (to.top + to.height / 2);
+    const r = mix(r0, r1, p);
+    frames.push({ offset: p, transform: `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})` });
+    corners.push({ offset: p, borderRadius: `${r / sx}px / ${r / sy}px` });
+    for (const each of inside) {
+      const u = cover(each.aspect, w, h)[0] / each.cw;
+      each.frames.push({ offset: p, transform: `scale(${u / sx}, ${u / sy})` });
+    }
+  }
+  for (const each of inside) each.pic.animate(each.frames, timing);
+  frame.animate(corners, timing);
+  return frame.animate(frames, timing);
+};
+"##
+    };
+}
+
 /// The copy flies over the page, under the viewer's controls and panels and under
 /// the bars, as `.hero-past` lies under it. Its flight's values are spelled out, as
 /// the script has no use for tokens.
-const HERO: &str = r##"
+const HERO: &str = concat!(
+    flip_js!(),
+    r##"
 window.__sbHero ??= {
   ghost: null, hidden: null, flying: false, holding: false, past: null, stage: null, timer: 0, veil: 0, unwatch: null,
   carried: null,
@@ -38,20 +97,29 @@ window.__sbHero ??= {
     clearTimeout(this.veil);
     document.documentElement.classList.remove("sb-hero-leaving");
   },
-  float(src, box, radius, under) {
-    const ghost = document.createElement("img");
+  // The copy is a frame that clips, with the picture inside it (`pic`). Its
+  // shape (`aspect`) lets the flight keep it right before it has loaded.
+  float(src, box, radius, under, aspect) {
+    const ghost = document.createElement("div");
     ghost.className = "hero-ghost";
-    ghost.alt = "";
     ghost.setAttribute("aria-hidden", "true");
-    ghost.src = src;
     Object.assign(ghost.style, {
-      position: "fixed", zIndex: "1", margin: "0", pointerEvents: "none", objectFit: "cover",
+      position: "fixed", zIndex: "1", margin: "0", pointerEvents: "none", overflow: "hidden",
       left: `${box.left}px`, top: `${box.top}px`, width: `${box.width}px`, height: `${box.height}px`,
       borderRadius: radius,
     });
+    const img = document.createElement("img");
+    img.alt = "";
+    img.src = src;
+    Object.assign(img.style, {
+      position: "absolute", left: "0", top: "0", width: "100%", height: "100%",
+      margin: "0", maxWidth: "none", objectFit: "cover",
+    });
     if (under) {
-      ghost.style.background = `center / cover no-repeat url(${JSON.stringify(under)})`;
+      img.style.background = `center / cover no-repeat url(${JSON.stringify(under)})`;
     }
+    if (aspect > 0 && Number.isFinite(aspect)) img.dataset.aspect = aspect;
+    ghost.append(img);
     (document.querySelector(".app") ?? document.body).append(ghost);
     this.ghost = ghost;
     this.timer = setTimeout(() => this.clear(), 1500);
@@ -115,8 +183,18 @@ window.__sbHero ??= {
     await new Promise(requestAnimationFrame);
     await new Promise(requestAnimationFrame);
   },
-  // What it lands on can still move while the page settles, so it aims anew
-  // each frame.
+  pic() {
+    return this.ghost?.querySelector("img") ?? document.createElement("img");
+  },
+  // A picture's or a video's shape, or 0 before it's known.
+  aspect(el) {
+    const w = el?.naturalWidth || el?.videoWidth || 0;
+    const h = el?.naturalHeight || el?.videoHeight || 0;
+    return w && h ? w / h : 0;
+  },
+  // The flight is a `__sbFlip`, so a page busy with Rust doesn't stop it. What
+  // it lands on can still move while the page settles: a look each frame starts
+  // it again from where it is, for the time that's left.
   fly(aim, radius, hold) {
     const ghost = this.ghost;
     const from = ghost.getBoundingClientRect();
@@ -125,29 +203,41 @@ window.__sbHero ??= {
     this.flying = true;
     clearTimeout(this.timer);
     this.timer = setTimeout(() => this.clear(), 1500);
-    // Moves nothing itself: it keeps the time and the easing.
-    const flight = ghost.animate([], { duration: 420, easing: "cubic-bezier(0.2, 0, 0, 1)", fill: "forwards" });
+    const TOTAL = 420, easing = "cubic-bezier(0.2, 0, 0, 1)";
     const end = async () => {
       if (this.ghost !== ghost) return;
       this.holding = true;
       await hold();
       if (this.ghost === ghost) this.clear();
     };
-    flight.finished.then(end, end);
-    let to = from;
-    const frame = () => {
-      if (this.ghost !== ghost) return;
-      to = aim() ?? to;
-      const at = flight.effect.getComputedTiming().progress ?? 1;
-      const mix = (a, b) => `${a + (b - a) * at}px`;
-      Object.assign(ghost.style, {
-        left: mix(from.left, to.left), top: mix(from.top, to.top),
-        width: mix(from.width, to.width), height: mix(from.height, to.height),
-        borderRadius: mix(round, rounded),
-      });
-      requestAnimationFrame(frame);
+    let leg = null;
+    const go = (start, to, r0, ms, curve) => {
+      const timing = { duration: ms, easing: curve, fill: "both" };
+      leg = { start, to, r0, began: performance.now(), ms, flight: window.__sbFlip(ghost, start, to, timing, r0, rounded) };
+      const mine = leg;
+      leg.flight.finished.then(() => leg === mine && end(), () => {});
     };
-    frame();
+    const first = aim() ?? from;
+    go(from, first, round, TOTAL, easing);
+    // Read only: the flight itself doesn't wait for this.
+    const look = () => {
+      if (this.ghost !== ghost || !leg) return;
+      const p = leg.flight.effect.getComputedTiming().progress;
+      if (p === null || p >= 1) return;
+      const to = aim();
+      const moved = to && ["left", "top", "width", "height"].some((k) => Math.abs(to[k] - leg.to[k]) > 0.5);
+      if (moved && to.width >= 2 && to.height >= 2) {
+        const mix = (a, b) => a + (b - a) * p;
+        const at = {
+          left: mix(leg.start.left, leg.to.left), top: mix(leg.start.top, leg.to.top),
+          width: mix(leg.start.width, leg.to.width), height: mix(leg.start.height, leg.to.height),
+        };
+        const left = Math.max(60, leg.ms - (performance.now() - leg.began));
+        go(at, to, mix(leg.r0, rounded), left, "cubic-bezier(0, 0, 0, 1)");
+      }
+      requestAnimationFrame(look);
+    };
+    requestAnimationFrame(look);
   },
   // Swiped away (post.rs, `STAGE`): a copy takes the picture's place where the
   // finger let go of it, and stays there while the page changes underneath, so
@@ -162,11 +252,11 @@ window.__sbHero ??= {
     this.clear();
     // Pulled down, it has shrunk, and its corners with it.
     const shrunk = el.offsetWidth ? box.width / el.offsetWidth : 1;
-    this.float(src, box, `${(parseFloat(getComputedStyle(el).borderRadius) || 0) * shrunk}px`);
-    this.ghost.decoding = "sync";
+    this.float(src, box, `${(parseFloat(getComputedStyle(el).borderRadius) || 0) * shrunk}px`, "", this.aspect(el));
+    this.pic().decoding = "sync";
     // Its thumbnail, in case the picture itself hadn't come yet.
     const thumb = el.style.getPropertyValue("--thumb");
-    if (thumb) this.ghost.style.background = `center / cover no-repeat ${thumb}`;
+    if (thumb) this.pic().style.background = `center / cover no-repeat ${thumb}`;
     el.dataset.gone = "";
     this.carried = el;
     clearTimeout(this.timer);
@@ -197,7 +287,7 @@ window.__sbHero ??= {
     const box = tile.getBoundingClientRect();
     // History can open a post whose tile has scrolled out of sight.
     if (box.bottom <= 0 || box.top >= innerHeight) return;
-    this.float(img.currentSrc || img.src, box, getComputedStyle(tile).borderRadius);
+    this.float(img.currentSrc || img.src, box, getComputedStyle(tile).borderRadius, "", this.aspect(img));
     this.linger(id, tile);
     document.documentElement.classList.add("sb-hero");
   },
@@ -211,6 +301,7 @@ window.__sbHero ??= {
         id, at: 0, left: box.left, top: box.top, width: box.width, height: box.height,
         radius: getComputedStyle(el).borderRadius,
         src: el.tagName === "IMG" ? el.currentSrc || el.src : "",
+        aspect: this.aspect(el),
       };
     };
     note();
@@ -338,10 +429,10 @@ window.__sbHero ??= {
         // from there.
         this.carried = null;
         this.unveil();
-        if (thumb) this.ghost.style.background = `center / cover no-repeat url(${JSON.stringify(thumb)})`;
+        if (thumb) this.pic().style.background = `center / cover no-repeat url(${JSON.stringify(thumb)})`;
       } else {
         this.clear();
-        this.float(src, from, from.radius, thumb);
+        this.float(src, from, from.radius, thumb, from.aspect);
       }
       document.documentElement.classList.add("sb-hero-back");
       this.fly(() => this.landing(from.id), getComputedStyle(tile).borderRadius, () => {
@@ -352,7 +443,8 @@ window.__sbHero ??= {
     go(30);
   },
 };
-"##;
+"##
+);
 
 /// The browser's own forward and back open a post without a click on its tile.
 /// By `popstate` the router has already taken the gallery away, but while the
@@ -724,7 +816,9 @@ return true;"#
 /// stays hidden until they have landed, and where there are more tiles on one
 /// side than the other, the extra ones fade. Any wheel, touch, click or key
 /// stops it and shows the grid as it is.
-const TO_TOP: &str = r##"
+const TO_TOP: &str = concat!(
+    flip_js!(),
+    r##"
 window.__sbTop ??= {
   layer: null, timer: 0, head: [],
   calm() {
@@ -769,6 +863,7 @@ window.__sbTop ??= {
       const pic = new Image();
       pic.alt = "";
       pic.decoding = "sync";
+      pic.dataset.aspect = img.naturalWidth / img.naturalHeight;
       pic.src = img.currentSrc || img.src;
       el.append(pic);
     }
@@ -818,6 +913,7 @@ window.__sbTop ??= {
     to = this.seen();
     const ease = "cubic-bezier(0.2, 0, 0, 1)";
     const time = 560;
+    const radius = parseFloat(getComputedStyle(olds[0]).borderTopLeftRadius) || 0;
     // A wave from the top left corner.
     const wave = (b) => Math.round(Math.max(0, b.top) / innerHeight * 140 + b.left / innerWidth * 60);
     // Each tile goes to the tile at the top in the same column and the same
@@ -847,8 +943,9 @@ window.__sbTop ??= {
         taken.add(goal);
         const next = this.copy(goal, "to-top-next");
         el.append(next);
-        moves.push(el.animate([at(item.box), at(goal.box)],
-          { duration: time, delay: wave(goal.box), easing: ease, fill: "both" }));
+        // On the compositor: the page lays out the grid under it meanwhile.
+        moves.push(window.__sbFlip(el, item.box, goal.box,
+          { duration: time, delay: wave(goal.box), easing: ease, fill: "both" }, radius, radius));
         next.animate([{ opacity: 0 }, { opacity: 1 }],
           { duration: time * 0.7, delay: wave(goal.box) + time * 0.15, easing: "ease-in-out", fill: "both" });
       });
@@ -876,7 +973,8 @@ window.__sbTop ??= {
     if (this.layer === layer) this.clear();
   },
 };
-"##;
+"##
+);
 
 /// Takes the gallery back to its top, its tiles moving to their new places.
 pub fn to_top() {
@@ -903,6 +1001,67 @@ pub fn leave() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The body of the first rule in main.css that starts with `selector {`.
+    fn rule(selector: &str) -> &'static str {
+        let css = include_str!("../assets/main.css");
+        let (_, body) = css
+            .split_once(&format!("\n{selector} {{"))
+            .unwrap_or_else(|| panic!("{selector}"));
+        body.split_once('}').unwrap().0
+    }
+
+    #[test]
+    fn moves_run_on_the_compositor() {
+        // Regression: the picture opening a post, the tiles going back to the top
+        // and the nav's thumb moved by `left`, `top`, `width` and `height`, a
+        // layout of the page each frame, and stood still while it waited on Rust.
+        let flip = flip_js!();
+        assert!(HERO.starts_with(flip) && TO_TOP.starts_with(flip));
+        let (_, fly) = HERO.split_once("  fly(aim, radius, hold) {").unwrap();
+        let (fly, _) = fly.split_once("\n  },").unwrap();
+        assert!(fly.contains("window.__sbFlip(ghost, start, to, timing, r0, rounded)"));
+        assert!(!fly.contains("Object.assign(ghost.style"));
+        assert!(TO_TOP.contains("moves.push(window.__sbFlip(el, item.box, goal.box,"));
+        assert!(!TO_TOP.contains("el.animate([at("));
+        // Each frame is a transform; only the corners are the page's.
+        let (_, frames) = flip
+            .split_once("for (let i = 0; i <= STEPS; i++) {")
+            .unwrap();
+        assert!(frames.contains("transform: `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})`"));
+        assert!(frames.contains("transform: `scale(${u / sx}, ${u / sy})`"));
+        assert!(!frames.contains("left:") && !frames.contains("width:"));
+        // The nav's thumb.
+        for part in [
+            ".slider-thumb",
+            ".slider-clip",
+            ".slider-unclip",
+            ".slider-fill",
+        ] {
+            let body = rule(part);
+            if let Some((_, moves)) = body.split_once("transition:") {
+                assert!(
+                    !moves.contains("left") && !moves.contains("right"),
+                    "{part}"
+                );
+                assert!(
+                    !moves.contains("top") && !moves.contains("bottom"),
+                    "{part}"
+                );
+            }
+        }
+        // The clip and what undoes it move as one.
+        assert!(rule(".slider-clip").contains("transition: transform var(--to-r) var(--ease);"));
+        assert!(rule(".slider-unclip").contains("transition: transform var(--to-r) var(--ease);"));
+        let sweep = include_str!("../assets/main.css")
+            .split_once("@keyframes library-sweep {")
+            .unwrap()
+            .1
+            .split_once("\n")
+            .unwrap()
+            .0;
+        assert!(sweep.contains("transform") && !sweep.contains("margin"));
+    }
 
     #[test]
     fn the_flying_picture_stays_under_the_bars() {
