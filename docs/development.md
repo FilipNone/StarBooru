@@ -44,6 +44,8 @@ dx bundle --web --release -p starbooru-app --out-dir dist
 STARBOORU_WEB_DIR=$PWD/dist/public cargo run -p starbooru-server
 ```
 
+`cargo run -p starbooru-server -- precompress dist/public` writes the `.br` and `.gz` copies that the image ships. It's optional: without them the server compresses each file as it sends it.
+
 Local AI needs the worker: `cargo build -p starbooru-ai-worker` (`target/debug/` is next to the server; the VS Code runner does this for you). The server downloads the pinned ONNX Runtime into `<data>/ai/runtime/` by itself on Linux x86-64 and ARM64. Elsewhere, point `STARBOORU_ORT_LIB` at a `libonnxruntime` 1.31.
 
 ## Run the clients
@@ -138,6 +140,60 @@ Results at 1,000,000 posts (Ryzen 9 5900X, PostgreSQL 17 in Docker, default sett
 
 `order:random` sorts every match by `random()`, so it grows with the collection. The admin stats count the whole table.
 
+## Speed on a slow device
+
+The target is a Raspberry Pi 4 showing the web app in Chromium: scrolling the gallery and moving between posts without stutter. Without one at hand, the DevTools protocol can slow the page's main thread (`Emulation.setCPUThrottlingRate`). The figures below used a rate of 6 as a stand-in, on a Ryzen 9 5900X. That rate is a guess at the gap between the two processors and hasn't been checked against a Pi.
+
+The setup was headless Chromium (`--use-angle=swiftshader --enable-unsafe-swiftshader`) at 1280×800, a server with 1500 generated pictures, and the pointer resting over the grid, as a page scrolling under a still pointer is what the hover work depends on. Wheel events came through `Input.dispatchMouseEvent`: 40 px every 16 ms for 25 screens as the steady scroll, and ten bursts of twelve 260 px events as flings. Recorded for each:
+- the time between animation frames, where a frame is late past 25 ms;
+- tasks over 50 ms (`PerformanceObserver`, `longtask`);
+- script, style and layout time from `Performance.getMetrics`;
+- a trace (`devtools.timeline`) when a late frame needs explaining.
+
+Medians of five runs, alternating the builds:
+
+| | Before | After | After, reduced effects |
+|---|---|---|---|
+| Steady scroll, late frames | 11.9% | 2.8% | 2.1% |
+| Steady scroll, tasks over 50 ms | 17 | 0 | 0 |
+| Steady scroll, main thread busy | 6.7 s | 4.3 s | 3.7 s |
+| Flings, late frames | 30.8% | 12.2% | 9.5% |
+| Flings, tasks over 50 ms | 31 | 0 | 0 |
+| Twelve posts forward, late frames | 43.2% | 42.9% | 7.7% |
+| Opening a post, longest task | 323 ms | 304 ms | 288 ms |
+| Back to the gallery, longest task | 177 ms | 155 ms | 127 ms |
+
+Without the slowdown the same scroll went from 1.9% to 1.3% late frames, and the flings from 8.9% to 0.8%.
+
+What these numbers leave out:
+- **The frames are the main thread's.** Wheel scrolling is drawn by the compositor thread, which the slowdown doesn't touch. A late main frame delays new tiles and the hover, while the page keeps moving. Chrome's own scroll records (`ScrollJankV4`, in a trace with the `cc`, `benchmark` and `input` categories) counted no janky update before or after.
+- **The graphics chip isn't modelled.** Headless Chromium draws in software, where the blur behind the glass and the viewer's glow cost far more than on a desktop card, and a Pi's chip has limits of its own. Flipping through posts with full effects is slow here for that reason: the GPU thread's work falls by two thirds with reduced effects. `pace.rs` measures this on the device itself and reduces the effects there.
+- **Runs differ.** The same build gave 9% and 33% late frames minutes apart while a compile was running. Alternate the builds and compare medians.
+
+On the first visit over a slow link (60 ms, 10 Mbit/s, same slowdown) the first thumbnail showed after 1.81 s instead of 2.03 s, with 1192 kB transferred instead of 1398 kB. A reload took the same time before and after.
+
+### Opening a post
+
+A count of late frames over three seconds hides when they fall, and a frame lost while the picture is arriving shows where one lost on a still page doesn't. So this one is a timeline from the click: each late frame, each long task, when the related posts went onto the page and when each of their pictures loaded.
+
+Headless Chromium can draw with the machine's graphics card (`--enable-gpu` in place of the two SwiftShader flags). It opens no window and needs no compositor. With the card, what is left in the timeline is the main thread's, which is what the slowdown models. In software the graphics thread was busy for 0.9 s of the first 1.2 s of an opening whatever the page did, and hid the rest.
+
+Medians of five runs at the slowdown of 6, alternating the builds, late frames by phase:
+
+| | Before | After |
+|---|---|---|
+| From a related post, while the picture arrives (100 to 800 ms) | 5 | 1 |
+| From a related post, afterwards | 0 | 2 |
+| From the gallery, the task at the click | 301 ms | 246 ms |
+| From the gallery, during the flight (350 to 1200 ms) | 9 | 4 |
+| From the gallery, afterwards | 0 | 0 |
+
+Before, the twelve related posts and their pictures went onto the page about 0.5 s after the click, in the middle of the picture's arrival, together with the two neighbours fetched ahead. Now they wait for the viewer to come to rest (`motion::rested`) and arrive around 1 s, two pictures at a time. That work hasn't gone: it is the two late frames afterwards, on a page where only the related tiles themselves are moving.
+
+### Starting
+
+Over a slow link (80 ms, 4 Mbit/s, same slowdown) the page's first paint is the loading screen of `apps/app/index.html`, 0.14 s after the request. It was a blank page until the app drew, 2.4 s in. The app is on the page at the same moment as before (2.25 s against 2.29 s). On a reload the first paint comes at 0.16 s instead of 0.39 s.
+
 ## UI text and translations
 
 Every string the app shows lives in `apps/app/locales/<code>.ftl` ([Fluent](https://projectfluent.org/) syntax) and is looked up with `t!`:
@@ -162,7 +218,8 @@ To check a language visually, set `"language": "it"` in the stored preferences o
 
 Check the sign-in page, the gallery, a post, upload and settings. Do each in light and dark, at 1280px and 390px wide. Use generated test images (for example solid colours made with ImageMagick or Python), never personal photos.
 
-Three things to know when reading the results:
+Four things to know when reading the results:
+- **The web page starts from `apps/app/index.html`.** `dx` uses it in place of its own page and writes the links to the stylesheet and the script into it. It holds the loading screen, whose colours are copies of three tokens in `main.css`; a test in `main.rs` fails when they differ. `#main` in it has to stay empty, without even a space, as the loading screen goes when `#main:not(:empty)` matches.
 - **Only `backdrop-filter`, without `-webkit-`.** Given both spellings, the minifier in `dx bundle` keeps only the prefixed one, and Chromium and Android get no blur. A debug build doesn't show this.
 - **Old stylesheets stay in the bundle's `assets/`.** `dx` keeps earlier hashed copies under `target/dx`, so grep the newest `main-*.css`, not the first match.
 - **A sharp ghost of the text through the glass** at 2× in headless Chromium comes from its software renderer. `--use-angle=swiftshader --enable-unsafe-swiftshader` and real phones don't show it.
