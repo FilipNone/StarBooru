@@ -120,6 +120,7 @@ trash-purge-post = Delete post { $id } for good
 
 ## Explore
 
+explore-collection = Collection
 explore-window = Trending over
 explore-today = Today
 explore-week = Week

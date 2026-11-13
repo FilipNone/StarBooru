@@ -120,6 +120,7 @@ trash-purge-post = Elimina definitivamente il post { $id }
 
 ## Explore
 
+explore-collection = Raccolta
 explore-window = Tendenze di
 explore-today = Oggi
 explore-week = Settimana

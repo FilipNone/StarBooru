@@ -25,6 +25,7 @@ use starbooru_core::{
     SavedRemoteSearch, parse_tag_list,
 };
 
+use super::explore::Sides;
 use super::gallery::{
     FIRST_NEAR, GRID_WIDTH, Grid, ViewMenu, WATCH_FAR, WATCH_FAR_OFF, WATCH_NEAR, WATCH_NEAR_OFF,
     WATCH_SCROLL, WATCH_SCROLL_OFF, WATCH_WIDTH, may_be_on_screen,
@@ -609,8 +610,8 @@ fn tidy_query(q: &str) -> String {
     q.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// Where the Boorus tab goes: back to the last search, as the Gallery tab
-/// does.
+/// Where Explore's boorus side opens: back on the last search, as the
+/// Gallery tab is on its own.
 pub(super) fn last_route() -> Route {
     let kept = KEPT.peek();
     let kept = kept.as_ref().filter(|k| k.owner == store::owner());
@@ -1147,11 +1148,14 @@ pub fn Boorus(q: String, s: String) -> Element {
     rsx! {
         div { class: "page boorus",
             div { class: "page-head",
-                h1 { class: if query.is_empty() { "page-title visually-hidden" } else { "page-title" },
+                // The search box above shows the search; the two sides of
+                // Explore stand where the gallery has its title.
+                h1 { class: "page-title visually-hidden",
                     if query.is_empty() { {t!("nav-boorus")} } else { "{query}" }
                 }
-                SaveSearch { q: query.clone(), sites: sites.clone(), saved }
+                Sides { boorus: true }
                 div { class: "head-tools",
+                    SaveSearch { q: query.clone(), sites: sites.clone(), saved }
                     if many {
                         button {
                             class: if dedupe { "icon-btn dedupe on" } else { "icon-btn dedupe" },

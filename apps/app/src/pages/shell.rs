@@ -152,15 +152,13 @@ fn Snackbar() -> Element {
     }
 }
 
-/// The tab a page is under, so the slider always says where you are.
+/// The tab a page is under, so the slider always says where you are. The
+/// booru browser is the other side of Explore (`explore::Sides`).
 fn tab_of(route: &Route) -> Route {
     match route {
         Route::PostView { .. } => Route::Gallery { q: String::new() },
         Route::TagPage { .. } => Route::Tags {},
-        Route::Boorus { .. } | Route::BooruPost { .. } => Route::Boorus {
-            q: String::new(),
-            s: String::new(),
-        },
+        Route::Boorus { .. } | Route::BooruPost { .. } => Route::Explore { q: String::new() },
         Route::Trash {} | Route::Duplicates {} | Route::Help {} | Route::Admin {} => {
             Route::Settings {}
         }
@@ -168,33 +166,65 @@ fn tab_of(route: &Route) -> Route {
     }
 }
 
-/// `place` is the class that says where this copy of the navigation shows.
-#[component]
-fn NavSlider(place: &'static str, route: Route) -> Element {
-    let items: Vec<_> = [
-        (
-            Route::Gallery {
-                q: store::last_search(),
-            },
-            Icon::Gallery,
-            t!("nav-gallery"),
-        ),
-        (
-            Route::Explore { q: String::new() },
-            Icon::Explore,
-            t!("nav-explore"),
-        ),
-        // Back to the last search there, as the Gallery tab goes to its own.
-        (boorus::last_route(), Icon::Planet, t!("nav-boorus")),
+thread_local! {
+    /// Whether Explore was last open on the boorus.
+    static ON_BOORUS: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Whether Explore is on the boorus after this page, given where it was.
+/// Pages under other tabs leave it as it is.
+fn on_boorus(route: &Route, was: bool) -> bool {
+    match route {
+        Route::Boorus { .. } | Route::BooruPost { .. } => true,
+        Route::Explore { .. } => false,
+        _ => was,
+    }
+}
+
+/// The navigation's items in order, five at most (`docs/design-ui-ux`): a
+/// new page goes under one of these. `gallery` and `explore` are where those
+/// two go back to.
+fn tabs(gallery: Route, explore: Route, can_upload: bool) -> Vec<(Route, Icon, String)> {
+    [
+        (gallery, Icon::Gallery, t!("nav-gallery")),
+        (explore, Icon::Explore, t!("nav-explore")),
         (Route::Tags {}, Icon::Label, t!("nav-tags")),
         (Route::Upload {}, Icon::Upload, t!("nav-upload")),
         (Route::Settings {}, Icon::Tune, t!("nav-settings-tab")),
     ]
     .into_iter()
-    .filter(|(to, ..)| !matches!(to, Route::Upload {}) || store::can_upload())
-    .collect();
-    let tab = discriminant(&tab_of(&route));
-    let here = items.iter().position(|(to, ..)| discriminant(to) == tab);
+    .filter(|(to, ..)| !matches!(to, Route::Upload {}) || can_upload)
+    .collect()
+}
+
+/// Which of the navigation's items the page is under. An item is told by its
+/// own tab, as Explore's may lead to the boorus.
+fn tab_at(items: &[(Route, Icon, String)], route: &Route) -> Option<usize> {
+    let tab = discriminant(&tab_of(route));
+    items
+        .iter()
+        .position(|(to, ..)| discriminant(&tab_of(to)) == tab)
+}
+
+/// `place` is the class that says where this copy of the navigation shows.
+#[component]
+fn NavSlider(place: &'static str, route: Route) -> Element {
+    let boorus = ON_BOORUS.with(|side| {
+        side.set(on_boorus(&route, side.get()));
+        side.get()
+    });
+    // Each goes back to where it was left: the gallery to its last search,
+    // Explore to the side last open, and the boorus to their last search.
+    let explore = if boorus {
+        boorus::last_route()
+    } else {
+        Route::Explore { q: String::new() }
+    };
+    let gallery = Route::Gallery {
+        q: store::last_search(),
+    };
+    let items = tabs(gallery, explore, store::can_upload());
+    let here = tab_at(&items, &route);
     // Where the thumb stands and the way it last went, which says which of its
     // edges leads. With no tab selected it keeps its place, out of sight.
     let last = use_hook(|| Rc::new(Cell::new((here.unwrap_or(0), "next"))));
@@ -640,8 +670,8 @@ fn SearchBox(route: Route) -> Element {
 mod tests {
     use super::{
         Answers, Hint, KEPT_ANSWERS, KEPT_SECONDS, REMOTE_PAUSE_MS, Scope, Suggested,
-        TYPING_PAUSE_MS, hints, route_query, scope_of, search_route, short_count, split_word,
-        tab_of, typed_tag,
+        TYPING_PAUSE_MS, hints, on_boorus, route_query, scope_of, search_route, short_count,
+        split_word, tab_at, tab_of, tabs, typed_tag,
     };
     use crate::Route;
     use chrono::{Duration, Utc};
@@ -744,23 +774,64 @@ mod tests {
             discriminant(&Route::Gallery { q: String::new() })
         );
         assert_eq!(tab_of(&Route::TagPage { name: "a".into() }), Route::Tags {});
-        // The booru browser is a tab of its own, and its posts are under it.
-        let boorus = discriminant(&Route::Boorus {
-            q: String::new(),
-            s: String::new(),
-        });
-        let search = Route::Boorus {
+        // The booru browser and its posts are under Explore.
+        let explore = discriminant(&Route::Explore { q: String::new() });
+        assert_eq!(discriminant(&tab_of(&booru_search())), explore);
+        assert_eq!(discriminant(&tab_of(&booru_post())), explore);
+    }
+
+    fn booru_search() -> Route {
+        Route::Boorus {
             q: "blue_sky".into(),
             s: "danbooru".into(),
-        };
-        let post = Route::BooruPost {
+        }
+    }
+
+    fn booru_post() -> Route {
+        Route::BooruPost {
             u: "https://d.org/posts/1".into(),
             q: "blue_sky".into(),
             s: "danbooru".into(),
-        };
-        assert_eq!(discriminant(&tab_of(&search)), boorus);
-        assert_eq!(discriminant(&tab_of(&post)), boorus);
-        assert_ne!(boorus, discriminant(&Route::Upload {}));
+        }
+    }
+
+    #[test]
+    fn the_navigation_holds_five_items_at_most() {
+        // Regression: the booru browser came as a sixth, which the design
+        // rules don't allow. Every page is still under one of the five.
+        const MAX_TABS: usize = 5;
+        let gallery = Route::Gallery { q: String::new() };
+        let explore = Route::Explore { q: String::new() };
+        let all = tabs(gallery.clone(), explore.clone(), true);
+        assert_eq!(all.len(), MAX_TABS);
+        assert_eq!(tabs(gallery, explore, false).len(), MAX_TABS - 1);
+        for (page, at) in [
+            (booru_search(), 1),
+            (booru_post(), 1),
+            (Route::Trash {}, 4),
+            (Route::TagPage { name: "a".into() }, 2),
+            (Route::Upload {}, 3),
+        ] {
+            assert_eq!(tab_at(&all, &page), Some(at), "{page:?}");
+        }
+        // Regression: with Explore leading back to the boorus, its item went
+        // unlit on their pages.
+        let back = tabs(Route::Gallery { q: String::new() }, booru_search(), true);
+        assert_eq!(tab_at(&back, &booru_post()), Some(1));
+        assert_eq!(tab_at(&back, &Route::Explore { q: String::new() }), Some(1));
+    }
+
+    #[test]
+    fn explore_goes_back_to_the_side_last_open() {
+        // On the boorus, and on a post there.
+        assert!(on_boorus(&booru_search(), false));
+        assert!(on_boorus(&booru_post(), false));
+        // Other tabs in between leave it there.
+        assert!(on_boorus(&Route::Tags {}, true));
+        assert!(on_boorus(&Route::Gallery { q: "cat".into() }, true));
+        assert!(!on_boorus(&Route::Settings {}, false));
+        // The collection's side puts it back.
+        assert!(!on_boorus(&Route::Explore { q: String::new() }, true));
     }
 
     #[test]

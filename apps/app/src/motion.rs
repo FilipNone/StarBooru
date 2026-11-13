@@ -1177,6 +1177,30 @@ mod tests {
     }
 
     #[test]
+    fn nothing_else_styles_the_viewers_column_of_panels() {
+        // Regression: Explore's two tabs were styled as a bare `.side`, which is
+        // the class of the viewer's column too. The column became a row with
+        // the look of a tab, and the people panel left the page beside the tags.
+        let css = include_str!("../assets/main.css");
+        let mut seen = 0;
+        for (at, _) in css.match_indices(".side") {
+            let next = css
+                .get(at + ".side".len()..)
+                .and_then(|rest| rest.chars().next());
+            if next.is_some_and(|c| c.is_alphanumeric() || c == '-' || c == '_') {
+                continue; // `.sides` and the like: another class
+            }
+            let before = css.get(..at).unwrap_or_default();
+            assert!(
+                before.ends_with(".post-layout > ") || before.ends_with(".sides > "),
+                "a `.side` rule that isn't the viewer's or Explore's, at byte {at}"
+            );
+            seen += 1;
+        }
+        assert!(seen > 0);
+    }
+
+    #[test]
     fn the_browsers_forward_button_flies_like_a_click() {
         // Regression: only a click on a tile lifted the picture off, so forward
         // and back to a post skipped the opening.

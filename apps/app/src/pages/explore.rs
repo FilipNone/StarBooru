@@ -1,5 +1,6 @@
 //! Explore: trending posts and tags, posts added on this day in earlier
-//! years, and random picks. `q` narrows every section.
+//! years, and random picks. `q` narrows every section. Its other side is the
+//! booru browser (`boorus.rs`), and `Sides` goes between the two.
 
 use std::rc::Rc;
 
@@ -36,6 +37,30 @@ fn window_phrase(days: u32) -> String {
         30 => t!("explore-phrase-month"),
         365 => t!("explore-phrase-year"),
         n => t!("explore-phrase-days", count = n),
+    }
+}
+
+/// The two sides of Explore, where a page's title stands: what the collection
+/// has to show, and the other boorus. Both pages have it, so the navigation
+/// needs no item for the boorus.
+#[component]
+pub(super) fn Sides(boorus: bool) -> Element {
+    rsx! {
+        nav { class: "sides", aria_label: t!("nav-explore"),
+            Link {
+                class: if boorus { "side" } else { "side on" },
+                aria_current: if boorus { "false" } else { "page" },
+                to: Route::Explore { q: String::new() },
+                {t!("explore-collection")}
+            }
+            Link {
+                class: if boorus { "side on" } else { "side" },
+                aria_current: if boorus { "page" } else { "false" },
+                // Back to the last search there.
+                to: super::boorus::last_route(),
+                {t!("nav-boorus")}
+            }
+        }
     }
 }
 
@@ -106,7 +131,11 @@ pub fn Explore(q: String) -> Element {
             if random.is_empty() {
                 return rsx! {
                     div { class: "page explore",
-                        h1 { class: "page-title", {t!("nav-explore")} }
+                        // An empty collection still has the boorus to go to.
+                        div { class: "page-head",
+                            h1 { class: "page-title visually-hidden", {t!("nav-explore")} }
+                            Sides { boorus: false }
+                        }
                         if !corrected.is_empty() {
                             CorrectionBanner { corrected, exact }
                         }
@@ -209,7 +238,8 @@ pub fn Explore(q: String) -> Element {
     rsx! {
         div { class: "page explore",
             div { class: "page-head",
-                h1 { class: "page-title", {t!("nav-explore")} }
+                h1 { class: "page-title visually-hidden", {t!("nav-explore")} }
+                Sides { boorus: false }
                 div { class: "segmented", role: "radiogroup", aria_label: t!("explore-window"),
                     for value in WINDOWS {
                         button {

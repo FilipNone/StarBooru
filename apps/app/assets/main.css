@@ -561,16 +561,14 @@ a.brand:hover .mark-star, a.search-home:hover .mark-star { transform: rotate(90d
 .page.narrow { max-width: 720px; }
 .center-page { display: grid; place-items: center; min-height: 50vh; padding: 16px; }
 
-/* Wide windows: the labelled slider fits beside the search. Six items of a
-   hundred pixels each, and from this width the search between the two equal
-   sides is still some four hundred wide. */
-@media (min-width: 1660px) {
-  .app { --side: 608px; }
+/* Wide windows: the labelled slider fits beside the search. */
+@media (min-width: 1530px) {
+  .app { --side: 540px; }
   .nav-top {
     grid-column: 3; justify-self: end; display: grid; grid-auto-flow: column; grid-auto-columns: 1fr;
     height: var(--bar-h);
   }
-  .nav-top .nav-item { padding: 0 8px; }
+  .nav-top .nav-item { padding: 0 10px; }
 }
 
 /* Phones: the search takes the whole row, with the crown inside it, and the
@@ -596,19 +594,13 @@ a.brand:hover .mark-star, a.search-home:hover .mark-star { transform: rotate(90d
   .content { --pad-x: 8px; padding: calc(var(--bar-end) + 12px) var(--pad-x) calc(96px + env(safe-area-inset-bottom)); }
   .page-title { font-size: 22px; }
 }
-/* The narrowest phones: six labels no longer fit side by side, so the icons
-   stand alone and still say what they are. */
-@media (max-width: 340px) {
-  .nav-bottom .nav-item { min-height: 44px; }
-  .nav-bottom .nav-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
-}
 
 /* In between: tablets and laptops have the height to spare less than the width,
    so the slider stands up as a rail at the side, its items centred within reach
    of a thumb. `data-hand` picks the side; `--rail-l`/`--rail-r` keep fixed
    things clear of it. */
 .app { --rail-l: 0px; --rail-r: 0px; }
-@media (min-width: 761px) and (max-width: 1659px) {
+@media (min-width: 761px) and (max-width: 1529px) {
   .app { --rail-w: 76px; --rail-l: calc(var(--rail-w) + 16px); }
   .app[data-hand="right"] { --rail-l: 0px; --rail-r: calc(var(--rail-w) + 16px); }
   .nav-bottom {
@@ -644,9 +636,8 @@ a.brand:hover .mark-star, a.search-home:hover .mark-star { transform: rotate(90d
   .brand { justify-content: center; width: var(--bar-h); padding: 0; }
   .brand .wordmark { display: none; }
 }
-/* A phone on its side, or a window too short for six labelled items under the
-   top bar: icons alone fit the height, and still say what they are. */
-@media (min-width: 761px) and (max-width: 1659px) and (max-height: 560px) {
+/* A phone on its side: icons alone fit the height, and still say what they are. */
+@media (min-width: 761px) and (max-width: 1529px) and (max-height: 500px) {
   .app { --rail-w: 52px; }
   .nav-bottom .nav-item { min-height: calc(var(--rail-w) - 2 * var(--pad)); }
   .nav-bottom .nav-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
@@ -1001,6 +992,24 @@ html.sb-to-top .page.gallery { visibility: hidden; }
 
 .explore .page-head { margin-bottom: 8px; }
 .explore .page-head .page-title { margin: 0; }
+/* Explore's two sides, where a title would stand, on its page and on the booru
+   browser's. The one open is told by its weight and the line under it. Kept
+   under `.sides`: the viewer's column of panels has the class `side` too. */
+.sides { display: flex; align-items: center; gap: 4px; margin-left: -10px; }
+.sides > .side {
+  position: relative; display: inline-flex; align-items: center; min-height: 44px; padding: 0 10px;
+  border-radius: 999px; font-size: 22px; font-weight: 500; color: var(--on-surface-2); text-decoration: none;
+  transition: color var(--fast) var(--ease), background var(--fast) var(--ease);
+}
+.sides > .side.on { font-weight: 600; color: var(--on-surface); }
+.sides > .side:focus-visible { outline-offset: -3px; }
+@media (hover: hover) {
+  .sides > .side:hover { background: var(--surface-3); color: var(--on-surface); }
+}
+.sides > .side.on::after {
+  content: ""; position: absolute; left: 10px; right: 10px; bottom: 5px; height: 3px;
+  border-radius: 999px; background: var(--primary);
+}
 .explore-filter {
   display: flex; align-items: center; gap: 8px; flex: 0 1 300px; margin-left: auto;
   min-height: 40px; padding: 0 16px; border: 1px solid var(--outline); border-radius: 999px;
@@ -1024,6 +1033,9 @@ html.sb-to-top .page.gallery { visibility: hidden; }
   background: oklch(0 0 0 / 0.55); color: white;
 }
 @media (max-width: 760px) {
+  .sides { margin-left: -8px; gap: 2px; }
+  .sides > .side { padding: 0 8px; font-size: 17px; }
+  .sides > .side.on::after { left: 8px; right: 8px; }
   .explore .segmented { flex: 1 1 auto; }
   .explore-filter { flex-basis: 100%; margin-left: 0; }
 }
@@ -2059,10 +2071,12 @@ html:has(.editor) { overflow-y: hidden; }
 .app[data-tiles="flush"] .page.boorus { max-width: none; }
 .boorus .page-head { margin-bottom: 12px; }
 .boorus .page-head .page-title { margin: 0; }
-.boorus .page-head .save-search { margin-left: -8px; }
-.boorus .page-head .page-title.visually-hidden + .save-search { margin-left: -10px; }
 .head-tools { display: flex; align-items: center; gap: 12px; margin-left: auto; }
 .head-tools .select-toggle { margin-left: -4px; }
+@media (max-width: 760px) {
+  .head-tools { gap: 4px; }
+  .head-tools .select-toggle { margin-left: 0; }
+}
 .icon-btn.small { width: 36px; height: 36px; }
 /* The sites a search goes to. On a phone they are one row to run a thumb
    along; the room above and below is for a chip's lift and its focus ring. */
