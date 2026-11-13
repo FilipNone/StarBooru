@@ -2,6 +2,7 @@
 //! client sends to search one through the server, and the shape every
 //! site's posts are turned into.
 
+mod limits;
 mod link;
 
 use chrono::{DateTime, Utc};
@@ -11,6 +12,7 @@ use thiserror::Error;
 use crate::model::{Rating, TagCategory};
 use crate::tag::{MAX_TAGS_PER_POST, normalize_tag};
 
+pub use limits::{Limits, counted_tags};
 pub use link::{PostLink, PostRef, post_link};
 
 /// Posts asked for per page of a remote search.
@@ -297,6 +299,12 @@ pub enum RemoteError {
     BadBase,
     #[error("pages go from 1 to {MAX_REMOTE_PAGE}")]
     BadPage,
+    #[error("{site} doesn't show results past page {max}; narrow the search")]
+    TooDeep { site: &'static str, max: u32 },
+    #[error(
+        "{site} takes {max} tags in a search without an account (rating: doesn't count); add your account or search for fewer"
+    )]
+    TooManyTags { site: &'static str, max: u32 },
     #[error("the search or account details are too long")]
     TooLong,
 }
@@ -342,6 +350,21 @@ impl RemoteSearch {
             .any(|f| f.len() > MAX_REMOTE_FIELD)
         {
             return Err(RemoteError::TooLong);
+        }
+        let limits = self.api.limits();
+        let site = self.api.name();
+        if self.page > limits.max_page {
+            return Err(RemoteError::TooDeep {
+                site,
+                max: limits.max_page,
+            });
+        }
+        let signed_in = self.login.is_some() && self.api_key.is_some();
+        if let Some(max) = limits.anonymous_tags
+            && !signed_in
+            && counted_tags(&self.tags) > max
+        {
+            return Err(RemoteError::TooManyTags { site, max });
         }
         Ok(self)
     }
@@ -415,6 +438,51 @@ mod tests {
         s.page = MAX_REMOTE_PAGE;
         s.tags = "a".repeat(MAX_REMOTE_FIELD + 1);
         assert_eq!(s.clean(), Err(RemoteError::TooLong));
+    }
+
+    #[test]
+    fn keeps_to_each_sites_limits() {
+        let search = |api, tags: &str, page, account: bool| RemoteSearch {
+            api,
+            base: "https://x.org".into(),
+            tags: tags.into(),
+            page,
+            login: account.then(|| "me".to_owned()),
+            api_key: account.then(|| "key".to_owned()),
+        };
+        // Danbooru: two tags without an account, and `rating:` is free.
+        let three = "a b c";
+        assert_eq!(
+            search(BooruApi::Danbooru, three, 1, false).clean(),
+            Err(RemoteError::TooManyTags {
+                site: "Danbooru",
+                max: 2
+            })
+        );
+        assert!(
+            search(BooruApi::Danbooru, "a b rating:g", 1, false)
+                .clean()
+                .is_ok()
+        );
+        // With an account the site decides: a paid one takes more.
+        assert!(search(BooruApi::Danbooru, three, 1, true).clean().is_ok());
+        assert!(search(BooruApi::Gelbooru, three, 1, false).clean().is_ok());
+        // How deep each goes.
+        assert!(search(BooruApi::Danbooru, "", 1000, false).clean().is_ok());
+        assert_eq!(
+            search(BooruApi::E621, "", 751, false).clean(),
+            Err(RemoteError::TooDeep {
+                site: "e621",
+                max: 750
+            })
+        );
+        assert!(search(BooruApi::Gelbooru, "", 500, false).clean().is_ok());
+        assert!(search(BooruApi::Gelbooru, "", 501, true).clean().is_err());
+        let message = search(BooruApi::Danbooru, three, 1, false)
+            .clean()
+            .unwrap_err()
+            .to_string();
+        assert!(message.contains("Danbooru takes 2 tags"), "{message}");
     }
 
     #[test]

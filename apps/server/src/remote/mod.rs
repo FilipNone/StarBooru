@@ -5,6 +5,7 @@
 
 pub mod html;
 pub mod lookup;
+pub mod pace;
 
 use chrono::{DateTime, Utc};
 use serde_json::Value;

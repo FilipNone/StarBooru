@@ -3,43 +3,56 @@
 //! knows the original file, the tags and the rating. A page the API can't
 //! answer for is read as a page (`html`).
 
+use chrono::{TimeDelta, Utc};
 use starbooru_core::tag::MAX_TAGS_PER_POST;
 use starbooru_core::{ImportRequest, RemotePost, post_link};
 use url::Url;
 
+use super::pace::{self, BUSY_WAIT_SECS, Pace};
 use super::{base_url, html, parse, post_url};
 use crate::error::{AppError, AppResult};
 use crate::fetch::{FetchError, Fetcher, Watch};
-
-/// Largest answer about one post.
-const MAX_ANSWER: usize = 4 * 1024 * 1024;
 
 /// What asking a site about an address came to.
 pub enum Lookup {
     Found(Box<RemotePost>),
     /// Not a post's address, or the site has no such post.
     Unknown,
-    /// It is one, but the site didn't answer.
-    Failed(FetchError),
+    /// It is one, but the site's API wouldn't say; with its status, when it
+    /// answered at all.
+    Refused(Option<u16>),
 }
 
-/// Asks the site an address belongs to which post it is.
-pub async fn find(fetcher: &Fetcher, raw: &str) -> Lookup {
+/// Asks the site an address belongs to which post it is, in its turn. A site
+/// that says it is busy is an error that says when to come back.
+pub async fn find(pace: &Pace, fetcher: &Fetcher, raw: &str) -> AppResult<Lookup> {
     let Some(link) = post_link(raw, &[]) else {
-        return Lookup::Unknown;
+        return Ok(Lookup::Unknown);
     };
     let url = base_url(&link.base)
         .and_then(|base| Some((post_url(link.api, &base, &link.post, None)?, base)));
     let Some((url, base)) = url else {
-        return Lookup::Unknown;
+        return Ok(Lookup::Unknown);
     };
-    // The address may carry a key: it never goes in an error or the log.
-    match fetcher.get(url.as_str(), MAX_ANSWER).await {
-        Err(e) => Lookup::Failed(e),
-        Ok(body) => parse(link.api, &base, &body)
-            .and_then(|(posts, _)| posts.into_iter().next())
-            .map_or(Lookup::Unknown, |post| Lookup::Found(Box::new(post))),
+    let host = pace::site_key(&url);
+    // No use asking again what it refused a moment ago.
+    if pace.locked(&host, Utc::now()) {
+        return Ok(Lookup::Refused(Some(401)));
     }
+    let answer = match pace::ask(pace, fetcher, link.api, &url).await {
+        Ok(answer) => answer,
+        Err(busy @ AppError::TooManyRequests { .. }) => return Err(busy),
+        Err(_) => return Ok(Lookup::Refused(None)),
+    };
+    if !answer.is_success() {
+        if matches!(answer.status, 401 | 403) {
+            pace.lock(&host, Utc::now());
+        }
+        return Ok(Lookup::Refused(Some(answer.status)));
+    }
+    Ok(parse(link.api, &base, &answer.body)
+        .and_then(|(posts, _)| posts.into_iter().next())
+        .map_or(Lookup::Unknown, |post| Lookup::Found(Box::new(post))))
 }
 
 /// `own` tags followed by `more`, without repeats, as many as a post takes.
@@ -79,9 +92,12 @@ pub fn wants_lookup(req: &ImportRequest) -> bool {
 /// Downloads what an import asks for. An address that is a post on a booru
 /// becomes that post's original file, tags and rating; any other web page
 /// becomes the picture it is about. Returns the file and the import as it
-/// ended up. `watch` hears how far each download has got.
+/// ended up. `watch` hears how far each download has got. A site that says
+/// it is busy is an error that says when to come back, and nothing else goes
+/// to it meanwhile.
 pub async fn fetch(
     fetcher: &Fetcher,
+    pace: &Pace,
     req: ImportRequest,
     max_bytes: usize,
     watch: Watch<'_>,
@@ -89,18 +105,15 @@ pub async fn fetch(
     let mut req = req;
     let mut refused = None;
     if wants_lookup(&req) {
-        match find(fetcher, &req.url).await {
+        match find(pace, fetcher, &req.url).await? {
             Lookup::Found(post) => req = filled(&req, *post),
             Lookup::Unknown => {}
-            Lookup::Failed(e) => refused = Some(e),
+            Lookup::Refused(status) => refused = Some(status),
         }
     }
     // The page a file belongs to, which some sites want named.
     let from = req.source.clone();
-    let bytes = fetcher
-        .get_from(&req.url, from.as_deref(), max_bytes, watch)
-        .await
-        .map_err(download_error)?;
+    let bytes = download(fetcher, pace, &req.url, from.as_deref(), max_bytes, watch).await?;
     if !html::is_html(&bytes) {
         return Ok((bytes, req));
     }
@@ -109,9 +122,9 @@ pub async fn fetch(
     let page = Url::parse(req.url.trim())
         .ok()
         .and_then(|address| html::read(&address, &bytes))
-        .ok_or_else(|| no_picture(refused.as_ref()))?;
+        .ok_or_else(|| no_picture(refused))?;
     let Some(file_url) = page.file_url else {
-        return Err(no_picture(refused.as_ref()));
+        return Err(no_picture(refused));
     };
     let page_url = req.url.clone();
     let req = ImportRequest {
@@ -120,14 +133,35 @@ pub async fn fetch(
         source: Some(req.source.unwrap_or_else(|| page_url.clone())),
         url: file_url,
     };
-    let bytes = fetcher
-        .get_from(&req.url, Some(&page_url), max_bytes, watch)
-        .await
-        .map_err(download_error)?;
+    let bytes = download(fetcher, pace, &req.url, Some(&page_url), max_bytes, watch).await?;
     if html::is_html(&bytes) {
-        return Err(no_picture(refused.as_ref()));
+        return Err(no_picture(refused));
     }
     Ok((bytes, req))
+}
+
+/// Downloads a file or a page, unless its site asked to be left alone.
+async fn download(
+    fetcher: &Fetcher,
+    pace: &Pace,
+    url: &str,
+    from: Option<&str>,
+    max_bytes: usize,
+    watch: Watch<'_>,
+) -> AppResult<Vec<u8>> {
+    let host = Url::parse(url.trim())
+        .map(|url| pace::site_key(&url))
+        .unwrap_or_default();
+    pace::wait_turn(pace, &host, TimeDelta::zero()).await?;
+    match fetcher.get_from(url, from, max_bytes, watch).await {
+        Err(FetchError::Status(status)) if pace::is_busy(status) => {
+            pace.hold(&host, BUSY_WAIT_SECS, Utc::now());
+            Err(AppError::TooManyRequests {
+                retry_after: BUSY_WAIT_SECS,
+            })
+        }
+        other => other.map_err(download_error),
+    }
 }
 
 /// A failed download, in terms of what the user can change.
@@ -140,16 +174,13 @@ pub fn download_error(e: FetchError) -> AppError {
 }
 
 /// The address is a web page with nothing to import on it. When its site was
-/// asked first and refused, that is the likelier reason.
-fn no_picture(refused: Option<&FetchError>) -> AppError {
+/// asked first and wanted an account, that is the likelier reason.
+fn no_picture(refused: Option<Option<u16>>) -> AppError {
     match refused {
-        Some(FetchError::Status(401 | 403)) => AppError::BadRequest(
+        Some(Some(401 | 403)) => AppError::BadRequest(
             "that site only answers with an account, and its page shows no picture without one"
                 .into(),
         ),
-        Some(FetchError::Status(429 | 503)) => {
-            AppError::Upstream("that site is busy; try again in a moment".into())
-        }
         _ => AppError::Unsupported(
             "that address is a web page, and no picture or video was found on it".into(),
         ),
@@ -242,9 +273,10 @@ mod tests {
     #[tokio::test]
     async fn a_post_page_becomes_its_file_with_tags_and_rating() {
         let fetcher = Fetcher::new(crate::fetch::Reach::Any).unwrap();
+        let pace = Pace::default();
         let site = fake_booru(false).await;
         let page = format!("{site}/index.php?page=post&s=view&id=7");
-        let (bytes, got) = fetch(&fetcher, req(&page, None), 1 << 20, UNWATCHED)
+        let (bytes, got) = fetch(&fetcher, &pace, req(&page, None), 1 << 20, UNWATCHED)
             .await
             .unwrap();
         assert_eq!(bytes, crate::testing::png(16, 12, 3));
@@ -260,9 +292,10 @@ mod tests {
         // Regression: a link to a Gelbooru post failed with "text/html files
         // are not supported".
         let fetcher = Fetcher::new(crate::fetch::Reach::Any).unwrap();
+        let pace = Pace::default();
         let site = fake_booru(true).await;
         let page = format!("{site}/index.php?page=post&s=view&id=7");
-        let (bytes, got) = fetch(&fetcher, req(&page, Some(&page)), 1 << 20, UNWATCHED)
+        let (bytes, got) = fetch(&fetcher, &pace, req(&page, Some(&page)), 1 << 20, UNWATCHED)
             .await
             .unwrap();
         assert_eq!(bytes, crate::testing::png(16, 12, 3));
@@ -273,7 +306,7 @@ mod tests {
 
         // A page with no picture says so, and says why when the site refused.
         let empty = format!("{site}/index.php?page=post&s=view&id=8");
-        let error = fetch(&fetcher, req(&empty, None), 1 << 20, UNWATCHED)
+        let error = fetch(&fetcher, &pace, req(&empty, None), 1 << 20, UNWATCHED)
             .await
             .unwrap_err();
         assert!(
@@ -282,7 +315,7 @@ mod tests {
         );
         let open = fake_booru(false).await;
         let empty = format!("{open}/index.php?page=post&s=view&id=8");
-        let error = fetch(&fetcher, req(&empty, None), 1 << 20, UNWATCHED)
+        let error = fetch(&fetcher, &pace, req(&empty, None), 1 << 20, UNWATCHED)
             .await
             .unwrap_err();
         assert!(matches!(error, AppError::Unsupported(_)), "{error}");
@@ -291,9 +324,10 @@ mod tests {
     #[tokio::test]
     async fn a_file_or_a_search_result_is_downloaded_as_it_is() {
         let fetcher = Fetcher::new(crate::fetch::Reach::Any).unwrap();
+        let pace = Pace::default();
         let site = fake_booru(false).await;
         let file = format!("{site}/images/a.png");
-        let (_, got) = fetch(&fetcher, req(&file, None), 1 << 20, UNWATCHED)
+        let (_, got) = fetch(&fetcher, &pace, req(&file, None), 1 << 20, UNWATCHED)
             .await
             .unwrap();
         assert_eq!(
@@ -306,15 +340,93 @@ mod tests {
         let locked = fake_booru(true).await;
         let file = format!("{locked}/images/a.png");
         let page = format!("{locked}/index.php?page=post&s=view&id=7");
-        let (_, got) = fetch(&fetcher, req(&file, Some(&page)), 1 << 20, UNWATCHED)
+        let (_, got) = fetch(&fetcher, &pace, req(&file, Some(&page)), 1 << 20, UNWATCHED)
             .await
             .unwrap();
         assert_eq!(got.source.as_deref(), Some(page.as_str()));
         assert_eq!(got.rating, Rating::Explicit);
-        let error = fetch(&fetcher, req(&file, None), 8, UNWATCHED)
+        let error = fetch(&fetcher, &pace, req(&file, None), 8, UNWATCHED)
             .await
             .unwrap_err();
         assert!(matches!(error, AppError::PayloadTooLarge), "{error}");
+    }
+
+    #[tokio::test]
+    async fn a_site_that_wants_an_account_is_asked_once() {
+        use axum::http::StatusCode;
+        use axum::routing::get;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let asked = Arc::new(AtomicUsize::new(0));
+        let count = asked.clone();
+        let app = axum::Router::new().route(
+            "/index.php",
+            get(move || {
+                count.fetch_add(1, Ordering::SeqCst);
+                async { StatusCode::UNAUTHORIZED }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let site = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        let fetcher = Fetcher::new(crate::fetch::Reach::Any).unwrap();
+        let pace = Pace::default();
+        let page = format!("{site}/index.php?page=post&s=view&id=7");
+        for _ in 0..3 {
+            let found = find(&pace, &fetcher, &page).await.unwrap();
+            assert!(matches!(found, Lookup::Refused(Some(401))));
+        }
+        assert_eq!(asked.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn a_busy_site_makes_the_import_wait() {
+        use axum::http::StatusCode;
+        use axum::routing::get;
+        let app = axum::Router::new()
+            .route("/a.png", get(|| async { StatusCode::TOO_MANY_REQUESTS }))
+            .route("/b.png", get(|| async { crate::testing::png(4, 4, 1) }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let site = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        let fetcher = Fetcher::new(crate::fetch::Reach::Any).unwrap();
+        let pace = Pace::default();
+        let busy =
+            |e: AppError| matches!(e, AppError::TooManyRequests { retry_after } if retry_after > 0);
+        let error = fetch(
+            &fetcher,
+            &pace,
+            req(&format!("{site}/a.png"), None),
+            1 << 20,
+            UNWATCHED,
+        )
+        .await
+        .unwrap_err();
+        assert!(busy(error));
+        // The next file on that site waits too, without being asked for.
+        let error = fetch(
+            &fetcher,
+            &pace,
+            req(&format!("{site}/b.png"), None),
+            1 << 20,
+            UNWATCHED,
+        )
+        .await
+        .unwrap_err();
+        assert!(busy(error));
+        // Whoever hasn't heard that isn't held back.
+        let other = Pace::default();
+        assert!(
+            fetch(
+                &fetcher,
+                &other,
+                req(&format!("{site}/b.png"), None),
+                1 << 20,
+                UNWATCHED
+            )
+            .await
+            .is_ok()
+        );
     }
 
     #[test]

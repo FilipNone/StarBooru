@@ -23,6 +23,20 @@ const WORKERS: usize = 2;
 const MAX_WAITING: i64 = 2000;
 /// Longest a worker sleeps before looking for work it wasn't told about.
 const IDLE: Duration = Duration::from_secs(60);
+/// How many times an import waits for a site that says it is busy.
+const MAX_ATTEMPTS: i16 = 6;
+/// The wait before the second try; each later one is twice as long.
+const FIRST_WAIT_SECS: u64 = 15;
+/// The longest an import waits between two tries.
+const MAX_WAIT_SECS: u64 = 600;
+
+/// How long an import waits before trying a busy site again: what the site
+/// asked for, and longer each time.
+fn retry_wait(attempts: i16, asked: u64) -> u64 {
+    let step = u32::try_from(attempts.max(0)).unwrap_or(0).min(16);
+    let backoff = FIRST_WAIT_SECS.saturating_mul(1u64 << step);
+    asked.max(backoff).min(MAX_WAIT_SECS)
+}
 /// Finished imports are listed for a day and deleted after a week.
 const LISTED_HOURS: i32 = 24;
 const KEPT_DAYS: i32 = 7;
@@ -249,7 +263,9 @@ async fn worker(state: AppState) {
         match run_next(&state).await {
             Ok(true) => continue,
             Ok(false) => {
-                let _ = tokio::time::timeout(IDLE, woken).await;
+                // Until told of new work, or until a waiting import is due.
+                let nap = next_due(&state).await.map_or(IDLE, |due| due.min(IDLE));
+                let _ = tokio::time::timeout(nap, woken).await;
             }
             Err(e) => {
                 warn!("imports: {e}");
@@ -259,7 +275,21 @@ async fn worker(state: AppState) {
     }
 }
 
-/// Claims and runs the oldest waiting import. `false` when none is waiting.
+/// How long until the first import that is waiting for a busy site may try
+/// again. `None` when none is.
+async fn next_due(state: &AppState) -> Option<Duration> {
+    let due: Option<DateTime<Utc>> = sqlx::query_scalar(
+        "SELECT min(not_before) FROM import_jobs WHERE state = 'queued' AND not_before IS NOT NULL",
+    )
+    .fetch_one(&state.db)
+    .await
+    .ok()?;
+    let wait = (due? - Utc::now()).to_std().unwrap_or_default();
+    Some(wait + Duration::from_millis(50))
+}
+
+/// Claims and runs the oldest waiting import that is due. `false` when none
+/// is.
 pub(crate) async fn run_next(state: &AppState) -> AppResult<bool> {
     #[derive(FromRow)]
     struct Claimed {
@@ -269,14 +299,16 @@ pub(crate) async fn run_next(state: &AppState) -> AppResult<bool> {
         source: Option<String>,
         tags: Vec<String>,
         rating: i16,
+        attempts: i16,
         active: bool,
     }
     let claimed: Option<Claimed> = sqlx::query_as(
         "UPDATE import_jobs j SET state = 'running' FROM users u \
          WHERE j.id = (SELECT id FROM import_jobs WHERE state = 'queued' \
+                       AND (not_before IS NULL OR not_before <= now()) \
                        ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED) \
          AND u.id = j.user_id \
-         RETURNING j.id, j.user_id, j.url, j.source, j.tags, j.rating, \
+         RETURNING j.id, j.user_id, j.url, j.source, j.tags, j.rating, j.attempts, \
                    u.disabled_at IS NULL AS active",
     )
     .fetch_optional(&state.db)
@@ -298,6 +330,25 @@ pub(crate) async fn run_next(state: &AppState) -> AppResult<bool> {
     state.transfers.end(job.id);
     let (done, post_id, error) = match outcome {
         Ok(post) => (JobState::Done, Some(post.id), None),
+        // The site is busy: back in the queue, to try again later.
+        Err(AppError::TooManyRequests { retry_after }) if job.attempts < MAX_ATTEMPTS => {
+            let wait = retry_wait(job.attempts, retry_after);
+            sqlx::query(
+                "UPDATE import_jobs SET state = 'queued', attempts = attempts + 1, error = $2, \
+                 not_before = now() + $3::bigint * interval '1 second' WHERE id = $1",
+            )
+            .bind(job.id)
+            .bind("that site is busy; this import will try again shortly")
+            .bind(i64::try_from(wait).unwrap_or(i64::MAX))
+            .execute(&state.db)
+            .await?;
+            return Ok(true);
+        }
+        Err(AppError::TooManyRequests { .. }) => (
+            JobState::Failed,
+            None,
+            Some("that site kept saying it is busy; try again later".to_owned()),
+        ),
         Err(AppError::Conflict {
             code: "duplicate",
             message,
@@ -487,6 +538,98 @@ mod tests {
                 .iter()
                 .all(|j| j.get("progress").is_none())
         );
+        app.finish().await;
+    }
+
+    #[test]
+    fn waits_longer_each_time_and_as_long_as_asked() {
+        assert_eq!(retry_wait(0, 0), 15);
+        assert_eq!(retry_wait(1, 0), 30);
+        assert_eq!(retry_wait(3, 0), 120);
+        assert_eq!(retry_wait(0, 42), 42);
+        assert_eq!(retry_wait(3, 42), 120);
+        assert_eq!(retry_wait(i16::MAX, u64::MAX), MAX_WAIT_SECS);
+        assert_eq!(retry_wait(-1, 0), 15);
+    }
+
+    #[tokio::test]
+    async fn an_import_waits_for_a_busy_site_and_tries_again() {
+        use axum::http::StatusCode;
+        use axum::response::IntoResponse;
+        use axum::routing::get;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let Some(app) = app().await else {
+            return;
+        };
+        let t = app.register("admin").await;
+        // Busy the first time it is asked, and whenever `/never` is.
+        let hits = Arc::new(AtomicUsize::new(0));
+        let count = hits.clone();
+        let png = testing::png(20, 10, 4);
+        let site = axum::Router::new()
+            .route(
+                "/a.png",
+                get(move || {
+                    let first = count.fetch_add(1, Ordering::SeqCst) == 0;
+                    let png = png.clone();
+                    async move {
+                        if first {
+                            StatusCode::TOO_MANY_REQUESTS.into_response()
+                        } else {
+                            png.into_response()
+                        }
+                    }
+                }),
+            )
+            .route("/never", get(|| async { StatusCode::SERVICE_UNAVAILABLE }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, site).await });
+
+        let jobs = queue(&app, &t, json!([{ "url": format!("{base}/a.png") }]))
+            .await
+            .json();
+        let id = jobs[0]["id"].as_i64().unwrap();
+        assert!(run_next(&app.state).await.unwrap());
+        let job = app.get("/api/v1/imports", &t).await.json()[0].clone();
+        assert_eq!(job["state"], "queued");
+        assert!(job["error"].as_str().unwrap().contains("busy"));
+        // Not due yet: nothing to run, and a worker knows how long to sleep.
+        assert!(!run_next(&app.state).await.unwrap());
+        let due = next_due(&app.state).await.unwrap();
+        assert!((10..=16).contains(&due.as_secs()), "{due:?}");
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+
+        // Once the wait is over, it goes through.
+        let overdue = "UPDATE import_jobs SET not_before = now() - interval '1 second'";
+        sqlx::query(overdue).execute(app.db()).await.unwrap();
+        app.state.pace.forget();
+        assert!(run_next(&app.state).await.unwrap());
+        let job = app.get("/api/v1/imports", &t).await.json()[0].clone();
+        assert_eq!(
+            (job["id"].as_i64(), job["state"].as_str()),
+            (Some(id), Some("done"))
+        );
+        assert!(job["error"].is_null());
+        assert_eq!(next_due(&app.state).await, None);
+
+        // A site that never lets up fails the import in the end.
+        queue(&app, &t, json!([{ "url": format!("{base}/never") }])).await;
+        let mut tries = 0;
+        loop {
+            sqlx::query(overdue).execute(app.db()).await.unwrap();
+            app.state.pace.forget();
+            if !run_next(&app.state).await.unwrap() {
+                break;
+            }
+            tries += 1;
+            assert!(tries < 20, "it never gave up");
+        }
+        assert_eq!(tries, usize::try_from(MAX_ATTEMPTS).unwrap() + 1);
+        let job = app.get("/api/v1/imports", &t).await.json()[0].clone();
+        assert_eq!(job["state"], "failed");
+        assert!(job["error"].as_str().unwrap().contains("kept saying"));
         app.finish().await;
     }
 

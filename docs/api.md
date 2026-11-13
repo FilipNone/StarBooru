@@ -263,15 +263,16 @@ Tags are resolved the same way everywhere: an alias in a post's tags or in a sea
 The server searches another booru for you, so the app needs no cross-site access and the same address rules as `POST /posts/import` apply (public addresses only unless the server allows private ones; off when URL import is off).
 
 - `api` is `danbooru`, `gelbooru` (Gelbooru 0.2 and forks such as Safebooru and Rule34's `api.rule34.xxx`), `moebooru` (yande.re, Konachan), `e621` (e621, e926) or `blombooru` (Danbooru's API, but its `s` rating means safe).
-- `base` is the site's http(s) address without query or credentials; a trailing slash is dropped. `tags` is in the site's own syntax. `page` starts at 1 and goes up to 1000. Each page asks for 40 posts.
+- `base` is the site's http(s) address without query or credentials; a trailing slash is dropped. `tags` is in the site's own syntax. `page` starts at 1. Each page asks for 40 posts.
 - `login` and `api_key` are the account on that site, sent only to it, in the query as it names them (`user_id` for Gelbooru, `password_hash` for Moebooru). They are used only when both are given, and are never stored or logged by the server. Each field is at most 512 bytes.
-- A `RemotePost` is `{id, page_url, preview_url, file_url, tags, rating, width, height}`. `tags` holds only tags valid here (the rest are dropped); `rating` is mapped to StarBooru's scale. Posts without a file the account may see are left out. `more` is true when the site sent a full page.
+- A `RemotePost` is `{id, site, page_url, preview_url, sample_url?, file_url, tags, groups?, rating, width, height, md5?, source?, score?, created_at?, file_size?}`. `tags` holds only tags valid here (the rest are dropped); `groups` is `{artist?, copyright?, character?, meta?}`, the names among `tags` that aren't general ones, where the site says (Danbooru, e621, Moebooru). `rating` is mapped to StarBooru's scale. `sample_url` is a copy sized for a screen, when the site makes one. Posts without a file the account may see are left out. `more` is true when the site sent a full page and has a next one.
+- The server keeps to each site's limits (`starbooru_core::Limits`): how deep a search goes (Danbooru 1000 pages, e621 750, Gelbooru 500, as it stops 20,000 posts in), how many tags one takes without an account (Danbooru 2, e621 40; `rating:` doesn't count), and the time between two requests to a site, which every account's searches and imports share (Danbooru, Gelbooru and Moebooru half a second, e621 a second). A request waits up to 8 seconds for its turn.
 - Import results with `POST /imports` (in the background) or `POST /posts/import` (one, waiting for it), `url` = `file_url` and `source` = `page_url`.
 
 Errors:
-- 400 `bad_request`: a bad request, an address the server won't reach, URL import turned off, a site that wants an account (401/403 from it), or a search it refused (400/422, e.g. Danbooru's two-tag limit without an account).
-- 429 `rate_limited` with `Retry-After: 5` when the site is busy (429/503).
-- 424 `fetch_failed` when the site errors, times out, or answers with something that isn't that API's search.
+- 400 `bad_request`: a bad request, an address the server won't reach, URL import turned off, a search past one of the site's limits, a site that wants an account (401/403 from it), or a search it refused. What the site says about a refusal is passed on: `that site says: You cannot search for more than 2 tags at a time.`
+- 429 `rate_limited` with `Retry-After` when the site says it is busy (429, 503, or Moebooru's 421), for as long as it asks (15 s when it doesn't say, 10 minutes at most), and for every request to that site until then; also when the wait for a turn would be over 8 seconds.
+- 424 `fetch_failed` when the site errors (with its own words when it gave any), times out, or answers with something that isn't that API's search.
 
 ## Background imports
 
@@ -282,7 +283,7 @@ Errors:
 | DELETE | `/imports/{id}` | | 204; cancels a waiting import or hides a finished one. 409 `running` while it downloads; 404 if it isn't yours. |
 | DELETE | `/imports` | | 204; hides the caller's finished imports |
 
-The server downloads each address on its own, so an import goes on when every app is closed and survives a restart (an import a restart interrupts starts over). Each item follows the rules of `POST /posts/import`; the whole batch is refused (400) when one address is not http(s), has credentials, is on a private network (unless the server allows it), has a bad tag, or URL import is off. 409 `too_many_imports` past 2000 waiting imports per account. Two imports run at once, server-wide, oldest first. Finished imports are deleted after 7 days.
+The server downloads each address on its own, so an import goes on when every app is closed and survives a restart (an import a restart interrupts starts over). Each item follows the rules of `POST /posts/import`; the whole batch is refused (400) when one address is not http(s), has credentials, is on a private network (unless the server allows it), has a bad tag, or URL import is off. 409 `too_many_imports` past 2000 waiting imports per account. Two imports run at once, server-wide, oldest first. An import whose site says it is busy goes back to `queued` with a note in `error`, and tries again after the time the site asked for, or 15 seconds, twice as long each time, up to six times. Finished imports are deleted after 7 days.
 
 `ImportJob` is `{id, url, source, tags, rating, state, post_id, error, created_at, finished_at, progress?}`. `progress` is there while the import is `running` and its download has started: `{done, total?, speed}`, bytes so far, the file's size when the site says it, and bytes per second over the last moments (0 until measured). `state` is `queued`, `running`, `done` (`post_id` is the new post), `duplicate` (the file was already here; `error` says which post) or `failed` (`error` says why, e.g. the site answered 404, the file is over the upload limit, the storage limit, a disabled account). File uploads (`POST /posts`) are sent by the app, so they stop when it closes.
 

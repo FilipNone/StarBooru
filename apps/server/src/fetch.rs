@@ -13,7 +13,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use reqwest::dns::{Addrs, Name, Resolve, Resolving};
-use reqwest::header::{ACCEPT, CONTENT_TYPE, HeaderName, HeaderValue, LOCATION, REFERER};
+use reqwest::header::{
+    ACCEPT, CONTENT_TYPE, HeaderName, HeaderValue, LOCATION, REFERER, RETRY_AFTER,
+};
 use reqwest::{Url, redirect};
 
 const MAX_REDIRECTS: usize = 5;
@@ -60,6 +62,27 @@ pub struct SiteCall<'a> {
     pub headers: &'a [(HeaderName, HeaderValue)],
     /// Asks for JSON, which some APIs insist on.
     pub json: bool,
+}
+
+/// Largest answer read from a site's API; a page of posts is well under 1 MiB.
+const MAX_ANSWER: usize = 8 * 1024 * 1024;
+/// How much of an answer that isn't a success is read: enough for the site's
+/// own words about what went wrong.
+const MAX_REFUSAL: usize = 64 * 1024;
+
+/// What a site's API answered, whatever the status.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Answer {
+    pub status: u16,
+    /// Seconds the site asks to stay away for (`Retry-After`), when it says.
+    pub retry_after: Option<u64>,
+    pub body: Vec<u8>,
+}
+
+impl Answer {
+    pub fn is_success(&self) -> bool {
+        (200..300).contains(&self.status)
+    }
 }
 
 /// Hears how many bytes of a download have arrived, and how many there will
@@ -115,12 +138,8 @@ impl Fetcher {
         check_url(&url, self.reach)
     }
 
-    /// Downloads `raw` into memory, refusing bodies over `max_bytes`.
-    pub async fn get(&self, raw: &str, max_bytes: usize) -> Result<Vec<u8>, FetchError> {
-        self.get_from(raw, None, max_bytes, UNWATCHED).await
-    }
-
-    /// Downloads `raw` as a browser on the page `from` would: some sites
+    /// Downloads `raw` into memory, refusing bodies over `max_bytes`, as a
+    /// browser on the page `from` would: some sites
     /// (Gelbooru) only hand their files to their own pages. Only the page's
     /// site is named, never its whole address. `watch` hears how far the
     /// download has got as each piece arrives.
@@ -139,6 +158,48 @@ impl Fetcher {
         }
         let response = request.send().await.map_err(classify)?;
         read_capped(response, max_bytes, watch).await
+    }
+
+    /// Asks a site's API and gives back what it answered, refusals too: what
+    /// a site says about a limit is worth passing on.
+    pub async fn ask(&self, raw: &str) -> Result<Answer, FetchError> {
+        let url = Url::parse(raw.trim()).map_err(|_| FetchError::BadUrl)?;
+        check_url(&url, self.reach)?;
+        let mut response = self
+            .client
+            .get(url)
+            .header(ACCEPT, "application/json")
+            .send()
+            .await
+            .map_err(classify)?;
+        let status = response.status();
+        let retry_after = response
+            .headers()
+            .get(RETRY_AFTER)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.trim().parse().ok());
+        let max = if status.is_success() {
+            MAX_ANSWER
+        } else {
+            MAX_REFUSAL
+        };
+        let mut body = Vec::new();
+        while let Some(chunk) = response.chunk().await.map_err(classify)? {
+            let room = max.saturating_sub(body.len());
+            if chunk.len() > room {
+                if status.is_success() {
+                    return Err(FetchError::TooLarge);
+                }
+                body.extend_from_slice(chunk.get(..room).unwrap_or_default());
+                break;
+            }
+            body.extend_from_slice(&chunk);
+        }
+        Ok(Answer {
+            status: status.as_u16(),
+            retry_after,
+            body,
+        })
     }
 
     /// Sends a request to a site with an account on it, following redirects
@@ -592,6 +653,60 @@ mod tests {
         assert!(matches!(answer, Err(FetchError::Status(404))));
     }
 
+    #[tokio::test]
+    async fn an_api_answer_comes_back_whatever_its_status() {
+        use axum::http::{HeaderMap, StatusCode, header};
+        use axum::routing::get;
+        let app = axum::Router::new()
+            .route("/ok", get(|| async { "[1,2]" }))
+            .route(
+                "/limit",
+                get(|| async {
+                    (
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        r#"{"message":"too many tags"}"#,
+                    )
+                }),
+            )
+            .route(
+                "/busy",
+                get(|| async {
+                    let mut headers = HeaderMap::new();
+                    headers.insert(header::RETRY_AFTER, "10".parse().unwrap());
+                    (StatusCode::TOO_MANY_REQUESTS, headers, "")
+                }),
+            )
+            .route(
+                "/long",
+                get(|| async { (StatusCode::BAD_REQUEST, "x".repeat(MAX_REFUSAL * 2)) }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        let f = Fetcher::new(Reach::Any).unwrap();
+        let ask = |path: &'static str| {
+            let f = &f;
+            async move { f.ask(&format!("http://{addr}/{path}")).await.unwrap() }
+        };
+        let ok = ask("ok").await;
+        assert!(ok.is_success());
+        assert_eq!((ok.body.as_slice(), ok.retry_after), (&b"[1,2]"[..], None));
+        let limit = ask("limit").await;
+        assert_eq!(limit.status, 422);
+        assert_eq!(limit.body, br#"{"message":"too many tags"}"#);
+        let busy = ask("busy").await;
+        assert_eq!((busy.status, busy.retry_after), (429, Some(10)));
+        // A refusal is read only as far as its message could go.
+        assert_eq!(ask("long").await.body.len(), MAX_REFUSAL);
+        assert!(matches!(
+            Fetcher::new(Reach::Public)
+                .unwrap()
+                .ask(&format!("http://{addr}/ok"))
+                .await,
+            Err(FetchError::Blocked)
+        ));
+    }
+
     #[test]
     fn a_referer_names_the_site_only() {
         let site = |raw: &str| site_of(raw).map(|v| v.to_str().unwrap().to_owned());
@@ -626,7 +741,10 @@ mod tests {
         tokio::spawn(async move { axum::serve(listener, app).await });
         let f = Fetcher::new(Reach::Any).unwrap();
         let file = format!("http://{addr}/file");
-        assert_eq!(f.get(&file, 64).await.unwrap(), b"none");
+        assert_eq!(
+            f.get_from(&file, None, 64, UNWATCHED).await.unwrap(),
+            b"none"
+        );
         let page = "https://booru.example/post/show/7?key=secret";
         assert_eq!(
             f.get_from(&file, Some(page), 64, UNWATCHED).await.unwrap(),
@@ -693,15 +811,17 @@ mod tests {
         let f = Fetcher::new(Reach::Public).unwrap();
         // `localhost` resolves, but only to loopback.
         assert!(matches!(
-            f.get("http://localhost:1/x", 1024).await,
+            f.get_from("http://localhost:1/x", None, 1024, UNWATCHED)
+                .await,
             Err(FetchError::Blocked)
         ));
         assert!(matches!(
-            f.get("http://127.0.0.1:1/x", 1024).await,
+            f.get_from("http://127.0.0.1:1/x", None, 1024, UNWATCHED)
+                .await,
             Err(FetchError::Blocked)
         ));
         assert!(matches!(
-            f.get("not a url", 1024).await,
+            f.get_from("not a url", None, 1024, UNWATCHED).await,
             Err(FetchError::BadUrl)
         ));
     }

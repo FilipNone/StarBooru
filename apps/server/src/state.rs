@@ -12,6 +12,7 @@ use crate::local_ai::LocalAi;
 use crate::media::Signer;
 use crate::ocr::Ocr;
 use crate::oidc::Oidc;
+use crate::remote::pace::Pace;
 use crate::storage::Storage;
 use crate::throttle::Guards;
 use crate::transfers::Transfers;
@@ -44,6 +45,8 @@ pub struct Inner {
     pub imports: tokio::sync::Notify,
     /// How far each running import's download has got.
     pub transfers: Transfers,
+    /// When each other booru may next be asked.
+    pub pace: Pace,
     /// Woken when a library import is queued.
     pub library_imports: tokio::sync::Notify,
     /// The built-in AI models and the process that runs them.
@@ -88,6 +91,7 @@ impl AppState {
             ocr,
             imports: tokio::sync::Notify::new(),
             transfers: Transfers::default(),
+            pace: Pace::default(),
             library_imports: tokio::sync::Notify::new(),
             local_ai,
             started_at: Utc::now(),

@@ -938,8 +938,9 @@ pub(super) async fn import_one(
             state.transfers.seen(job, done, total, Utc::now());
         }
     };
+    let limit = state.config.max_upload_bytes;
     let (fetched, req) =
-        crate::remote::lookup::fetch(fetcher, req, state.config.max_upload_bytes, &watch).await?;
+        crate::remote::lookup::fetch(fetcher, &state.pace, req, limit, &watch).await?;
     let tags = normalize_tags(req.tags.iter().map(String::as_str))?;
     let source = clean_source(req.source.unwrap_or(req.url))?;
     create_post(
