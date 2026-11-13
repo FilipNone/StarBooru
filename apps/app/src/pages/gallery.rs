@@ -1,6 +1,7 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 
+use crate::link::Link;
 use chrono::{DateTime, Utc};
 use dioxus::prelude::*;
 use serde::Deserialize;

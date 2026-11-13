@@ -4,6 +4,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::link::Link;
 use dioxus::prelude::*;
 use starbooru_core::tag::{MAX_TAGS_PER_POST, TagError};
 use starbooru_core::{

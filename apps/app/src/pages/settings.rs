@@ -1,3 +1,4 @@
+use crate::link::Link;
 use chrono::Utc;
 use dioxus::prelude::*;
 use starbooru_core::color::Rgb;

@@ -1,6 +1,7 @@
 //! Upload: files and addresses wait here for their tags, then go to the
 //! app-wide queue (`activity`), so they keep going on other pages.
 
+use crate::link::Link;
 use dioxus::html::{FileData, HasFileData};
 use dioxus::prelude::*;
 use starbooru_core::tag::TagError;

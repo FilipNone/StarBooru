@@ -8,6 +8,7 @@ mod activity;
 #[cfg(target_os = "android")]
 mod back;
 mod brand;
+mod bridge;
 #[rustfmt::skip]
 mod brand_paths;
 mod cache;
@@ -15,6 +16,7 @@ mod download;
 mod gesture;
 mod icons;
 mod layout;
+mod link;
 mod motion;
 mod oidc;
 mod pace;
@@ -116,6 +118,7 @@ fn launch_desktop() {
 #[component]
 fn App() -> Element {
     cache::register();
+    bridge::install();
     power::watch();
     pace::watch();
     system::watch();

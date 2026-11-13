@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::link::Link;
 use dioxus::core::Task;
 use dioxus::html::geometry::{ClientPoint, PixelsRect};
 use dioxus::prelude::*;
@@ -1566,6 +1567,22 @@ fn RelatedThumb(id: i64, src: String, alt: String, place: usize, come: Signal<us
     // A memo, so each arrival draws the one thumbnail it lets in and not all twelve.
     let asked = use_memo(move || takes_turn(place, come()));
     let mut ready = use_signal(|| false);
+    // An effect and not `onmounted`, which in the native builds is a request
+    // from the page to Rust that the page waits for (bridge.rs): twelve of them
+    // cost the viewer's entrance close to 100 ms on a phone. `decoded` waits
+    // for the picture to be on the page.
+    let mut started = use_hook(|| CopyValue::new(false));
+    use_effect(move || {
+        if !asked() || *started.peek() {
+            return;
+        }
+        started.set(true);
+        spawn(async move {
+            motion::decoded(&format!(".related-grid img[data-related=\"{id}\"]")).await;
+            ready.set(true);
+            come += 1;
+        });
+    });
     if !asked() {
         return rsx! {};
     }
@@ -1576,13 +1593,6 @@ fn RelatedThumb(id: i64, src: String, alt: String, place: usize, come: Signal<us
             src,
             alt,
             decoding: "async",
-            onmounted: move |_| {
-                spawn(async move {
-                    motion::decoded(&format!(".related-grid img[data-related=\"{id}\"]")).await;
-                    ready.set(true);
-                    come += 1;
-                });
-            },
         }
     }
 }
@@ -2072,6 +2082,9 @@ fn Stage(
     rsx! {
         section {
             class,
+            // Moves reach Rust only for zoom, pan and pinch (bridge.rs). A
+            // swipe that turns the page is the page's (`STAGE`).
+            "data-pointer": zoomable.then_some(crate::bridge::ZOOM),
             onmounted: move |e| {
                 mounted.set(Some(e.data()));
                 spawn(async move {
@@ -2323,6 +2336,16 @@ mod tests {
         let (_, ahead) = source.split_once("client.post(near).await").unwrap();
         let rested = ahead.find("motion::rested().await").unwrap();
         assert!(rested < ahead.find("motion::ahead(").unwrap());
+    }
+
+    #[test]
+    fn a_related_picture_asks_rust_nothing_on_mounting() {
+        // Regression: twelve synchronous requests to Rust (bridge.rs) as the viewer opened.
+        let source = include_str!("post.rs");
+        let (_, thumb) = source.split_once("\nfn RelatedThumb(").unwrap();
+        let (thumb, _) = thumb.split_once("\nenum Op").unwrap();
+        assert!(!thumb.contains("onmounted:"));
+        assert!(thumb.contains("use_effect("));
     }
 
     #[test]

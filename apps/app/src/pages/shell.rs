@@ -7,6 +7,7 @@ use std::cmp::Ordering;
 use std::mem::discriminant;
 use std::rc::Rc;
 
+use crate::link::Link;
 use chrono::{DateTime, Utc};
 use dioxus::prelude::*;
 use starbooru_core::Tag;

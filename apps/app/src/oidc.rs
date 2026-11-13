@@ -5,6 +5,7 @@
 //! Desktop/Android: the system browser opens the provider, and the answer
 //! comes back to a one-off listener on `127.0.0.1` that this app runs.
 
+use crate::link::Link;
 use dioxus::prelude::*;
 use starbooru_client::{Client, ClientError};
 use starbooru_core::{AuthResponse, Identity, OidcError, OidcFinish};

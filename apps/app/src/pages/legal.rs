@@ -2,6 +2,7 @@
 //! the sign-in card can link to them. The text describes what the software
 //! does; each server's operator is the one responsible for running it.
 
+use crate::link::Link;
 use dioxus::prelude::*;
 
 use crate::Route;

@@ -4,6 +4,7 @@
 
 use std::collections::BTreeMap;
 
+use crate::link::Link;
 use dioxus::prelude::*;
 use starbooru_core::{Figure, FigureKind, Post, Slot};
 

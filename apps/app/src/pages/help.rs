@@ -2,6 +2,7 @@
 //! that run a search, a box that explains a query as you type, and the
 //! viewer's keyboard shortcuts and gestures.
 
+use crate::link::Link;
 use dioxus::prelude::*;
 use starbooru_core::filter::SizeField;
 use starbooru_core::{FigureTerm, MediaKind, Order, Rating, SearchQuery, SortKey, parse_query};

@@ -25,6 +25,7 @@ mod tags;
 mod trash;
 mod upload;
 
+use crate::link::Link;
 use dioxus::prelude::*;
 
 pub use admin::Admin;

@@ -2,6 +2,7 @@
 //! (optionally taking the others' tags) and send the rest to the recycle
 //! bin, or mark a group as not duplicates.
 
+use crate::link::Link;
 use dioxus::prelude::*;
 use starbooru_core::{DEFAULT_DUPLICATE_DISTANCE, DuplicateGroup, Post, ResolveDuplicates};
 

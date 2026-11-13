@@ -1,5 +1,6 @@
 //! The recycle bin: restore posts or delete them for good.
 
+use crate::link::Link;
 use dioxus::prelude::*;
 use starbooru_core::{Post, Role};
 

@@ -1273,6 +1273,7 @@ fn ImageCanvas(
     rsx! {
         div {
             class: if dragging { "editor-canvas dragging" } else { "editor-canvas" },
+            "data-pointer": crate::bridge::ALL,
             onresize: move |e| {
                 if let Ok(s) = e.get_content_box_size() {
                     room.set(Some((s.width, s.height)));

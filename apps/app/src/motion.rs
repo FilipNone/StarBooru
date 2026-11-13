@@ -703,7 +703,12 @@ pub async fn rested() {
 pub async fn decoded(selector: &str) {
     let selector = serde_json::to_string(selector).unwrap_or_else(|_| "\"\"".into());
     let _ = document::eval(&format!(
-        r#"const img = document.querySelector({selector});
+        r#"let img = document.querySelector({selector});
+// Asked for from an effect, the picture can reach the page a frame later.
+for (let i = 0; !img && i < 10; i++) {{
+  await new Promise(requestAnimationFrame);
+  img = document.querySelector({selector});
+}}
 await Promise.race([img?.decode().catch(() => {{}}), new Promise((done) => setTimeout(done, 1500))]);
 await new Promise(requestAnimationFrame);
 return true;"#

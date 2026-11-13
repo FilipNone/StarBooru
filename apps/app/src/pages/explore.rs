@@ -3,6 +3,7 @@
 
 use std::rc::Rc;
 
+use crate::link::Link;
 use chrono::Datelike;
 use dioxus::prelude::*;
 use starbooru_core::{DEFAULT_EXPLORE_DAYS, Order, Post, with_exact, with_order};

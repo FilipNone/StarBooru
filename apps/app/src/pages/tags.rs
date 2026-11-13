@@ -1,6 +1,7 @@
 //! The tag list, the tag page (category, place in the tree, aliases and
 //! implications) and a post's tags grouped for the viewer.
 
+use crate::link::Link;
 use dioxus::prelude::*;
 use starbooru_client::ClientError;
 use starbooru_core::{PostTag, Role, SECTIONS, Tag, TagCategory, TagDetail, TagOrder, TagUpdate};
