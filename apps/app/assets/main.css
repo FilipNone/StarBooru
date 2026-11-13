@@ -1012,6 +1012,10 @@ button.thumb { width: 100%; padding: 0; border: 0; font: inherit; color: inherit
 .post-layout.full-open .glow-layer.on { opacity: 0.6; }
 .app[data-saver="on"] .post-glow { display: none; }
 .app[data-effects="lite"] .post-glow { display: none; }
+/* In fullscreen the glow is also the solid colour behind the picture. Without
+   the glow, that colour has to stay, or the page shows around the picture. */
+.app:is([data-saver="on"], [data-effects="lite"]) .post-layout.full-open .post-glow { display: block; }
+.app:is([data-saver="on"], [data-effects="lite"]) .post-layout.full-open .glow-layer { display: none; }
 
 .stage {
   position: relative; isolation: isolate; display: grid; place-items: center;

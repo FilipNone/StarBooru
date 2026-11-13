@@ -2101,6 +2101,16 @@ mod tests {
     }
 
     #[test]
+    fn fullscreen_keeps_a_solid_backdrop_without_the_glow() {
+        // Regression: with reduced effects or the battery saver, the page showed
+        // around a picture in fullscreen.
+        assert!(rule(".post-layout.full-open .post-glow").contains("background: var(--stage)"));
+        let off = r#".app:is([data-saver="on"], [data-effects="lite"]) .post-layout.full-open"#;
+        assert!(rule(&format!("{off} .post-glow")).contains("display: block"));
+        assert!(rule(&format!("{off} .glow-layer")).contains("display: none"));
+    }
+
+    #[test]
     fn the_glow_fades_rather_than_blurring_every_frame() {
         let layer = rule(".glow-layer");
         assert!(layer.contains("opacity: 0"));
