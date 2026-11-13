@@ -56,8 +56,9 @@
 
 ## Funzionalità
 
-- **Carica come preferisci:** trascina i file, scegli intere cartelle o incolla indirizzi web. I file vengono riconosciuti dal contenuto, quindi entra anche un'immagine senza estensione.
-- **Porta la tua libreria:** importa da szurubooru, Shimmie2, Danbooru, Stash, Blombooru, Monbooru e LANBooru con tag, rating e fonti, oppure scegli i post da Danbooru, Gelbooru, Moebooru ed e621.
+- **Carica come preferisci:** trascina i file, scegli intere cartelle o incolla indirizzi web. Il link a un post di un booru, o un'immagine trascinata da un'altra scheda, porta l'originale con i suoi tag. I file vengono riconosciuti dal contenuto, quindi entra anche un'immagine senza estensione.
+- **Porta la tua libreria:** importa da szurubooru, Shimmie2, Danbooru, Stash, Blombooru, Monbooru e LANBooru con tag, rating e fonti.
+- **Sfoglia altri booru:** cerca su Danbooru, Gelbooru, Moebooru ed e621 da dentro StarBooru, anche su più siti insieme, con i suggerimenti di tag di ciascuno. Salva le ricerche a cui torni e i post che vuoi tenere.
 - **Tag con una struttura:** categorie, albero padre e figlio, alias, implicazioni, tag per ogni persona in un'immagine e correzione dei refusi.
 - **Ricerca veloce:** per tag, rating, data, dimensioni, colore e testo nell'immagine, con completamento automatico e ricerche salvate. Le ricerche per tag richiedono 3–19 ms con un milione di post.
 - **Un visualizzatore fatto per guardare:** zoom, schermo intero, scorciatoie da tastiera, video, voti e post correlati. Ritaglia, raddrizza, ruota e rifletti le immagini, o accorcia i video.
