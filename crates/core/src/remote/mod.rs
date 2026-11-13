@@ -2,11 +2,16 @@
 //! client sends to search one through the server, and the shape every
 //! site's posts are turned into.
 
+mod link;
+
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::model::Rating;
+use crate::model::{Rating, TagCategory};
 use crate::tag::{MAX_TAGS_PER_POST, normalize_tag};
+
+pub use link::{PostLink, PostRef, post_link};
 
 /// Posts asked for per page of a remote search.
 pub const REMOTE_PAGE_SIZE: u32 = 40;
@@ -149,20 +154,134 @@ fn first_page() -> u32 {
     1
 }
 
+/// Which of a post's tags aren't general ones. Every name here is in the
+/// post's `tags` too.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TagGroups {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub artist: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub copyright: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub character: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub meta: Vec<String>,
+}
+
+impl TagGroups {
+    pub fn is_empty(&self) -> bool {
+        self.artist.is_empty()
+            && self.copyright.is_empty()
+            && self.character.is_empty()
+            && self.meta.is_empty()
+    }
+
+    /// The category of one of the post's tags.
+    pub fn category(&self, tag: &str) -> TagCategory {
+        let has = |list: &[String]| list.iter().any(|t| t == tag);
+        if has(&self.artist) {
+            TagCategory::Artist
+        } else if has(&self.copyright) {
+            TagCategory::Copyright
+        } else if has(&self.character) {
+            TagCategory::Character
+        } else if has(&self.meta) {
+            TagCategory::Meta
+        } else {
+            TagCategory::General
+        }
+    }
+
+    /// `tags` as an import sends them: artists, copyrights and characters
+    /// first, each with the prefix that sets its category here.
+    pub fn import_tags(&self, tags: &[String]) -> Vec<String> {
+        let prefixed = |list: &[String], prefix: &str| -> Vec<String> {
+            list.iter()
+                .filter(|tag| tags.contains(tag))
+                .map(|tag| format!("{prefix}{tag}"))
+                .collect()
+        };
+        let mut out = prefixed(&self.artist, "artist:");
+        out.extend(prefixed(&self.copyright, "copyright:"));
+        out.extend(prefixed(&self.character, "character:"));
+        let general = tags
+            .iter()
+            .filter(|tag| self.category(tag) == TagCategory::General);
+        out.extend(general.cloned());
+        out.extend(prefixed(&self.meta, "meta:"));
+        out
+    }
+
+    /// Files `tag` under `category`, once.
+    pub fn put(&mut self, category: TagCategory, tag: &str) {
+        let list = match category {
+            TagCategory::Artist => &mut self.artist,
+            TagCategory::Copyright => &mut self.copyright,
+            TagCategory::Character => &mut self.character,
+            TagCategory::Meta => &mut self.meta,
+            TagCategory::General => return,
+        };
+        if !list.iter().any(|t| t == tag) {
+            list.push(tag.to_owned());
+        }
+    }
+}
+
 /// A post on another booru, in StarBooru's terms.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RemotePost {
     pub id: u64,
+    /// The site it is on, as its address.
+    #[serde(default)]
+    pub site: String,
     /// The post's page on that site, kept as the source when imported.
     pub page_url: String,
     pub preview_url: String,
+    /// A copy sized for a screen, when the site makes one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sample_url: Option<String>,
     /// The original file; what an import downloads.
     pub file_url: String,
     /// Already valid StarBooru tags; the site's others are dropped.
     pub tags: Vec<String>,
+    /// Which of them are artists, characters and so on, when the site says.
+    #[serde(default, skip_serializing_if = "TagGroups::is_empty")]
+    pub groups: TagGroups,
     pub rating: Rating,
     pub width: u32,
     pub height: u32,
+    /// The file's MD5, which is how the same file is known on two sites.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub md5: Option<String>,
+    /// Where the site says the picture comes from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub score: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<DateTime<Utc>>,
+    /// The original's size in bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_size: Option<u64>,
+}
+
+impl RemotePost {
+    /// The tags to import it with (`TagGroups::import_tags`).
+    pub fn import_tags(&self) -> Vec<String> {
+        self.groups.import_tags(&self.tags)
+    }
+
+    /// Whether the file is a video, going by its address.
+    pub fn is_video(&self) -> bool {
+        let path = self.file_url.split(['?', '#']).next().unwrap_or_default();
+        let ext = path
+            .rsplit('.')
+            .next()
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        matches!(ext.as_str(), "mp4" | "webm" | "mkv" | "mov" | "m4v")
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -316,6 +435,78 @@ mod tests {
             remote_tags(many.iter().map(String::as_str)).len(),
             MAX_TAGS_PER_POST
         );
+    }
+
+    fn post(tags: &[&str]) -> RemotePost {
+        RemotePost {
+            id: 1,
+            site: "https://d.org".into(),
+            page_url: "https://d.org/posts/1".into(),
+            preview_url: "https://d.org/p.jpg".into(),
+            sample_url: None,
+            file_url: "https://d.org/a.jpg".into(),
+            tags: tags.iter().map(|t| (*t).to_owned()).collect(),
+            groups: TagGroups::default(),
+            rating: Rating::default(),
+            width: 1,
+            height: 1,
+            md5: None,
+            source: None,
+            score: None,
+            created_at: None,
+            file_size: None,
+        }
+    }
+
+    #[test]
+    fn import_tags_carry_their_category() {
+        let mut p = post(&["sky", "someone", "miku", "vocaloid", "highres"]);
+        assert_eq!(p.import_tags(), p.tags);
+        p.groups.put(TagCategory::Artist, "someone");
+        p.groups.put(TagCategory::Artist, "someone");
+        p.groups.put(TagCategory::Character, "miku");
+        p.groups.put(TagCategory::Copyright, "vocaloid");
+        p.groups.put(TagCategory::Meta, "highres");
+        p.groups.put(TagCategory::General, "sky");
+        // A name the post doesn't carry is left out.
+        p.groups.put(TagCategory::Artist, "nobody");
+        assert_eq!(
+            p.import_tags(),
+            [
+                "artist:someone",
+                "copyright:vocaloid",
+                "character:miku",
+                "sky",
+                "meta:highres"
+            ]
+        );
+        assert_eq!(p.groups.category("miku"), TagCategory::Character);
+        assert_eq!(p.groups.category("sky"), TagCategory::General);
+        // Every one of them is a tag StarBooru takes.
+        for tag in p.import_tags() {
+            assert_eq!(normalize_tag(&tag).as_deref(), Ok(tag.as_str()));
+        }
+    }
+
+    #[test]
+    fn older_answers_still_read() {
+        let p: RemotePost = serde_json::from_str(
+            r#"{"id":1,"page_url":"a","preview_url":"b","file_url":"c","tags":["x"],
+                "rating":"safe","width":1,"height":2}"#,
+        )
+        .unwrap();
+        assert_eq!((&p.md5, &p.sample_url, p.site.as_str()), (&None, &None, ""));
+        assert!(p.groups.is_empty());
+        let json = serde_json::to_value(&p).unwrap();
+        assert!(json.get("groups").is_none() && json.get("md5").is_none());
+    }
+
+    #[test]
+    fn tells_videos_by_their_address() {
+        let mut p = post(&[]);
+        assert!(!p.is_video());
+        p.file_url = "https://d.org/a.WEBM?x=1.jpg".into();
+        assert!(p.is_video());
     }
 
     #[test]

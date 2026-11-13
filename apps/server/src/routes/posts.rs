@@ -22,7 +22,6 @@ use tracing::warn;
 
 use crate::auth::AuthUser;
 use crate::error::{AppError, AppResult};
-use crate::fetch::FetchError;
 use crate::similar;
 use crate::state::AppState;
 use crate::storage::{Ingested, Storage, Variant};
@@ -930,16 +929,12 @@ pub(super) async fn import_one(
         .fetcher
         .as_ref()
         .ok_or_else(|| AppError::BadRequest("URL import is turned off on this server".into()))?;
+    // Checked before anything is downloaded.
+    normalize_tags(req.tags.iter().map(String::as_str))?;
+    let (fetched, req) =
+        crate::remote::lookup::fetch(fetcher, req, state.config.max_upload_bytes).await?;
     let tags = normalize_tags(req.tags.iter().map(String::as_str))?;
-    let source = clean_source(req.source.unwrap_or_else(|| req.url.clone()))?;
-    let fetched = fetcher
-        .get(&req.url, state.config.max_upload_bytes)
-        .await
-        .map_err(|e| match e {
-            FetchError::BadUrl | FetchError::Blocked => AppError::BadRequest(e.to_string()),
-            FetchError::TooLarge => AppError::PayloadTooLarge,
-            _ => AppError::Upstream(e.to_string()),
-        })?;
+    let source = clean_source(req.source.unwrap_or(req.url))?;
     create_post(
         state,
         user_id,

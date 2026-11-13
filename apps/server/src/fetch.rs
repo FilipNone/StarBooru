@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use reqwest::dns::{Addrs, Name, Resolve, Resolving};
-use reqwest::header::{ACCEPT, CONTENT_TYPE, HeaderName, HeaderValue, LOCATION};
+use reqwest::header::{ACCEPT, CONTENT_TYPE, HeaderName, HeaderValue, LOCATION, REFERER};
 use reqwest::{Url, redirect};
 
 const MAX_REDIRECTS: usize = 5;
@@ -110,9 +110,25 @@ impl Fetcher {
 
     /// Downloads `raw` into memory, refusing bodies over `max_bytes`.
     pub async fn get(&self, raw: &str, max_bytes: usize) -> Result<Vec<u8>, FetchError> {
+        self.get_from(raw, None, max_bytes).await
+    }
+
+    /// Downloads `raw` as a browser on the page `from` would: some sites
+    /// (Gelbooru) only hand their files to their own pages. Only the page's
+    /// site is named, never its whole address.
+    pub async fn get_from(
+        &self,
+        raw: &str,
+        from: Option<&str>,
+        max_bytes: usize,
+    ) -> Result<Vec<u8>, FetchError> {
         let url = Url::parse(raw.trim()).map_err(|_| FetchError::BadUrl)?;
         check_url(&url, self.reach)?;
-        let response = self.client.get(url).send().await.map_err(classify)?;
+        let mut request = self.client.get(url);
+        if let Some(site) = from.and_then(site_of) {
+            request = request.header(REFERER, site);
+        }
+        let response = request.send().await.map_err(classify)?;
         read_capped(response, max_bytes).await
     }
 
@@ -160,6 +176,16 @@ impl Fetcher {
         }
         Err(FetchError::Redirects)
     }
+}
+
+/// The site an address is on, as a `Referer`: `https://host/`.
+fn site_of(raw: &str) -> Option<HeaderValue> {
+    let url = Url::parse(raw.trim()).ok()?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return None;
+    }
+    let site = url.join("/").ok()?;
+    HeaderValue::from_str(site.as_str()).ok()
 }
 
 /// A success's body, refusing more than `max_bytes`.
@@ -551,6 +577,48 @@ mod tests {
             )
             .await;
         assert!(matches!(answer, Err(FetchError::Status(404))));
+    }
+
+    #[test]
+    fn a_referer_names_the_site_only() {
+        let site = |raw: &str| site_of(raw).map(|v| v.to_str().unwrap().to_owned());
+        assert_eq!(
+            site("https://b.org/index.php?page=post&s=view&id=7&api_key=secret"),
+            Some("https://b.org/".to_owned())
+        );
+        assert_eq!(
+            site(" http://nas:8000/booru/media/4 "),
+            Some("http://nas:8000/".to_owned())
+        );
+        assert_eq!(site("ftp://b.org/a"), None);
+        assert_eq!(site("a tag, not an address"), None);
+    }
+
+    #[tokio::test]
+    async fn a_download_can_say_which_site_it_comes_from() {
+        use axum::http::HeaderMap;
+        use axum::routing::get;
+        let app = axum::Router::new().route(
+            "/file",
+            get(|headers: HeaderMap| async move {
+                headers
+                    .get("referer")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("none")
+                    .to_owned()
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        let f = Fetcher::new(Reach::Any).unwrap();
+        let file = format!("http://{addr}/file");
+        assert_eq!(f.get(&file, 64).await.unwrap(), b"none");
+        let page = "https://booru.example/post/show/7?key=secret";
+        assert_eq!(
+            f.get_from(&file, Some(page), 64).await.unwrap(),
+            b"https://booru.example/"
+        );
     }
 
     #[tokio::test]

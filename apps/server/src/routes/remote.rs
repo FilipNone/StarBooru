@@ -31,7 +31,7 @@ pub async fn search(
         .clean()
         .map_err(|e| AppError::BadRequest(e.to_string()))?;
     let bad_base = || AppError::BadRequest(RemoteError::BadBase.to_string());
-    let base = remote::base_url(&req).ok_or_else(bad_base)?;
+    let base = remote::base_url(&req.base).ok_or_else(bad_base)?;
     let url = remote::search_url(&req).ok_or_else(bad_base)?;
     // The URL may carry the user's API key: never put it in an error or log.
     let body = fetcher
