@@ -388,7 +388,7 @@ pub fn SharedPage(token: String) -> Element {
                             onclick: move |_| open.set(Some(i)),
                             div { class: "thumb-media",
                                 if let Some(thumb) = &p.thumb_url {
-                                    img { src: abs(thumb), alt: "", loading: "lazy" }
+                                    img { src: abs(thumb), alt: "", loading: "lazy", decoding: "async" }
                                 } else {
                                     div { class: "thumb-placeholder", Ico { icon: Icon::Gallery } }
                                 }

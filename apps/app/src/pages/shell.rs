@@ -7,6 +7,7 @@ use std::cmp::Ordering;
 use std::mem::discriminant;
 use std::rc::Rc;
 
+use chrono::{DateTime, Utc};
 use dioxus::prelude::*;
 use starbooru_core::Tag;
 
@@ -17,6 +18,7 @@ use crate::activity::{self, Activity};
 use crate::brand::{Mark, Wordmark};
 use crate::icons::{Ico, Icon};
 use crate::store::{self, SESSION};
+use crate::util::sleep_ms;
 
 #[component]
 pub fn Shell() -> Element {
@@ -275,6 +277,60 @@ fn split_word(word: &str) -> (&str, &str) {
     (word.strip_suffix(tag).unwrap_or_default(), tag)
 }
 
+/// The tag being typed at the end of the search box, if there is one to
+/// complete. A finished word, a `key:value` term and a closed group have none.
+fn typed_tag(value: &str) -> Option<&str> {
+    if value.ends_with(' ') {
+        return None;
+    }
+    let (_, tag) = split_word(value.split_whitespace().last()?);
+    (!tag.is_empty() && !tag.contains(':') && !tag.ends_with('}')).then_some(tag)
+}
+
+/// How long the typing has to pause before the server is asked for
+/// suggestions. A word typed in one go then costs one request, where every
+/// letter used to cost one.
+const TYPING_PAUSE_MS: u32 = 120;
+/// How many answers are kept, and for how long: tags and their counts change.
+const KEPT_ANSWERS: usize = 48;
+const KEPT_SECONDS: i64 = 60;
+
+/// Recent suggestions by what was typed, so taking a letter back or typing a
+/// word again shows them at once and asks nothing.
+#[derive(Default)]
+struct Suggested {
+    /// Whose they are: another account sees other tags.
+    owner: String,
+    /// The latest last.
+    answers: Vec<(String, DateTime<Utc>, Vec<Tag>)>,
+}
+
+impl Suggested {
+    fn get(&self, owner: &str, typed: &str, now: DateTime<Utc>) -> Option<Vec<Tag>> {
+        self.answers
+            .iter()
+            .find(|(was, at, _)| {
+                self.owner == owner && was == typed && (now - *at).num_seconds() < KEPT_SECONDS
+            })
+            .map(|(.., tags)| tags.clone())
+    }
+
+    fn put(&mut self, owner: &str, typed: String, tags: Vec<Tag>, now: DateTime<Utc>) {
+        if self.owner != owner {
+            self.owner = owner.to_owned();
+            self.answers.clear();
+        }
+        self.answers.retain(|(was, ..)| *was != typed);
+        self.answers.push((typed, now, tags));
+        let extra = self.answers.len().saturating_sub(KEPT_ANSWERS);
+        self.answers.drain(..extra);
+    }
+}
+
+thread_local! {
+    static SUGGESTED: std::cell::RefCell<Suggested> = std::cell::RefCell::default();
+}
+
 /// Tag search with autocomplete on the word being typed.
 #[component]
 fn SearchBox(route: Route) -> Element {
@@ -289,23 +345,23 @@ fn SearchBox(route: Route) -> Element {
 
     let suggestions = use_resource(move || async move {
         let value = text();
-        let word = value
-            .split_whitespace()
-            .last()
-            .unwrap_or_default()
-            .to_owned();
-        let (_, prefix) = split_word(&word);
-        if prefix.is_empty()
-            || value.ends_with(' ')
-            || prefix.contains(':')
-            || prefix.ends_with('}')
-        {
+        let Some(typed) = typed_tag(&value).map(str::to_owned) else {
             return Vec::<Tag>::new();
+        };
+        let owner = store::owner();
+        if let Some(known) = SUGGESTED.with_borrow(|s| s.get(&owner, &typed, Utc::now())) {
+            return known;
         }
+        // The next letter restarts this, which drops it here before it asks.
+        sleep_ms(TYPING_PAUSE_MS).await;
         let Some(client) = store::client() else {
             return Vec::new();
         };
-        client.tags(prefix, 8).await.unwrap_or_default()
+        let Ok(tags) = client.tags(&typed, 8).await else {
+            return Vec::new();
+        };
+        SUGGESTED.with_borrow_mut(|s| s.put(&owner, typed, tags.clone(), Utc::now()));
+        tags
     });
 
     let mut search = move |q: String| {
@@ -430,9 +486,79 @@ fn SearchBox(route: Route) -> Element {
 
 #[cfg(test)]
 mod tests {
-    use super::{route_query, split_word, tab_of};
+    use super::{
+        KEPT_ANSWERS, KEPT_SECONDS, Suggested, route_query, split_word, tab_of, typed_tag,
+    };
     use crate::Route;
+    use chrono::{Duration, Utc};
+    use starbooru_core::Tag;
     use std::mem::discriminant;
+
+    fn tag(name: &str) -> Tag {
+        serde_json::from_value(serde_json::json!({
+            "id": 1, "name": name, "category": "general", "post_count": 3,
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn only_a_tag_still_being_typed_is_completed() {
+        assert_eq!(typed_tag("blue_sk"), Some("blue_sk"));
+        assert_eq!(typed_tag("night -clo"), Some("clo"));
+        assert_eq!(typed_tag("{girl boo"), Some("boo"));
+        assert_eq!(typed_tag("-{bo"), Some("bo"));
+        for done in [
+            "",
+            "   ",
+            "night ",
+            "rating:s",
+            "order:sc",
+            "{girl boots}",
+            "-",
+            "{",
+        ] {
+            assert_eq!(typed_tag(done), None, "{done:?}");
+        }
+    }
+
+    #[test]
+    fn an_answer_is_kept_for_a_minute_and_for_its_account() {
+        let now = Utc::now();
+        let mut kept = Suggested::default();
+        kept.put("a|1", "blu".into(), vec![tag("blue_sky")], now);
+        let names = |found: Option<Vec<Tag>>| {
+            found.map(|t| t.into_iter().map(|t| t.name).collect::<Vec<_>>())
+        };
+        assert_eq!(
+            names(kept.get("a|1", "blu", now)),
+            Some(vec!["blue_sky".to_owned()])
+        );
+        assert_eq!(names(kept.get("a|1", "blue", now)), None);
+        assert_eq!(names(kept.get("b|2", "blu", now)), None);
+        let later = now + Duration::seconds(KEPT_SECONDS);
+        assert_eq!(names(kept.get("a|1", "blu", later)), None);
+        // Another account's first answer empties what the last one saw.
+        kept.put("b|2", "x".into(), Vec::new(), now);
+        assert_eq!(names(kept.get("a|1", "blu", now)), None);
+        assert_eq!(names(kept.get("b|2", "x", now)), Some(Vec::new()));
+    }
+
+    #[test]
+    fn old_answers_make_room() {
+        let now = Utc::now();
+        let mut kept = Suggested::default();
+        for i in 0..KEPT_ANSWERS + 10 {
+            kept.put("a|1", format!("t{i}"), Vec::new(), now);
+            // Asked again: one entry, not two.
+            kept.put("a|1", format!("t{i}"), Vec::new(), now);
+        }
+        assert_eq!(kept.answers.len(), KEPT_ANSWERS);
+        assert!(kept.get("a|1", "t0", now).is_none());
+        assert!(
+            kept.get("a|1", &format!("t{}", KEPT_ANSWERS + 9), now)
+                .is_some()
+        );
+    }
 
     #[test]
     fn the_rail_and_its_thumb_round_the_same_sides() {

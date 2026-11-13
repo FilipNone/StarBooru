@@ -8,6 +8,13 @@ html { -webkit-tap-highlight-color: transparent; }
 /* A scrollbar coming and going would move the middle of the window, and the search with it. */
 html { overflow-y: scroll; }
 body { background: #111; }
+/* The loading screen of index.html goes once the app is on the page. This file
+   has loaded by then, so nothing shows without its styles. */
+#main:not(:empty) + #boot { opacity: 0; visibility: hidden; transition: opacity 150ms ease-out, visibility 0s 150ms; }
+#main:not(:empty) + #boot::after { animation: none; }
+@media (prefers-reduced-motion: reduce) {
+  #main:not(:empty) + #boot { transition: none; }
+}
 
 .app {
   --h: var(--seed-hue, 285);
@@ -174,6 +181,11 @@ h1, h2 { line-height: 1.2; margin: 0; }
 @supports not (backdrop-filter: blur(1px)) {
   .glass { background: var(--surface); }
 }
+/* Reduced effects (pace.rs). The blur is worked out again on every frame that
+   moves under the glass, which is the first thing a small graphics chip can't
+   keep up with. The same tone without it, so whatever stands on the glass reads
+   as before. */
+.app[data-effects="lite"] .glass { background: oklch(from var(--glass) l c h / 1); backdrop-filter: none; }
 
 /* ---------- buttons & controls ---------- */
 
@@ -601,6 +613,10 @@ a.brand:hover .mark-star, a.search-home:hover .mark-star { transform: rotate(90d
 }
 /* The gallery's layout (layout.rs): the script works out each tile's place and
    size as so many tile widths and so many gaps, and this does the pixels. */
+/* The grid's height changes with every page of results. As an ordinary custom
+   property it is inherited, and every tile on the page was restyled each time. */
+@property --height { syntax: "<number>"; inherits: false; initial-value: 0; }
+@property --height-gaps { syntax: "<number>"; inherits: false; initial-value: 0; }
 .masonry-box { container-type: inline-size; }
 .masonry {
   position: relative;
@@ -623,16 +639,33 @@ a.brand:hover .mark-star, a.search-home:hover .mark-star { transform: rotate(90d
   width: calc(var(--w) * var(--tile) + 1px); height: calc(var(--h) * var(--tile) + 1px);
 }
 .app[data-tiles="flush"] .masonry .thumb-media { inset: -1px; }
+/* `--tint` is the picture's main colour (gallery.rs), which fills the tile
+   until its thumbnail has loaded. */
 .thumb {
-  position: relative; display: block; aspect-ratio: 1; overflow: hidden;
-  border-radius: var(--tile-radius); background: var(--surface-2);
+  position: relative; display: block; aspect-ratio: 1; overflow: hidden; text-decoration: none;
+  border-radius: var(--tile-radius); background: var(--tint, var(--surface-2));
   animation: pop-in var(--slow) var(--ease-spring) both; animation-delay: var(--delay, 0ms);
 }
-.thumb.still { animation: none; }
-.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; transition: filter var(--fast) var(--ease); }
+.thumb.still, .app[data-effects="lite"] .thumb { animation: none; }
+/* A browser writes a picture's description in its place when the picture
+   fails, and some browsers while it loads, in the colour of the link around it
+   and underlined like one. The description is for a screen reader, and the
+   tile already shows a colour. */
+.thumb img {
+  width: 100%; height: 100%; object-fit: cover; display: block; color: transparent;
+  transition: filter var(--fast) var(--ease);
+}
+/* For a picture that hasn't come, the browser also draws a small broken-picture
+   mark in the tile's corner. An `img` only draws its `::after` in that state,
+   and this one lies over the mark in the tile's own colour. */
+.thumb img::after { content: ""; position: absolute; inset: 0; background: var(--tint, var(--surface-2)); }
 /* Hover and press only change the light: nothing in the grid moves. */
 .thumb:hover img { filter: brightness(1.08); }
 .thumb:active img { filter: brightness(0.92); }
+/* While the page scrolls under a pointer that stays put, a different tile is
+   under it on every frame. Each one would start a fade of its own, with a layer
+   to draw it on, so the light waits until the page is still (gallery.rs). */
+html.sb-scrolling .thumb img { filter: none; transition: none; }
 .thumb:focus-visible { outline-offset: -3px; }
 .thumb-placeholder { display: grid; place-items: center; height: 100%; color: var(--on-surface-2); }
 .thumb-media { position: absolute; inset: 0; }
@@ -948,6 +981,7 @@ button.thumb { width: 100%; padding: 0; border: 0; font: inherit; color: inherit
 .post-layout.full-open .post-glow { position: fixed; inset: 0; height: auto; z-index: 49; mask-image: none; background: var(--stage); }
 .post-layout.full-open .glow-layer.on { opacity: 0.6; }
 .app[data-saver="on"] .post-glow { display: none; }
+.app[data-effects="lite"] .post-glow { display: none; }
 
 .stage {
   position: relative; isolation: isolate; display: grid; place-items: center;
@@ -1138,6 +1172,14 @@ html:has(.stage.full) { overflow-y: hidden; }
 .related .card-title { margin: 0 0 10px 8px; }
 .related-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
 .related-grid .thumb { border-radius: min(var(--tile-radius), var(--radius-m)); }
+/* Each picture stays unpainted until it has decoded (post.rs), then fades in
+   over its tile's colour. */
+.related-grid .thumb img { visibility: hidden; opacity: 0; }
+.related-grid .thumb img.in {
+  visibility: visible; opacity: 1;
+  transition: opacity var(--med) var(--ease), filter var(--fast) var(--ease);
+}
+.app[data-effects="lite"] .related-grid .thumb img.in { transition: none; }
 @container (max-width: 620px) {
   .related-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
@@ -1254,6 +1296,11 @@ button.chip:disabled { cursor: default; }
   background: var(--surface); border-radius: var(--radius-m);
   animation: slide-in var(--med) var(--ease);
 }
+/* A dropped folder can queue thousands of files, and only the first screenful
+   slides in. `content-visibility: auto` on the rows isn't used: it showed the
+   list sooner, then laid out every row as it came into view, and scrolling
+   through 3000 of them took more than twice as long. */
+.queue-item:nth-child(n + 30) { animation: none; }
 .queue-main { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; }
 .queue-error { margin: 0; font-size: 14px; color: var(--danger); overflow-wrap: anywhere; }
 .queue-note { margin: 0; font-size: 14px; color: var(--on-surface-2); overflow-wrap: anywhere; }
@@ -1408,9 +1455,14 @@ kbd { box-shadow: inset 0 -1px 0 var(--outline); white-space: nowrap; }
    From the bottom: the gallery's copy (0), the picture (1), the viewer's controls
    and panels (2), the bars. The stage keeps its buttons to itself except during
    a flight, when they have to stand over a picture from outside it. */
-html.sb-hero .stage img, html.sb-hero .stage video { visibility: hidden; }
+/* By its id: tied to every `img` in the stage, the class on `html` had each
+   picture in the gallery styled again as one of them lifted off. */
+html.sb-hero :is(#stage-img, .stage video) { visibility: hidden; }
 html.sb-hero-flying .stage { isolation: auto; }
-html.sb-hero-flying :is(.post-main > :not(.stage), .post-layout > .side) { position: relative; z-index: 2; }
+/* Everything in the viewer beside the stage, each by its name. "Anything but
+   the stage" made the browser work out the style of every element on the page
+   again when the flight began and when it ended. */
+html.sb-hero-flying :is(.post-bar, .post-main > .banner, .related, .post-layout > .side) { position: relative; z-index: 2; }
 .page.post-layout { animation-name: fade-in; }
 html.sb-hero-leaving .page.gallery { opacity: 0; }
 html.sb-hero-back .page.gallery { animation: fade-in var(--med) var(--ease); }

@@ -36,12 +36,8 @@ pub fn Upload() -> Element {
     let mut notice = use_signal(|| None::<String>);
     let mut job_error = use_signal(|| None::<String>);
     // Hide URL import when the server has it off (shown while unknown).
-    let url_import = use_resource(|| async move {
-        match store::client() {
-            Some(client) => client.info().await.map(|i| i.url_import).unwrap_or(true),
-            None => true,
-        }
-    });
+    let url_import =
+        use_resource(|| async move { store::server_info().await.is_none_or(|i| i.url_import) });
     use_hook(activity::refresh);
 
     // Only images and videos. Those from a folder get its name as a tag.
@@ -586,6 +582,14 @@ fn JobRow(job: ImportJob, onerror: EventHandler<String>) -> Element {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_long_queue_slides_in_only_its_first_screenful() {
+        // Regression: 3000 queued rows each ran an entrance at once, most of
+        // them far below the screen.
+        let css = include_str!("../../assets/main.css");
+        assert!(css.contains(".queue-item:nth-child(n + 30) { animation: none; }"));
+    }
 
     #[test]
     fn the_picker_hides_no_files_except_for_androids_gallery() {

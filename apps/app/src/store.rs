@@ -3,13 +3,15 @@
 //! Web: `localStorage`. Desktop: `state.json` in the platform config dir.
 //! Android: `state.json` in the app's private files dir.
 
+use std::cell::RefCell;
 use std::sync::{Mutex, PoisonError};
 
+use chrono::{DateTime, Utc};
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 use starbooru_client::Client;
 use starbooru_core::color::Rgb;
-use starbooru_core::{AuthResponse, User};
+use starbooru_core::{AiStatus, AuthResponse, ServerInfo, User};
 
 use crate::i18n::Lang;
 
@@ -78,6 +80,41 @@ impl Saver {
             Saver::Always => t!("saver-always"),
             Saver::Never => t!("saver-never"),
             Saver::Auto => t!("saver-auto"),
+        }
+    }
+}
+
+/// How much the app spends on looks (see `pace.rs`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Effects {
+    Full,
+    /// Plain surfaces for the frosted glass, no entrance for new thumbnails
+    /// and no glow behind a picture.
+    Lite,
+    /// Full until scrolling stutters on this device. Also what an unknown
+    /// value (from a newer version) reads as.
+    #[default]
+    #[serde(other)]
+    Auto,
+}
+
+impl Effects {
+    pub const ALL: [Effects; 3] = [Effects::Auto, Effects::Full, Effects::Lite];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Effects::Auto => "auto",
+            Effects::Full => "full",
+            Effects::Lite => "lite",
+        }
+    }
+
+    pub fn label(self) -> String {
+        match self {
+            Effects::Auto => t!("effects-auto"),
+            Effects::Full => t!("effects-full"),
+            Effects::Lite => t!("effects-lite"),
         }
     }
 }
@@ -205,6 +242,10 @@ pub struct Prefs {
     pub cache_mb: u32,
     pub hand: Hand,
     pub battery_saver: Saver,
+    pub effects: Effects,
+    /// Automatic effects found this device too slow for the full ones. Kept,
+    /// so the next start doesn't stutter until it finds out again.
+    pub effects_reduced: bool,
     /// Other boorus searched, the latest first.
     pub boorus: Vec<SavedBooru>,
     pub gallery_view: GalleryView,
@@ -230,6 +271,8 @@ impl Default for Prefs {
             cache_mb: crate::cache::DEFAULT_LIMIT_MB,
             hand: Hand::Either,
             battery_saver: Saver::Auto,
+            effects: Effects::Auto,
+            effects_reduced: false,
             boorus: Vec::new(),
             gallery_view: GalleryView::default(),
             gallery_columns: None,
@@ -398,6 +441,66 @@ pub fn client() -> Option<Client> {
     Some(client)
 }
 
+/// How long an answer about the server itself is good for. Long enough to
+/// cover opening one post after another, short enough that a change made on
+/// another device shows soon.
+const KEPT_SECONDS: i64 = 120;
+
+/// An answer that rarely changes, with whose it is and when it came.
+struct Kept<T>(Option<(String, DateTime<Utc>, T)>);
+
+impl<T: Clone> Kept<T> {
+    const fn new() -> Self {
+        Self(None)
+    }
+
+    fn get(&self, owner: &str, now: DateTime<Utc>) -> Option<T> {
+        let (whose, at, value) = self.0.as_ref()?;
+        let age = (now - *at).num_seconds();
+        // A clock set back makes an answer from the future: ask again.
+        (whose == owner && (0..KEPT_SECONDS).contains(&age)).then(|| value.clone())
+    }
+
+    fn put(&mut self, owner: String, now: DateTime<Utc>, value: T) {
+        self.0 = Some((owner, now, value));
+    }
+}
+
+thread_local! {
+    static SERVER_INFO: RefCell<Kept<ServerInfo>> = const { RefCell::new(Kept::new()) };
+    static AI_STATUS: RefCell<Kept<AiStatus>> = const { RefCell::new(Kept::new()) };
+}
+
+/// What the server offers (`GET /info`), asked at most every two minutes. The
+/// viewer and the upload page need it on every visit, which used to be a
+/// request each time a post opened.
+pub async fn server_info() -> Option<ServerInfo> {
+    let owner = owner();
+    if let Some(known) = SERVER_INFO.with_borrow(|kept| kept.get(&owner, Utc::now())) {
+        return Some(known);
+    }
+    let info = client()?.info().await.ok()?;
+    SERVER_INFO.with_borrow_mut(|kept| kept.put(owner, Utc::now(), info.clone()));
+    Some(info)
+}
+
+/// Which AI tools the server has on (`GET /ai`), kept like [`server_info`].
+pub async fn ai_status() -> Option<AiStatus> {
+    let owner = owner();
+    if let Some(known) = AI_STATUS.with_borrow(|kept| kept.get(&owner, Utc::now())) {
+        return Some(known);
+    }
+    let status = client()?.ai_status().await.ok()?;
+    AI_STATUS.with_borrow_mut(|kept| kept.put(owner, Utc::now(), status.clone()));
+    Some(status)
+}
+
+/// Drops both answers, after the administration pages may have changed them.
+pub fn forget_server_answers() {
+    SERVER_INFO.with_borrow_mut(|kept| kept.0 = None);
+    AI_STATUS.with_borrow_mut(|kept| kept.0 = None);
+}
+
 pub fn sign_in(server: String, auth: AuthResponse) {
     PREFS.write().last_server = server.clone();
     *SESSION.write() = Some(Session {
@@ -508,12 +611,50 @@ mod tests {
         assert_eq!(prefs.accent_color, None);
         assert_eq!(prefs.hand, Hand::Either);
         assert_eq!(prefs.battery_saver, Saver::Auto);
+        assert_eq!(
+            (prefs.effects, prefs.effects_reduced),
+            (Effects::Auto, false)
+        );
         assert!(prefs.boorus.is_empty());
         let prefs: Prefs = serde_json::from_str(r#"{"hand":"left"}"#).unwrap();
         assert_eq!(prefs.hand, Hand::Left);
         // An unknown hand from a newer version falls back rather than failing.
         let prefs: Prefs = serde_json::from_str(r#"{"hand":"both","theme":"light"}"#).unwrap();
         assert_eq!((prefs.hand, prefs.theme), (Hand::Either, Theme::Light));
+    }
+
+    #[test]
+    fn an_answer_is_kept_two_minutes_for_one_account() {
+        let now = Utc::now();
+        let mut kept = Kept::new();
+        assert_eq!(kept.get("a|1", now), None::<u8>);
+        kept.put("a|1".into(), now, 7u8);
+        assert_eq!(kept.get("a|1", now), Some(7));
+        assert_eq!(
+            kept.get("a|1", now + chrono::Duration::seconds(KEPT_SECONDS - 1)),
+            Some(7)
+        );
+        assert_eq!(
+            kept.get("a|1", now + chrono::Duration::seconds(KEPT_SECONDS)),
+            None
+        );
+        // Another server or account, or a clock that went backwards.
+        assert_eq!(kept.get("b|1", now), None);
+        assert_eq!(kept.get("a|1", now - chrono::Duration::seconds(5)), None);
+    }
+
+    #[test]
+    fn effects_round_trip_and_an_unknown_one_is_automatic() {
+        for effects in Effects::ALL {
+            let json = format!(
+                r#"{{"effects":"{}","effects_reduced":true}}"#,
+                effects.as_str()
+            );
+            let prefs: Prefs = serde_json::from_str(&json).unwrap();
+            assert_eq!((prefs.effects, prefs.effects_reduced), (effects, true));
+        }
+        let prefs: Prefs = serde_json::from_str(r#"{"effects":"cinematic"}"#).unwrap();
+        assert_eq!(prefs.effects, Effects::Auto);
     }
 
     #[test]

@@ -1065,6 +1065,15 @@ saver-auto = Automatic
 saver-always = Always
 saver-never = Never
 
+## Effects
+
+settings-effects = Effects
+settings-effects-hint = Reduced shows plain surfaces in place of the frosted glass, and leaves out the entrance of new thumbnails and the glow behind a picture. Automatic does that once scrolling stutters on this device.
+settings-effects-now = Reduced now: scrolling was stuttering on this device. Choose Automatic again to measure it once more.
+effects-auto = Automatic
+effects-full = Full
+effects-lite = Reduced
+
 ## Wallpaper colour
 
 accent-system = Wallpaper

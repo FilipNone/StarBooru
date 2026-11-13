@@ -1073,6 +1073,15 @@ saver-auto = Automatico
 saver-always = Sempre
 saver-never = Mai
 
+## Effects
+
+settings-effects = Effetti
+settings-effects-hint = Ridotti mostra superfici piene al posto del vetro smerigliato, e lascia fuori l'entrata delle nuove miniature e il bagliore dietro l'immagine. Automatico lo fa quando lo scorrimento va a scatti su questo dispositivo.
+settings-effects-now = Ridotti ora: lo scorrimento andava a scatti su questo dispositivo. Scegli di nuovo Automatico per misurarlo un'altra volta.
+effects-auto = Automatico
+effects-full = Completi
+effects-lite = Ridotti
+
 ## Wallpaper colour
 
 accent-system = Sfondo

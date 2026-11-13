@@ -14,7 +14,7 @@ use crate::i18n::Lang;
 use crate::icons::{Ico, Icon};
 use crate::oidc::{self, Done};
 use crate::power;
-use crate::store::{self, Hand, PREFS, SESSION, Saver, Theme};
+use crate::store::{self, Effects, Hand, PREFS, SESSION, Saver, Theme};
 use crate::system::{self, SYSTEM_HUE};
 use crate::util::{human_size, time_ago};
 
@@ -285,6 +285,30 @@ pub fn Settings() -> Element {
                     p { class: "muted hint", {t!("settings-saver-hint")} }
                     if prefs.battery_saver == Saver::Auto && power::device_low() {
                         p { class: "hint saver-now", {t!("settings-saver-now")} }
+                    }
+                }
+                div { class: "field",
+                    span { {t!("settings-effects")} }
+                    div { class: "segmented", role: "radiogroup", aria_label: t!("settings-effects"),
+                        for effects in Effects::ALL {
+                            button {
+                                key: "{effects.as_str()}",
+                                role: "radio",
+                                aria_checked: if prefs.effects == effects { "true" } else { "false" },
+                                class: if prefs.effects == effects { "seg on" } else { "seg" },
+                                // Choosing again, Automatic too, measures the device afresh.
+                                onclick: move |_| {
+                                    let mut prefs = PREFS.write();
+                                    prefs.effects = effects;
+                                    prefs.effects_reduced = false;
+                                },
+                                {effects.label()}
+                            }
+                        }
+                    }
+                    p { class: "muted hint", {t!("settings-effects-hint")} }
+                    if prefs.effects == Effects::Auto && prefs.effects_reduced {
+                        p { class: "hint saver-now", {t!("settings-effects-now")} }
                     }
                 }
                 label { class: "check",

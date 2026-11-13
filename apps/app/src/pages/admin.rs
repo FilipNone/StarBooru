@@ -80,6 +80,8 @@ pub fn Admin() -> Element {
         .as_ref()
         .is_some_and(|s| s.user.role == Role::Admin);
     let mut tab = use_signal(|| Tab::Overview);
+    // What was changed here shows in the viewer and the upload page at once.
+    use_drop(store::forget_server_answers);
     rsx! {
         div { class: "page narrow",
             h1 { class: "page-title", {t!("admin-title")} }

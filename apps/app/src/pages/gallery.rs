@@ -1,4 +1,5 @@
 use std::collections::{BTreeSet, HashSet};
+use std::rc::Rc;
 
 use chrono::{DateTime, Utc};
 use dioxus::prelude::*;
@@ -73,7 +74,7 @@ impl Grid {
         Self::new(&PREFS.peek(), *GRID_WIDTH.peek())
     }
 
-    fn place(self, list: &[Post]) -> layout::Layout {
+    fn place(self, list: &[Rc<Post>]) -> layout::Layout {
         layout::place(
             self.view,
             list.iter()
@@ -85,7 +86,7 @@ impl Grid {
 
 /// Where a post's tile is in pixels: its top, from the top of the grid, and
 /// its height.
-fn tile_box(list: &[Post], id: i64) -> Option<(f64, f64)> {
+fn tile_box(list: &[Rc<Post>], id: i64) -> Option<(f64, f64)> {
     let grid = Grid::now();
     let index = list.iter().position(|p| p.id == id)?;
     // The whole list, as what comes after a tile can settle the height of its row.
@@ -101,9 +102,26 @@ fn tile_box(list: &[Post], id: i64) -> Option<(f64, f64)> {
 /// has reported how tall the screen is (`WATCH_NEAR`).
 const FIRST_NEAR: (f64, f64) = (1500.0, 3000.0);
 
+/// The part of the grid the screen can be showing, given the part the page last
+/// said to keep (`WATCH_NEAR`). That part reaches a screen and a half above the
+/// screen and as far below it, and the page says so again before the screen has
+/// moved a quarter of its height either way.
+fn may_be_on_screen((from, to): (f64, f64)) -> (f64, f64) {
+    let screen = (to - from) / 4.0;
+    (from + screen * 1.25, to - screen * 1.25)
+}
+
+/// A post's main colour for its tile, if it is `#rrggbb` and nothing else: it
+/// goes into a style attribute as it comes from the server.
+pub(super) fn tint(palette: &[String]) -> Option<&str> {
+    let colour = palette.first()?;
+    let hex = colour.strip_prefix('#')?;
+    (hex.len() == 6 && hex.bytes().all(|b| b.is_ascii_hexdigit())).then_some(colour.as_str())
+}
+
 /// The part of the grid to put on the page for going back to a spot, so the
 /// pictures above it don't start loading first.
-fn near_spot(list: &[Post], spot: Option<&Spot>) -> (f64, f64) {
+fn near_spot(list: &[Rc<Post>], spot: Option<&Spot>) -> (f64, f64) {
     let top = spot.filter(|s| s.y >= 1.0).map_or(0.0, |s| {
         s.post
             .and_then(|id| tile_box(list, id))
@@ -113,12 +131,14 @@ fn near_spot(list: &[Post], spot: Option<&Spot>) -> (f64, f64) {
 }
 
 /// Results kept while the app runs, so coming back to a search shows it as it
-/// was without loading it again.
+/// was without loading it again. Each post is shared with its tile: the page
+/// passes the posts near the screen to their tiles on every render, and a copy
+/// of each, with its tags and addresses, was most of what a render cost.
 #[derive(Clone)]
 struct List {
     q: String,
     owner: String,
-    posts: Vec<Post>,
+    posts: Vec<Rc<Post>>,
     next_page: u32,
     has_more: bool,
     corrected: Vec<TagCorrection>,
@@ -176,7 +196,7 @@ fn is_random(q: &str) -> bool {
 
 /// The first page as it is now, followed by the rest of what was loaded. `None`
 /// if nothing changed. With no overlap, or no further pages, the rest is gone.
-fn merge_head(current: &[Post], head: Vec<Post>, has_more: bool) -> Option<Vec<Post>> {
+fn merge_head(current: &[Rc<Post>], head: Vec<Post>, has_more: bool) -> Option<Vec<Rc<Post>>> {
     let same = current
         .iter()
         .map(|p| p.id)
@@ -193,7 +213,7 @@ fn merge_head(current: &[Post], head: Vec<Post>, has_more: bool) -> Option<Vec<P
         .and_then(|last| current.get(last + 1..))
         .unwrap_or_default()
         .to_vec();
-    Some(head.into_iter().chain(rest).collect())
+    Some(head.into_iter().map(Rc::new).chain(rest).collect())
 }
 
 /// What the scroll watcher reports.
@@ -205,10 +225,17 @@ struct Seen {
 }
 
 /// Reports the first tile on the screen once scrolling stops: a whole one, if
-/// there is one, as it stays on the screen when the layout changes.
+/// there is one, as it stays on the screen when the layout changes. While the
+/// page moves, `html` carries `sb-scrolling`, which holds back the light of
+/// the tile under the pointer (`main.css`).
 const WATCH_SCROLL: &str = r#"
 window.__sbSpot?.stop();
-let timer = 0;
+const root = document.documentElement;
+let timer = 0, last = 0, moving = false;
+const rest = () => {
+  moving = false;
+  root.classList.remove("sb-scrolling");
+};
 const report = () => {
   const bar = document.querySelector(".topbar")?.getBoundingClientRect().bottom ?? 0;
   let tile = null;
@@ -225,15 +252,30 @@ const report = () => {
     dioxus.send({ post, offset: tile.getBoundingClientRect().top, y: scrollY });
   }
 };
+// One timer that looks at how long ago the page last moved, in place of one
+// set and cleared on every scroll event: the light comes back after 120 ms of
+// rest and the spot is reported after 200.
+const settle = () => {
+  timer = 0;
+  const still = performance.now() - last;
+  if (moving && still >= 120) rest();
+  if (still >= 200) return report();
+  timer = setTimeout(settle, (still < 120 ? 120 : 200) - still);
+};
 const onscroll = () => {
-  clearTimeout(timer);
-  timer = setTimeout(report, 200);
+  last = performance.now();
+  if (!moving) {
+    moving = true;
+    root.classList.add("sb-scrolling");
+  }
+  timer ||= setTimeout(settle, 120);
 };
 addEventListener("scroll", onscroll, { passive: true });
 window.__sbSpot = {
   report,
   stop() {
     clearTimeout(timer);
+    rest();
     removeEventListener("scroll", onscroll);
   },
 };
@@ -242,10 +284,12 @@ const WATCH_SCROLL_OFF: &str = "window.__sbSpot?.stop(); window.__sbSpot = null;
 
 /// Reports which part of the grid to keep on the page, in pixels from its top:
 /// the screen and a screen and a half either way, so pictures are there before
-/// they scroll into view. Quiet until the screen gets within three quarters of
-/// a screen of the edge of what it last reported. Browsers go on downloading a
-/// picture taken off the page, which after a fast scroll keeps the ones on the
-/// screen waiting behind hundreds of others, so it cancels those.
+/// they scroll into view. It reports again each time the screen has moved a
+/// quarter of its height, which is about a row of tiles. Coming less often, a
+/// report put three rows on the page at once, and a slow device lost a few
+/// frames to each. Browsers go on downloading a picture taken off the page,
+/// which after a fast scroll keeps the ones on the screen waiting behind
+/// hundreds of others, so it cancels those.
 const WATCH_NEAR: &str = r#"
 window.__sbNear?.stop();
 let held = null;
@@ -268,7 +312,7 @@ const check = (force) => {
   if (!grid) return;
   const top = -grid.getBoundingClientRect().top;
   const tall = innerHeight;
-  if (force || !held || top - tall * 0.75 < held[0] || top + tall * 1.75 > held[1]) {
+  if (force || !held || top - tall * 1.25 < held[0] || top + tall * 2.25 > held[1]) {
     held = [top - tall * 1.5, top + tall * 2.5];
     dioxus.send(held);
   }
@@ -395,7 +439,8 @@ pub fn Gallery(q: String) -> Element {
                         // Posts added since can push earlier ones onto this page.
                         let mut list = posts.write();
                         let seen: HashSet<i64> = list.iter().map(|p| p.id).collect();
-                        list.extend(found.posts.into_iter().filter(|p| !seen.contains(&p.id)));
+                        let new = found.posts.into_iter().filter(|p| !seen.contains(&p.id));
+                        list.extend(new.map(Rc::new));
                     }
                     has_more.set(found.has_more);
                     corrected.set(found.corrected);
@@ -422,7 +467,7 @@ pub fn Gallery(q: String) -> Element {
             .min(MAX_RESTORE);
         loading.set(true);
         spawn(async move {
-            let mut found = Vec::<Post>::new();
+            let mut found = Vec::<Rc<Post>>::new();
             let mut seen = HashSet::new();
             let mut fixed = Vec::new();
             let mut page = 1u32;
@@ -438,7 +483,8 @@ pub fn Gallery(q: String) -> Element {
                 }
                 match result {
                     Ok(results) => {
-                        found.extend(results.posts.into_iter().filter(|p| seen.insert(p.id)));
+                        let new = results.posts.into_iter().filter(|p| seen.insert(p.id));
+                        found.extend(new.map(Rc::new));
                         more = results.has_more;
                         fixed = results.corrected;
                         page = page.saturating_add(RESTORE_PAGES);
@@ -611,7 +657,10 @@ pub fn Gallery(q: String) -> Element {
     let mut selected = use_signal(BTreeSet::<i64>::new);
     let mut anchor = use_signal(|| None::<usize>);
     let mut notice = use_signal(|| None::<String>);
-    let toggle = move |(index, shift): (usize, bool)| {
+    // One handler kept between renders. A new closure each time would be a new
+    // property for every tile, and each would render again whenever the part of
+    // the grid near the screen moved.
+    let toggle = use_callback(move |(index, shift): (usize, bool)| {
         let list = posts.read();
         let Some(id) = list.get(index).map(|p| p.id) else {
             return;
@@ -633,7 +682,7 @@ pub fn Gallery(q: String) -> Element {
             set.insert(id);
         }
         anchor.set(Some(index));
-    };
+    });
     let mut stop_selecting = move || {
         selecting.set(false);
         selected.write().clear();
@@ -704,6 +753,14 @@ pub fn Gallery(q: String) -> Element {
         .into_iter()
         .filter_map(|index| Some((index, list.get(index)?, *placed.tiles.get(index)?)))
         .collect();
+    // New tiles only make an entrance where it can be seen. The rest, below the
+    // screen, would each be drawn on a layer of their own for nobody, and a tile
+    // reached by a quick scroll would still be waiting for its turn to appear.
+    let (seen_from, seen_to) = may_be_on_screen((from, to));
+    let in_sight = move |place: &Place| {
+        let top = place.top.px(tile, gap);
+        top < seen_to && top + place.height.px(tile, gap) > seen_from
+    };
 
     rsx! {
         div { class: "page gallery",
@@ -806,7 +863,7 @@ pub fn Gallery(q: String) -> Element {
                             selected: selecting().then(|| selected.read().contains(&post.id)),
                             ontoggle: toggle,
                             place,
-                            still: index < settled(),
+                            still: index < settled() || !in_sight(&place),
                         }
                     }
                 }
@@ -1315,7 +1372,7 @@ fn ViewMenu(width: f64, gap: f64) -> Element {
 /// tile appears counts, so that a later change can't cut the entrance short.
 #[component]
 pub(super) fn Thumb(
-    post: Post,
+    post: Rc<Post>,
     index: usize,
     q: String,
     selected: Option<bool>,
@@ -1339,6 +1396,9 @@ pub(super) fn Thumb(
     // Staggered entrance within a page of results.
     let delay = (index % PAGE_SIZE as usize) * 16;
     let mut style = format!("--delay: {delay}ms");
+    if let Some(colour) = tint(&post.palette) {
+        style.push_str(&format!("; --tint: {colour}"));
+    }
     if let Some(p) = place {
         style.push_str(&format!(
             "; --x: {:.5}; --x-gaps: {:.5}; --y: {:.5}; --y-gaps: {:.5}\
@@ -1372,13 +1432,21 @@ pub(super) fn Thumb(
         (None, true) => "thumb still",
     };
     let open = move || {
-        *OPENING.write() = Some(post.clone());
+        *OPENING.write() = Some(Post::clone(&post));
         let nav = navigator();
         let q = q.clone();
         spawn(async move {
             motion::open(id).await;
             nav.push(Route::PostView { id, q });
         });
+    };
+    let picture = rsx! {
+        if let Some(src) = src {
+            // The gallery only puts tiles near the screen on the page.
+            img { src, alt, loading: if place.is_some() { "eager" } else { "lazy" }, decoding: "async" }
+        } else {
+            div { class: "thumb-placeholder", Ico { icon: Icon::Play, size: 40 } }
+        }
     };
     rsx! {
         a {
@@ -1404,34 +1472,37 @@ pub(super) fn Thumb(
                     ontoggle.call((index, e.modifiers().shift()));
                 }
             },
-            div {
-                class: "thumb-media",
-                "data-post": "{id}",
-                onpointerenter: move |e: PointerEvent| {
-                    if video && e.pointer_type() == "mouse" {
-                        hovered.set(true);
+            if video {
+                // Only a video has a use for the pointer coming and going. These
+                // events don't bubble, so each tile that listens gets a listener
+                // of its own, and a page scrolling under the pointer would call
+                // into the app twice a frame for pictures that ignore it.
+                div {
+                    class: "thumb-media",
+                    "data-post": "{id}",
+                    onpointerenter: move |e: PointerEvent| {
+                        if e.pointer_type() == "mouse" {
+                            hovered.set(true);
+                        }
+                    },
+                    onpointerleave: move |_| {
+                        if *hovered.peek() {
+                            hovered.set(false);
+                        }
+                    },
+                    {picture}
+                    if hovered() && !power::active() && let Some(src) = preview_src {
+                        // Parsed HTML, because only a parsed `muted` attribute
+                        // mutes the video, and browsers autoplay muted videos only.
+                        div {
+                            class: "preview",
+                            aria_hidden: "true",
+                            dangerous_inner_html: "<video src=\"{escape_attr(&src)}\" muted autoplay loop playsinline preload=\"auto\"></video>",
+                        }
                     }
-                },
-                onpointerleave: move |_| {
-                    if *hovered.peek() {
-                        hovered.set(false);
-                    }
-                },
-                if let Some(src) = src {
-                    // The gallery only puts tiles near the screen on the page.
-                    img { src, alt, loading: if place.is_some() { "eager" } else { "lazy" }, decoding: "async" }
-                } else {
-                    div { class: "thumb-placeholder", Ico { icon: Icon::Play, size: 40 } }
                 }
-                if hovered() && !power::active() && let Some(src) = preview_src {
-                    // Parsed HTML, because only a parsed `muted` attribute
-                    // mutes the video, and browsers autoplay muted videos only.
-                    div {
-                        class: "preview",
-                        aria_hidden: "true",
-                        dangerous_inner_html: "<video src=\"{escape_attr(&src)}\" muted autoplay loop playsinline preload=\"auto\"></video>",
-                    }
-                }
+            } else {
+                div { class: "thumb-media", "data-post": "{id}", {picture} }
             }
             match kind {
                 MediaKind::Video => rsx! {
@@ -1466,7 +1537,7 @@ mod tests {
     }
 
     fn merged(current: &[i64], head: &[i64], has_more: bool) -> Option<Vec<i64>> {
-        let current: Vec<Post> = current.iter().copied().map(post).collect();
+        let current: Vec<Rc<Post>> = current.iter().copied().map(post).map(Rc::new).collect();
         let head = head.iter().copied().map(post).collect();
         merge_head(&current, head, has_more).map(|l| l.iter().map(|p| p.id).collect())
     }
@@ -1499,6 +1570,118 @@ mod tests {
         // No further pages: the first page is the whole list.
         assert_eq!(merged(&[5, 4, 3], &[5, 4], false), Some(vec![5, 4]));
         assert_eq!(merged(&[5, 4, 3], &[], false), Some(vec![]));
+    }
+
+    #[test]
+    fn the_screen_is_inside_the_part_kept_whichever_way_it_moved() {
+        // The page reported with the screen at 3000..3800, so it keeps 1800..5000.
+        let (screen_top, screen) = (3000.0, 800.0);
+        let kept = (screen_top - screen * 1.5, screen_top + screen * 2.5);
+        let (from, to) = may_be_on_screen(kept);
+        // It reports again once the screen has moved a quarter of itself.
+        for moved in [-0.25, 0.0, 0.25] {
+            let top = screen_top + screen * moved;
+            assert!(from <= top && top + screen <= to, "moved {moved}");
+        }
+        // Tiles the next report would still not show are out.
+        assert!(to < kept.1 && from > kept.0);
+        // The page's own numbers, which this follows.
+        assert!(WATCH_NEAR.contains("top - tall * 1.25 < held[0] || top + tall * 2.25 > held[1]"));
+        assert!(WATCH_NEAR.contains("held = [top - tall * 1.5, top + tall * 2.5];"));
+    }
+
+    #[test]
+    fn only_a_plain_colour_tints_a_tile() {
+        let one = |c: &str| vec![c.to_owned()];
+        assert_eq!(tint(&one("#41ab78")), Some("#41ab78"));
+        assert_eq!(tint(&one("#41AB78")), Some("#41AB78"));
+        assert_eq!(tint(&[]), None);
+        for bad in [
+            "41ab78",
+            "#41ab7",
+            "#41ab788",
+            "#41ab7g",
+            "red",
+            "#fff; background: url(//x)",
+            "#àààààà",
+            "",
+        ] {
+            assert_eq!(tint(&one(bad)), None, "{bad}");
+        }
+    }
+
+    #[test]
+    fn the_light_under_the_pointer_waits_for_the_page_to_stop() {
+        // Regression: scrolling with the pointer over the grid started a fade,
+        // and a layer for it, on a new tile every frame.
+        let css = include_str!("../../assets/main.css");
+        assert!(css.contains("html.sb-scrolling .thumb img { filter: none; transition: none; }"));
+        assert!(WATCH_SCROLL.contains(r#"root.classList.add("sb-scrolling")"#));
+        // Leaving the gallery mid-scroll takes the mark with it.
+        let (_, stop) = WATCH_SCROLL.split_once("stop() {").unwrap();
+        assert!(stop.contains("rest();"));
+        assert!(WATCH_SCROLL.contains(r#"root.classList.remove("sb-scrolling")"#));
+    }
+
+    #[test]
+    fn a_new_page_of_results_restyles_the_grid_alone() {
+        // Regression: `--height` was inherited, so setting it on the grid meant
+        // working out the style of every tile on the page again.
+        let css = include_str!("../../assets/main.css");
+        for name in ["--height", "--height-gaps"] {
+            assert!(css.contains(&format!(
+                "@property {name} {{ syntax: \"<number>\"; inherits: false; initial-value: 0; }}"
+            )));
+        }
+    }
+
+    #[test]
+    fn a_tile_waits_in_its_own_colour() {
+        let css = include_str!("../../assets/main.css");
+        assert!(css.contains("background: var(--tint, var(--surface-2));"));
+        // A selected tile keeps its frame, whatever the colour under it.
+        assert!(css.contains(".thumb.selectable.on { background: var(--primary-container); }"));
+    }
+
+    /// How many times `Probe` has rendered.
+    static PROBED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+    /// A component with a handler among its properties, as `Thumb` has.
+    #[component]
+    fn Probe(id: i64, onpick: EventHandler<(usize, bool)>) -> Element {
+        PROBED.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        rsx! { button { onclick: move |_| onpick.call((0, false)), "{id}" } }
+    }
+
+    /// Renders `app` once, then again `again` times, and says how often
+    /// `Probe` rendered in all.
+    fn probe_renders(app: fn() -> Element, again: usize) -> usize {
+        use dioxus::core::{NoOpMutations, ScopeId, VirtualDom};
+        PROBED.store(0, std::sync::atomic::Ordering::SeqCst);
+        let mut dom = VirtualDom::new(app);
+        dom.rebuild_in_place();
+        for _ in 0..again {
+            dom.mark_dirty(ScopeId::APP);
+            dom.render_immediate(&mut NoOpMutations);
+        }
+        PROBED.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    #[test]
+    fn a_handler_kept_between_renders_leaves_the_tile_alone() {
+        // Regression: the gallery gave each tile a new closure on every render.
+        // A handler is the same only if it is the same one, so all the tiles on
+        // the page rendered again each time the part near the screen moved.
+        fn fresh() -> Element {
+            rsx! { Probe { id: 1, onpick: move |_| {} } }
+        }
+        fn kept() -> Element {
+            let onpick = use_callback(move |_: (usize, bool)| {});
+            rsx! { Probe { id: 1, onpick } }
+        }
+        // One test, as the two share the counter.
+        assert_eq!(probe_renders(fresh, 3), 4);
+        assert_eq!(probe_renders(kept, 3), 1);
     }
 
     #[test]

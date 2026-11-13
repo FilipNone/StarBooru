@@ -10,7 +10,7 @@ use starbooru_core::{
 };
 
 use super::editor::{EditorSheet, Saved};
-use super::gallery::{forget_lists, forget_post};
+use super::gallery::{forget_lists, forget_post, tint};
 use super::people::People;
 use super::share::{ShareSheet, copy_text};
 use super::shell::{notify, notify_undo};
@@ -138,10 +138,7 @@ pub fn PostView(id: i64, q: String) -> Element {
     // The props as signals, for the key handler, which outlives a render.
     let mut current = use_signal(|| (id, q.clone()));
     // One answer for all of the viewer, rather than one per post flipped past.
-    let ai = use_resource(|| async move {
-        let client = store::client()?;
-        client.ai_status().await.ok()
-    });
+    let ai = use_resource(store::ai_status);
     use_context_provider(|| ai);
     // Presses of previous/next not acted on yet: next counts up, previous down.
     let mut steps = use_signal(|| 0_i32);
@@ -327,17 +324,17 @@ pub fn PostView(id: i64, q: String) -> Element {
                         stage_url(&client, &p, needs_original(&p, *rect.peek(), dpr))
                     });
                     let thumb = p.thumb_url.as_deref().map(|u| cache::url(&client, u));
-                    motion::ahead(&shown.into_iter().chain(thumb).collect::<Vec<_>>());
                     ahead.write().insert(near, p);
+                    // After the picture on the stage, which they'd slow down.
+                    motion::rested().await;
+                    motion::ahead(&shown.into_iter().chain(thumb).collect::<Vec<_>>());
                 }
             });
         }
     });
     // Trimming needs ffmpeg on the server.
-    let video_editing = use_resource(|| async move {
-        let client = store::client()?;
-        client.info().await.ok().map(|i| i.video_editing)
-    });
+    let video_editing =
+        use_resource(|| async move { store::server_info().await.map(|i| i.video_editing) });
     let mut press = move |forward: bool| {
         if *moving.peek() || *steps.peek() != 0 || *settled.peek() != current.peek().0 {
             rushing.set(true);
@@ -466,6 +463,20 @@ pub fn PostView(id: i64, q: String) -> Element {
             busy.set(false);
         });
     };
+
+    // Kept between renders: a new handler each time would draw the related
+    // posts again with every change to the post above them.
+    let open_related = use_callback(move |near: Post| {
+        let id = near.id;
+        *OPENING.write() = Some(near);
+        entered.set(None);
+        document::eval(SCROLL_TOP);
+        // Pushed, so Back returns to this post.
+        navigator().push(Route::PostView {
+            id,
+            q: String::new(),
+        });
+    });
 
     let Some(p) = post() else {
         return rsx! {
@@ -599,16 +610,7 @@ pub fn PostView(id: i64, q: String) -> Element {
                     }
                 }
                 // What's there stays until the user stops on a post.
-                Related {
-                    id: settled(),
-                    onopen: move |near: Post| {
-                        *OPENING.write() = Some(near.clone());
-                        entered.set(None);
-                        document::eval(SCROLL_TOP);
-                        // Pushed, so Back returns to this post.
-                        navigator().push(Route::PostView { id: near.id, q: String::new() });
-                    },
-                }
+                Related { id: settled(), onopen: open_related }
             }
             aside { class: "side",
                 if editing() {
@@ -893,6 +895,10 @@ fn OcrText(id: i64, text: String) -> Element {
 
 /// Posts the viewer suggests under the picture.
 const RELATED_SHOWN: u32 = 12;
+/// How many of their thumbnails load at a time. All twelve at once share the
+/// connection with the picture above, and decoding them in one go holds up
+/// whatever is moving on a slow device.
+const RELATED_AT_ONCE: usize = 2;
 
 /// The viewer starts at the top when another post opens from below.
 const SCROLL_TOP: &str = r#"
@@ -1083,60 +1089,128 @@ fn TagSuggester(id: i64, tag_text: Signal<String>, rating: Signal<Rating>) -> El
     }
 }
 
+/// Whether a related post's thumbnail is asked for yet: `place` is its place
+/// among those that have one, and `come` how many have arrived or given up.
+fn takes_turn(place: usize, come: usize) -> bool {
+    place < come.saturating_add(RELATED_AT_ONCE)
+}
+
 /// Posts like this one (shared rare tags, or a look-alike), as small
 /// thumbnails. Nothing shows until there are some.
+///
+/// The server is asked at once and its answer kept until the picture above has
+/// arrived (`motion::rested`): twelve tiles and their pictures landing in the
+/// middle of that made it stutter.
 #[component]
 fn Related(id: i64, onopen: EventHandler<Post>) -> Element {
     let related = use_resource(use_reactive!(|id| async move {
         let client = store::client()?;
-        client.related(id, RELATED_SHOWN).await.ok()
+        let found = client.related(id, RELATED_SHOWN).await.ok();
+        motion::rested().await;
+        found.map(|r| (id, r.posts))
     }));
-    let posts = related
-        .read()
-        .clone()
-        .flatten()
-        .map(|r| r.posts)
-        .unwrap_or_default();
+    let Some((of, posts)) = related.read().clone().flatten() else {
+        return rsx! {};
+    };
     if posts.is_empty() {
         return rsx! {};
     }
-    let client = store::client();
     rsx! {
         section { class: "related",
             h2 { class: "card-title", {t!("post-related")} }
-            div { class: "related-grid",
-                for near in posts {
-                    {
-                        let src = near
-                            .thumb_url
-                            .as_deref()
-                            .and_then(|u| client.as_ref().map(|c| cache::url(c, u)));
-                        let label = if near.tags.is_empty() {
-                            t!("post-alt", id = near.id)
-                        } else {
-                            near.tags.join(" ")
-                        };
-                        let id = near.id;
-                        rsx! {
-                            Link {
-                                key: "{id}",
-                                class: "thumb",
-                                to: Route::PostView { id, q: String::new() },
-                                title: "{label}",
-                                onclick: move |_| onopen.call(near.clone()),
-                                onclick_only: true,
-                                if let Some(src) = src {
-                                    img { src, alt: "{label}", loading: "lazy", decoding: "async" }
-                                } else {
+            // Another post's related posts are another grid, which starts its
+            // count over. In a loop, as a key only counts on what a loop gives:
+            // on a component set straight into an element it does nothing.
+            for of in [of] {
+                RelatedGrid { key: "{of}", posts: posts.clone(), onopen }
+            }
+        }
+    }
+}
+
+/// The thumbnails of related posts. Each tile is there from the start in its
+/// picture's colour, and the pictures come [`RELATED_AT_ONCE`] at a time.
+#[component]
+fn RelatedGrid(posts: Vec<Post>, onopen: EventHandler<Post>) -> Element {
+    // Thumbnails that can paint, or never will.
+    let come = use_signal(|| 0usize);
+    let client = store::client();
+    let mut with_thumb = 0usize;
+    rsx! {
+        div { class: "related-grid",
+            for (index, near) in posts.into_iter().enumerate() {
+                {
+                    let src = near
+                        .thumb_url
+                        .as_deref()
+                        .and_then(|u| client.as_ref().map(|c| cache::url(c, u)));
+                    let place = with_thumb;
+                    if src.is_some() {
+                        with_thumb += 1;
+                    }
+                    let label = if near.tags.is_empty() {
+                        t!("post-alt", id = near.id)
+                    } else {
+                        near.tags.join(" ")
+                    };
+                    let mut style = format!("--delay: {}ms", index * 16);
+                    if let Some(colour) = tint(&near.palette) {
+                        style.push_str(&format!("; --tint: {colour}"));
+                    }
+                    let id = near.id;
+                    rsx! {
+                        Link {
+                            key: "{id}",
+                            class: "thumb",
+                            style,
+                            to: Route::PostView { id, q: String::new() },
+                            title: "{label}",
+                            onclick: move |_| onopen.call(near.clone()),
+                            onclick_only: true,
+                            match src {
+                                Some(src) => rsx! {
+                                    RelatedThumb { id, src, alt: label, place, come }
+                                },
+                                None => rsx! {
                                     div { class: "thumb-placeholder", aria_label: "{label}",
                                         Ico { icon: Icon::Play, size: 24 }
                                     }
-                                }
+                                },
                             }
                         }
                     }
                 }
             }
+        }
+    }
+}
+
+/// One related post's thumbnail, once its turn has come (`takes_turn`). It
+/// stays out of sight until it can paint, so the browser decodes it off the
+/// page's thread, and then fades in over the tile's colour. It counts itself
+/// in `come` when it's done, which lets the next one start.
+#[component]
+fn RelatedThumb(id: i64, src: String, alt: String, place: usize, come: Signal<usize>) -> Element {
+    // A memo, so each arrival draws the one thumbnail it lets in and not all twelve.
+    let asked = use_memo(move || takes_turn(place, come()));
+    let mut ready = use_signal(|| false);
+    if !asked() {
+        return rsx! {};
+    }
+    rsx! {
+        img {
+            class: if ready() { "in" },
+            "data-related": "{id}",
+            src,
+            alt,
+            decoding: "async",
+            onmounted: move |_| {
+                spawn(async move {
+                    motion::decoded(&format!(".related-grid img[data-related=\"{id}\"]")).await;
+                    ready.set(true);
+                    come += 1;
+                });
+            },
         }
     }
 }
@@ -1347,6 +1421,9 @@ fn StageImage(
             src: shown,
             draggable: "false",
             decoding: "async",
+            // Ahead of the related posts and the neighbours fetched in advance,
+            // which ask on the same connections.
+            "fetchpriority": "high",
             style,
             onwheel: move |e| onwheel.call(e),
             onload: move |_| {
@@ -1795,6 +1872,119 @@ mod tests {
             .split_once(&format!("\n{selector} {{"))
             .unwrap_or_else(|| panic!("{selector}"));
         rest.split_once('}').map_or(rest, |(body, _)| body)
+    }
+
+    #[test]
+    fn related_thumbnails_come_a_few_at_a_time() {
+        // Regression: all twelve were asked for and decoded together, in the
+        // middle of the picture's arrival, and the viewer stuttered.
+        assert!(takes_turn(0, 0));
+        assert!(takes_turn(RELATED_AT_ONCE - 1, 0));
+        assert!(!takes_turn(RELATED_AT_ONCE, 0));
+        // Each one that comes lets one more start.
+        for come in 0..RELATED_SHOWN as usize {
+            let asked = (0..RELATED_SHOWN as usize)
+                .filter(|place| takes_turn(*place, come))
+                .count();
+            assert_eq!(asked, (come + RELATED_AT_ONCE).min(RELATED_SHOWN as usize));
+        }
+        assert!(!takes_turn(usize::MAX, usize::MAX));
+    }
+
+    /// How many times `Counted` has started from nothing.
+    static STARTED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    /// The post the grid in the test below is for.
+    static OF: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(1);
+
+    /// Stands in for `RelatedGrid`, which keeps its count in a hook.
+    #[component]
+    fn Counted(of: usize) -> Element {
+        use_hook(|| STARTED.fetch_add(1, std::sync::atomic::Ordering::SeqCst));
+        rsx! { span { "{of}" } }
+    }
+
+    /// Renders `app` for post 1 and again for post 2, and says how many times
+    /// `Counted` started.
+    fn starts(app: fn() -> Element) -> usize {
+        use dioxus::core::{NoOpMutations, ScopeId, VirtualDom};
+        use std::sync::atomic::Ordering::SeqCst;
+        STARTED.store(0, SeqCst);
+        OF.store(1, SeqCst);
+        let mut dom = VirtualDom::new(app);
+        dom.rebuild_in_place();
+        OF.store(2, SeqCst);
+        dom.mark_dirty(ScopeId::APP);
+        dom.render_immediate(&mut NoOpMutations);
+        STARTED.load(SeqCst)
+    }
+
+    #[test]
+    fn another_posts_related_grid_starts_its_count_over() {
+        // Regression: the grid had its key set straight inside the section,
+        // where a key does nothing. The next post's grid was the same one with
+        // its count already at twelve, and all its pictures came at once.
+        fn nested() -> Element {
+            let of = OF.load(std::sync::atomic::Ordering::SeqCst);
+            rsx! { section { h2 { "related" } Counted { key: "{of}", of } } }
+        }
+        fn looped() -> Element {
+            let of = OF.load(std::sync::atomic::Ordering::SeqCst);
+            rsx! {
+                section {
+                    h2 { "related" }
+                    for of in [of] {
+                        Counted { key: "{of}", of }
+                    }
+                }
+            }
+        }
+        // One test, as the two share the counters.
+        assert_eq!(starts(nested), 1);
+        assert_eq!(starts(looped), 2);
+        let source = include_str!("post.rs");
+        let (_, related) = source.split_once("\nfn Related(").unwrap();
+        let (related, _) = related.split_once("\n}\n").unwrap();
+        assert!(related.contains("for of in [of] {"));
+        assert!(related.contains(r#"RelatedGrid { key: "{of}","#));
+    }
+
+    #[test]
+    fn related_posts_wait_for_the_picture() {
+        let source = include_str!("post.rs");
+        let (_, related) = source.split_once("\nfn Related(").unwrap();
+        let (related, _) = related.split_once("\n}\n").unwrap();
+        // Asked for at once, shown once the viewer has come to rest.
+        let asked = related.find("client.related(").unwrap();
+        let rested = related.find("motion::rested().await").unwrap();
+        assert!(asked < rested);
+        // So are the neighbours fetched ahead.
+        let (_, ahead) = source.split_once("client.post(near).await").unwrap();
+        let rested = ahead.find("motion::rested().await").unwrap();
+        assert!(rested < ahead.find("motion::ahead(").unwrap());
+    }
+
+    #[test]
+    fn a_related_picture_is_not_painted_before_it_has_decoded() {
+        let waiting = rule(".related-grid .thumb img");
+        assert!(waiting.contains("visibility: hidden"));
+        assert!(rule(".related-grid .thumb img.in").contains("visibility: visible"));
+        // No fade with reduced effects.
+        assert!(
+            rule(r#".app[data-effects="lite"] .related-grid .thumb img.in"#)
+                .contains("transition: none")
+        );
+    }
+
+    #[test]
+    fn a_picture_on_its_way_shows_no_description() {
+        // Regression: while a thumbnail loaded, its tags were written across
+        // the tile in the link colour, underlined.
+        assert!(rule(".thumb").contains("text-decoration: none"));
+        assert!(rule(".thumb img").contains("color: transparent"));
+        // Nor the browser's broken-picture mark: the tile's colour lies over it.
+        let cover = rule(".thumb img::after");
+        assert!(cover.contains(r#"content: """#) && cover.contains("inset: 0"));
+        assert!(cover.contains("background: var(--tint, var(--surface-2))"));
     }
 
     #[test]

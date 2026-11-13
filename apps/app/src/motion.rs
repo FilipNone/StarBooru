@@ -61,6 +61,15 @@ window.__sbHero ??= {
     if (!app) return;
     const box = page.getBoundingClientRect();
     const copy = page.cloneNode(true);
+    // The grid keeps tiles for a few screens on the page, and only those on the
+    // screen can be seen in the copy. The rest would be styled, laid out and
+    // painted for nothing, while the viewer waits to open.
+    const tiles = page.querySelectorAll(".masonry .thumb");
+    const copies = copy.querySelectorAll(".masonry .thumb");
+    tiles.forEach((each, i) => {
+      const at = each.getBoundingClientRect();
+      if (at.bottom <= 0 || at.top >= innerHeight) copies[i]?.remove();
+    });
     for (const img of copy.querySelectorAll("img")) img.decoding = "sync";
     const media = copy.querySelector(`[data-post="${id}"]`)?.closest(".thumb")?.querySelector(".thumb-media");
     if (media) media.style.visibility = "hidden";
@@ -443,7 +452,7 @@ window.__sbGlow ??= {
   wanted: null, busy: false,
   want(url) {
     this.wanted = url;
-    if (!this.busy && !document.querySelector('.app[data-saver="on"]')) this.run();
+    if (!this.busy && !document.querySelector('.app[data-saver="on"], .app[data-effects="lite"]')) this.run();
   },
   paint(el, img) {
     const box = el.getBoundingClientRect();
@@ -546,25 +555,88 @@ pub fn turn(thumb: Option<&str>) {
     document::eval(&format!("{TURN}\nwindow.__sbTurn.show({thumb});"));
 }
 
-/// Loads and decodes pictures that may show next, and keeps hold of them: an
-/// image no script holds on to is let go, decoded or not.
+/// Pictures that may show next, loaded and decoded ahead and kept hold of: an
+/// image no script holds on to is let go, decoded or not. They download
+/// together and decode one after another, as decoding two full pictures and
+/// their thumbnails at once takes the processor from what's on the screen.
+const AHEAD: &str = r##"
+window.__sbAhead ??= {
+  kept: new Map(), waiting: [], busy: false,
+  want(urls, keep) {
+    for (const url of urls) {
+      if (this.kept.has(url)) continue;
+      const img = new Image();
+      img.src = url;
+      this.kept.set(url, img);
+      this.waiting.push(img);
+    }
+    for (const url of [...this.kept.keys()].slice(0, -keep)) this.kept.delete(url);
+    if (!this.busy) this.run();
+  },
+  async run() {
+    this.busy = true;
+    while (this.waiting.length) await this.waiting.shift().decode().catch(() => {});
+    this.busy = false;
+  },
+};
+"##;
+
+/// Gets pictures that may show next ready to paint. See [`AHEAD`].
 pub fn ahead(urls: &[String]) {
     let urls = serde_json::to_string(urls).unwrap_or_else(|_| "[]".into());
     document::eval(&format!(
-        r#"window.__sbAhead ??= new Map();
-for (const url of {urls}) {{
-  if (window.__sbAhead.has(url)) continue;
-  const img = new Image();
-  img.src = url;
-  img.decode().catch(() => {{}});
-  window.__sbAhead.set(url, img);
-}}
-for (const url of [...window.__sbAhead.keys()].slice(0, -{AHEAD_KEPT})) window.__sbAhead.delete(url);"#
+        "{AHEAD}\nwindow.__sbAhead.want({urls}, {AHEAD_KEPT});"
     ));
 }
 
 /// Two neighbours with a picture and a thumbnail each, and the two before.
 const AHEAD_KEPT: usize = 8;
+
+/// Resolves once a post's opening is over: the picture has flown in or turned,
+/// its file has come, the light behind it has changed and the page has stopped
+/// scrolling. It looks every 60 ms and wants two calm looks in a row. A file
+/// that takes longer than three seconds isn't waited for.
+const REST: &str = r##"
+// A spinner turns for ever, and is nothing to wait for.
+const moving = (node) => (node?.getAnimations({ subtree: true }) ?? [])
+  .some((one) => one.playState === "running" && Number.isFinite(one.effect?.getComputedTiming().endTime));
+const busy = () => {
+  const shown = document.querySelector("#stage-img, .stage video");
+  return !!window.__sbHero?.ghost || !!window.__sbHero?.past || !!window.__sbTurn?.since
+    || (shown?.tagName === "IMG" && !shown.complete)
+    || moving(document.querySelector(".stage")) || moving(document.querySelector(".post-glow"));
+};
+const until = performance.now() + 3000;
+let calm = 0, y = scrollY;
+while (calm < 2 && performance.now() < until) {
+  await new Promise((done) => setTimeout(done, 60));
+  calm = !busy() && scrollY === y ? calm + 1 : 0;
+  y = scrollY;
+}
+return true;
+"##;
+
+/// Waits for the viewer to come to rest after a post opens. What isn't the
+/// picture itself (the related posts, the neighbours fetched ahead) waits for
+/// this, so it doesn't load and decode while the picture is still arriving.
+pub async fn rested() {
+    let _ = document::eval(REST).join::<bool>().await;
+}
+
+/// Resolves when the picture `selector` finds can paint, has failed, or has
+/// taken more than a second and a half, and a frame has passed since. A slow
+/// one goes on loading: it only stops holding up whoever waits here.
+pub async fn decoded(selector: &str) {
+    let selector = serde_json::to_string(selector).unwrap_or_else(|_| "\"\"".into());
+    let _ = document::eval(&format!(
+        r#"const img = document.querySelector({selector});
+await Promise.race([img?.decode().catch(() => {{}}), new Promise((done) => setTimeout(done, 1500))]);
+await new Promise(requestAnimationFrame);
+return true;"#
+    ))
+    .join::<bool>()
+    .await;
+}
 
 /// The viewer's picture is on the page: the floating one flies to it, and the
 /// viewer keeps note of where it is for the way back.
@@ -606,8 +678,28 @@ mod tests {
         assert!(css.contains(".stage-tools, .stage-translate, .stage-note { z-index: 2; }"));
         assert!(css.contains("html.sb-hero-flying .stage { isolation: auto; }"));
         assert!(css.contains(
-            "html.sb-hero-flying :is(.post-main > :not(.stage), .post-layout > .side) { position: relative; z-index: 2; }"
+            "html.sb-hero-flying :is(.post-bar, .post-main > .banner, .related, .post-layout > .side) { position: relative; z-index: 2; }"
         ));
+        // Every child of `.post-main` is the stage or one of those: one that
+        // isn't would be flown over. And none of them is "not the stage", which
+        // costs a restyle of the whole page each time the class comes and goes.
+        assert!(!css.contains("html.sb-hero-flying :is(.post-main > :not("));
+        let viewer = include_str!("pages/post.rs");
+        let (_, main) = viewer.split_once(r#"div { class: "post-main","#).unwrap();
+        let (main, _) = main.split_once(r#"aside { class: "side","#).unwrap();
+        for child in [
+            "Stage {",
+            r#"class: "post-bar glass float""#,
+            "ErrorBanner {",
+            r#"class: "banner warn""#,
+            "Related {",
+        ] {
+            assert!(main.contains(child), "{child}");
+        }
+        assert!(
+            include_str!("pages/mod.rs").contains(r#"div { class: "banner error", role: "alert","#)
+        );
+        assert!(viewer.contains(r#"section { class: "related","#));
         // Set before the flight and gone with the picture, so no button changes
         // places with it while it's still there.
         let (_, go) = HERO.split_once("const go = (tries) => {").unwrap();
@@ -663,6 +755,8 @@ mod tests {
         assert!(!GLOW.contains("ctx.filter") && !GLOW.contains(".filter ="));
         assert!(!GLOW.contains("getImageData") && !GLOW.contains("toDataURL"));
         assert!(GLOW.contains(r#"data-saver="on""#));
+        // Reduced effects hide the glow, so it isn't drawn either.
+        assert!(GLOW.contains(r#".app[data-effects="lite"]"#));
     }
 
     #[test]
@@ -782,6 +876,59 @@ mod tests {
         let moved = start.find("classList.add(").unwrap();
         assert!(shown < moved);
         assert!(!TURN.contains("startViewTransition"));
+    }
+
+    #[test]
+    fn lifting_off_restyles_no_picture_in_the_gallery() {
+        // The viewer's picture stays hidden until the flying one has landed.
+        let css = include_str!("../assets/main.css");
+        assert!(css.contains("html.sb-hero :is(#stage-img, .stage video) { visibility: hidden; }"));
+        assert!(!css.contains("html.sb-hero .stage img"));
+        assert!(include_str!("pages/post.rs").contains(r#"id: "stage-img","#));
+    }
+
+    #[test]
+    fn the_gallery_left_behind_is_only_what_was_on_the_screen() {
+        let (_, linger) = HERO.split_once("linger(id, tile) {").unwrap();
+        let (linger, _) = linger.split_once("\n  },").unwrap();
+        assert!(
+            linger.contains("if (at.bottom <= 0 || at.top >= innerHeight) copies[i]?.remove();")
+        );
+        // Before the copy goes onto the page, so the tiles left out cost nothing.
+        assert!(
+            linger.find("copies[i]?.remove()").unwrap() < linger.find("app.append(past)").unwrap()
+        );
+    }
+
+    #[test]
+    fn the_wait_for_rest_always_ends() {
+        // A picture that never comes, or a page that never stops scrolling,
+        // doesn't keep the related posts away.
+        assert!(REST.contains("const until = performance.now() + 3000;"));
+        assert!(REST.contains("while (calm < 2 && performance.now() < until)"));
+        // What it waits for: the flight, the turn, the file, the page.
+        for busy in [
+            "__sbHero?.ghost",
+            "__sbTurn?.since",
+            "!shown.complete",
+            "scrollY === y",
+        ] {
+            assert!(REST.contains(busy), "{busy}");
+        }
+        // A spinner would hold it for the whole three seconds.
+        assert!(REST.contains("Number.isFinite(one.effect?.getComputedTiming().endTime)"));
+    }
+
+    #[test]
+    fn pictures_fetched_ahead_decode_one_at_a_time() {
+        assert!(AHEAD.contains(
+            "while (this.waiting.length) await this.waiting.shift().decode().catch(() => {});"
+        ));
+        // All asked for at once, so they download together.
+        let (_, want) = AHEAD.split_once("want(urls, keep) {").unwrap();
+        let (want, _) = want.split_once("\n  },").unwrap();
+        assert!(want.contains("img.src = url;"));
+        assert!(!want.contains("await"));
     }
 
     #[test]

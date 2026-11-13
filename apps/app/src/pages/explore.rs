@@ -1,6 +1,8 @@
 //! Explore: trending posts and tags, posts added on this day in earlier
 //! years, and random picks. `q` narrows every section.
 
+use std::rc::Rc;
+
 use chrono::Datelike;
 use dioxus::prelude::*;
 use starbooru_core::{DEFAULT_EXPLORE_DAYS, Order, Post, with_exact, with_order};
@@ -123,7 +125,7 @@ pub fn Explore(q: String) -> Element {
                     } else {
                         div { class: "grid",
                             for (index, post) in trending.into_iter().enumerate() {
-                                Thumb { key: "{post.id}", post, index, q: String::new(), ontoggle: move |_| {} }
+                                Thumb { key: "{post.id}", post: Rc::new(post), index, q: String::new(), ontoggle: move |_| {} }
                             }
                         }
                     }
@@ -158,7 +160,7 @@ pub fn Explore(q: String) -> Element {
                             for (index, post) in on_this_day.into_iter().enumerate() {
                                 div { key: "{post.id}", class: "memory",
                                     span { class: "memory-year", "{post.created_at.year()}" }
-                                    Thumb { post, index, q: String::new(), ontoggle: move |_| {} }
+                                    Thumb { post: Rc::new(post), index, q: String::new(), ontoggle: move |_| {} }
                                 }
                             }
                         }
@@ -177,7 +179,7 @@ pub fn Explore(q: String) -> Element {
                     }
                     div { class: "grid",
                         for (index, post) in random.into_iter().enumerate() {
-                            Thumb { key: "{post.id}", post, index, q: random_query.clone(), ontoggle: move |_| {} }
+                            Thumb { key: "{post.id}", post: Rc::new(post), index, q: random_query.clone(), ontoggle: move |_| {} }
                         }
                     }
                 }

@@ -2,7 +2,15 @@ use std::path::Path;
 
 use chrono::{DateTime, Utc};
 use dioxus::html::FileData;
+use dioxus::prelude::document;
 use starbooru_core::{Rating, is_media};
+
+/// Waits `ms` milliseconds on the page's own timer, which works the same in
+/// the browser and the webviews.
+pub async fn sleep_ms(ms: u32) {
+    let script = format!("await new Promise((r) => setTimeout(r, {ms})); return true;");
+    let _ = document::eval(&script).join::<bool>().await;
+}
 
 /// `1536` → `1.5 KB`.
 pub fn human_size(bytes: i64) -> String {

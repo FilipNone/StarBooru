@@ -16,6 +16,7 @@ mod icons;
 mod layout;
 mod motion;
 mod oidc;
+mod pace;
 mod pages;
 mod power;
 mod store;
@@ -32,7 +33,12 @@ use crate::pages::{
 };
 use crate::store::{PREFS, SESSION};
 
-const MAIN_CSS: Asset = asset!("/assets/main.css");
+/// On the web, `dx` writes the link to it into `index.html`, so the page has
+/// its styles before the app has drawn anything.
+const MAIN_CSS: Asset = asset!(
+    "/assets/main.css",
+    AssetOptions::css().with_static_head(true)
+);
 const FAVICON: Asset = asset!("/assets/brand/favicon.svg");
 const FAVICON_PNG: Asset = asset!("/assets/brand/favicon-32.png");
 const TOUCH_ICON: Asset = asset!("/assets/brand/apple-touch-icon.png");
@@ -110,6 +116,7 @@ fn launch_desktop() {
 fn App() -> Element {
     cache::register();
     power::watch();
+    pace::watch();
     system::watch();
     // Persist whenever the session or preferences change.
     use_effect(|| {
@@ -132,7 +139,11 @@ fn App() -> Element {
             name: "viewport",
             content: "width=device-width, initial-scale=1, viewport-fit=cover",
         }
-        document::Stylesheet { href: MAIN_CSS }
+        // The web page links it already (`index.html`). A second link would
+        // have the browser match every rule twice.
+        if cfg!(not(feature = "web")) {
+            document::Stylesheet { href: MAIN_CSS }
+        }
         document::Link { rel: "icon", r#type: "image/svg+xml", href: FAVICON }
         document::Link { rel: "icon", r#type: "image/png", sizes: "32x32", href: FAVICON_PNG }
         document::Link { rel: "apple-touch-icon", href: TOUCH_ICON }
@@ -143,6 +154,7 @@ fn App() -> Element {
             "data-hand": prefs.hand.as_str(),
             "data-tiles": if prefs.flush_tiles { "flush" } else { "spaced" },
             "data-saver": if power::active() { "on" } else { "off" },
+            "data-effects": if pace::lite() { "lite" } else { "full" },
             style: "--seed-hue: {system::seed_hue(&prefs)}",
             Router::<Route> {}
         }
@@ -155,6 +167,62 @@ mod tests {
     fn pressing_something_draws_no_box_around_it() {
         let css = include_str!("../assets/main.css");
         assert!(css.contains("html { -webkit-tap-highlight-color: transparent; }"));
+    }
+
+    /// What `name: ` is set to in the first rule of `css` that starts with `rule`.
+    fn token<'a>(css: &'a str, rule: &str, name: &str) -> &'a str {
+        let (_, body) = css.split_once(rule).unwrap_or_else(|| panic!("{rule}"));
+        let (body, _) = body.split_once('}').unwrap();
+        let (_, value) = body
+            .split_once(&format!("{name}: "))
+            .unwrap_or_else(|| panic!("{name} in {rule}"));
+        value.split_once(';').unwrap().0
+    }
+
+    #[test]
+    fn the_loading_screen_is_in_the_apps_colours() {
+        // It can't use main.css's tokens, as it paints before that file has come.
+        let css = include_str!("../assets/main.css");
+        let page = include_str!("../index.html");
+        for name in ["--canvas", "--primary-container", "--primary"] {
+            assert_eq!(
+                token(page, "#boot {", name),
+                token(css, "\n.app {", name),
+                "{name}, light"
+            );
+            let dark = token(css, r#".app[data-theme="dark"] {"#, name);
+            assert_eq!(
+                token(page, r#"#boot[data-theme="dark"] {"#, name),
+                dark,
+                "{name}, dark"
+            );
+            assert_eq!(
+                token(page, r#"#boot:not([data-theme="light"]) {"#, name),
+                dark,
+                "{name}, dark by the system"
+            );
+        }
+        assert_eq!(token(page, "#boot {", "--h"), "285");
+        assert!(css.contains("--h: var(--seed-hue, 285);"));
+    }
+
+    #[test]
+    fn the_loading_screen_stays_until_the_app_is_styled_and_on_the_page() {
+        // Regression: the page was white until the app started, and then showed
+        // as bare text and blue links until its stylesheet had loaded.
+        let page = include_str!("../index.html");
+        // Empty, with not even a space in it, or `:empty` never matches.
+        assert!(
+            page.contains(
+                "<div id=\"main\"></div>\n    <div id=\"boot\" aria-hidden=\"true\"></div>"
+            )
+        );
+        let css = include_str!("../assets/main.css");
+        assert!(css.contains("#main:not(:empty) + #boot { opacity: 0; visibility: hidden;"));
+        // The stylesheet is linked by the page, after the loading screen.
+        assert!(page.find("id=\"boot\"").unwrap() < page.find("{style_include}").unwrap());
+        let source = include_str!("main.rs");
+        assert!(source.contains("AssetOptions::css().with_static_head(true)"));
     }
 
     #[test]
