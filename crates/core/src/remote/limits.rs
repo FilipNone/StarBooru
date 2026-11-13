@@ -18,6 +18,7 @@ pub struct Limits {
 }
 
 impl BooruApi {
+    /// What this kind of site allows.
     pub fn limits(self) -> Limits {
         match self {
             // 10 requests a second for reads, about one a second sustained;

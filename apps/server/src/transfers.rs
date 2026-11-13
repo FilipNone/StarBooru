@@ -25,6 +25,7 @@ impl Transfers {
         };
     }
 
+    /// How far job `id` has got, while it downloads.
     pub fn get(&self, id: i64) -> Option<Transfer> {
         let all = self.0.lock().unwrap_or_else(PoisonError::into_inner);
         all.get(&id).map(|(_, transfer)| *transfer)

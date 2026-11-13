@@ -116,7 +116,7 @@ mod tests {
         assert_eq!(meter.seen(1_200_000, at(1200)), 1_000_000);
         // Then 4 MB/s: a third of the way there.
         assert_eq!(meter.seen(5_000_000, at(2000)), 2_000_000);
-        // Stalled: it comes down, not to nothing at once.
+        // Stalled: the number comes down a third at a time.
         assert_eq!(meter.seen(5_000_000, at(3000)), 1_333_333);
     }
 

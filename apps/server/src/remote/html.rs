@@ -215,6 +215,7 @@ fn searched_tag(page: &Url, href: &str) -> Option<String> {
     found.filter(|tag| !tag.is_empty() && !tag.contains(' '))
 }
 
+/// A rating as pages spell it: the word, or Danbooru's letter.
 fn rating(word: &str) -> Option<Rating> {
     match word.trim().to_ascii_lowercase().as_str() {
         "general" | "safe" | "g" => Some(Rating::Safe),

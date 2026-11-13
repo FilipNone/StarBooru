@@ -20,6 +20,7 @@ pub struct Vault {
 }
 
 impl Vault {
+    /// Derives the vault's key from the server's secret.
     pub fn new(secret: &[u8]) -> Self {
         // A key of its own, apart from every other use of the secret.
         let derived = Hmac::<Sha256>::new_from_slice(secret).ok().map(|mut mac| {
@@ -104,6 +105,7 @@ impl Accounts {
     }
 }
 
+/// A row of `booru_accounts`.
 #[derive(FromRow)]
 struct Row {
     id: i64,
@@ -114,6 +116,8 @@ struct Row {
     updated_at: DateTime<Utc>,
 }
 
+/// The API a stored name stands for. `None` for one this version doesn't
+/// know, which a newer one may have written.
 fn api_of(name: &str) -> Option<BooruApi> {
     BooruApi::ALL.into_iter().find(|api| api.as_str() == name)
 }

@@ -93,6 +93,8 @@ pub async fn delete_account(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// `POST /remote/search`: one page of a search on one site, in StarBooru's
+/// terms.
 pub async fn search(
     State(state): State<AppState>,
     user: AuthUser,
@@ -243,6 +245,7 @@ pub async fn post(
     posts.pop().map(Json).ok_or(AppError::NotFound)
 }
 
+/// A row of `remote_searches`.
 #[derive(FromRow)]
 struct SearchRow {
     id: i64,
@@ -656,7 +659,7 @@ mod tests {
         assert_eq!(r.status, StatusCode::BAD_REQUEST);
         let r = save(t.clone(), "me", "wrong").await;
         assert_eq!(r.status, StatusCode::OK, "{:?}", r.json());
-        // Saved again for the same site: replaced, not added.
+        // Saved again for the same site, it takes the place of the first.
         let r = save(t.clone(), " me ", " secret ").await;
         let saved = r.json();
         assert_eq!(saved["base"], json!(base));
@@ -804,7 +807,7 @@ mod tests {
             json!({"name": "blue_sky", "category": "general", "count": 12})
         );
         assert_eq!(found[1]["category"], "copyright");
-        // Nothing typed, or a site without suggestions: none, not an error.
+        // Nothing typed, or a site without suggestions: an empty list.
         assert_eq!(tags("  ").await.json(), json!([]));
         let nowhere = json!({"api": "moebooru", "base": format!("{site}/missing"), "term": "blu"});
         let r = app
@@ -924,7 +927,7 @@ mod tests {
         let r = search("busy").await;
         assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS);
         assert_eq!(r.headers["retry-after"], "42");
-        // Nothing else goes to that site meanwhile, not even what would work.
+        // Meanwhile nothing goes to that site, even a search that would work.
         let started = std::time::Instant::now();
         let r = search("d").await;
         assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS);

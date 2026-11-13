@@ -26,6 +26,7 @@ const LOCKED_FOR: TimeDelta = TimeDelta::hours(1);
 /// Most sites remembered; past it, the ones with nothing pending go first.
 const MAX_SITES: usize = 2000;
 
+/// What is remembered about one site.
 #[derive(Debug, Clone, Copy)]
 struct Site {
     /// When the next request may go.
@@ -39,6 +40,8 @@ struct Site {
 pub struct Pace(Mutex<HashMap<String, Site>>);
 
 impl Pace {
+    /// Runs `with` on what is remembered about `host`. When the table is
+    /// full, sites with nothing pending make room first.
     fn site<T>(&self, host: &str, now: DateTime<Utc>, with: impl FnOnce(&mut Site) -> T) -> T {
         let mut sites = self.0.lock().unwrap_or_else(PoisonError::into_inner);
         if sites.len() >= MAX_SITES && !sites.contains_key(host) {

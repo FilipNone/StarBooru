@@ -306,6 +306,7 @@ pub struct BooruAccount {
     pub updated_at: DateTime<Utc>,
 }
 
+/// What `usable` reads as from a server too old to say: its accounts all open.
 fn yes() -> bool {
     true
 }
@@ -380,6 +381,7 @@ pub struct RemotePostQuery {
 pub const MAX_SEARCH_SITES: usize = 8;
 /// Most searches on other sites one user saves.
 pub const MAX_REMOTE_SEARCHES: usize = 200;
+/// The longest name a saved search takes.
 const MAX_SEARCH_NAME_CHARS: usize = 64;
 
 /// A search on other sites that the user kept.
@@ -434,6 +436,7 @@ impl SaveRemoteSearch {
     }
 }
 
+/// One page of a search on another site.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RemotePage {
     pub posts: Vec<RemotePost>,
@@ -441,6 +444,7 @@ pub struct RemotePage {
     pub more: bool,
 }
 
+/// Why a request about another site is refused before anything is sent.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum RemoteError {
     #[error("enter the site's http or https address")]
