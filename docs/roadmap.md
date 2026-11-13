@@ -100,7 +100,7 @@ The checklist's *better tagging system* request, built in five phases. Each phas
 | Item | Status |
 |---|---|
 | documentation up to date | ✅ `docs/`, and guides for users and admins in the [wiki](https://github.com/FilipNone/StarBooru/wiki). The README is in English, Italian, Chinese, Japanese and Russian. |
-| releases | 🟡 Third beta, `v0.1.0-beta.3`, on [Releases](https://github.com/FilipNone/StarBooru/releases): Windows, macOS and Linux apps, the Android APK, and a Linux server package, built by `.github/workflows/release.yml` (`docs/development.md` › Making a release). The Windows and macOS builds have only had a start-up check on CI and aren't code-signed. |
+| releases | 🟡 Fourth beta, `v0.1.0-beta.4`, on [Releases](https://github.com/FilipNone/StarBooru/releases): Windows, macOS and Linux apps, the Android APK, and a Linux server package, built by `.github/workflows/release.yml` (`docs/development.md` › Making a release). The Windows and macOS builds have only had a start-up check on CI and aren't code-signed. |
 | cheat sheet | ✅ `/help`: every search term with examples that run the search, a box that explains a query as you type, and the viewer's keyboard shortcuts. Linked from Settings and from a failed or empty search. |
 | Privacy Policy, Terms of Service pages | ✅ `/privacy` and `/terms`, open without signing in and linked from the sign-in card and Settings. They describe what the software stores; the operator of each server is responsible for it. |
 
