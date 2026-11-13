@@ -25,6 +25,7 @@ mod storage;
 #[cfg(test)]
 mod testing;
 mod throttle;
+mod transfers;
 mod uploads;
 mod web;
 

@@ -6221,6 +6221,7 @@ dependencies = [
  "brotli",
  "chrono",
  "flate2",
+ "futures-util",
  "hex",
  "hmac",
  "image",

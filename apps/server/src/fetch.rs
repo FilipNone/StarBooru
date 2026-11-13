@@ -62,6 +62,13 @@ pub struct SiteCall<'a> {
     pub json: bool,
 }
 
+/// Hears how many bytes of a download have arrived, and how many there will
+/// be when the site says.
+pub type Watch<'a> = &'a (dyn Fn(u64, Option<u64>) + Send + Sync);
+
+/// For a download nobody follows.
+pub const UNWATCHED: Watch<'static> = &|_, _| {};
+
 pub struct Fetcher {
     client: reqwest::Client,
     /// Follows no redirects: `call` does, to decide what goes with each hop.
@@ -110,17 +117,19 @@ impl Fetcher {
 
     /// Downloads `raw` into memory, refusing bodies over `max_bytes`.
     pub async fn get(&self, raw: &str, max_bytes: usize) -> Result<Vec<u8>, FetchError> {
-        self.get_from(raw, None, max_bytes).await
+        self.get_from(raw, None, max_bytes, UNWATCHED).await
     }
 
     /// Downloads `raw` as a browser on the page `from` would: some sites
     /// (Gelbooru) only hand their files to their own pages. Only the page's
-    /// site is named, never its whole address.
+    /// site is named, never its whole address. `watch` hears how far the
+    /// download has got as each piece arrives.
     pub async fn get_from(
         &self,
         raw: &str,
         from: Option<&str>,
         max_bytes: usize,
+        watch: Watch<'_>,
     ) -> Result<Vec<u8>, FetchError> {
         let url = Url::parse(raw.trim()).map_err(|_| FetchError::BadUrl)?;
         check_url(&url, self.reach)?;
@@ -129,7 +138,7 @@ impl Fetcher {
             request = request.header(REFERER, site);
         }
         let response = request.send().await.map_err(classify)?;
-        read_capped(response, max_bytes).await
+        read_capped(response, max_bytes, watch).await
     }
 
     /// Sends a request to a site with an account on it, following redirects
@@ -162,7 +171,7 @@ impl Fetcher {
             }
             let response = request.send().await.map_err(classify)?;
             if !response.status().is_redirection() {
-                return read_capped(response, max_bytes).await;
+                return read_capped(response, max_bytes, UNWATCHED).await;
             }
             let next = response
                 .headers()
@@ -192,6 +201,7 @@ fn site_of(raw: &str) -> Option<HeaderValue> {
 async fn read_capped(
     mut response: reqwest::Response,
     max_bytes: usize,
+    watch: Watch<'_>,
 ) -> Result<Vec<u8>, FetchError> {
     let status = response.status();
     if !status.is_success() {
@@ -201,12 +211,15 @@ async fn read_capped(
     if response.content_length().is_some_and(|len| len > max) {
         return Err(FetchError::TooLarge);
     }
+    let total = response.content_length();
     let mut bytes = Vec::new();
+    watch(0, total);
     while let Some(chunk) = response.chunk().await.map_err(classify)? {
         if bytes.len().saturating_add(chunk.len()) > max_bytes {
             return Err(FetchError::TooLarge);
         }
         bytes.extend_from_slice(&chunk);
+        watch(u64::try_from(bytes.len()).unwrap_or(u64::MAX), total);
     }
     Ok(bytes)
 }
@@ -616,9 +629,53 @@ mod tests {
         assert_eq!(f.get(&file, 64).await.unwrap(), b"none");
         let page = "https://booru.example/post/show/7?key=secret";
         assert_eq!(
-            f.get_from(&file, Some(page), 64).await.unwrap(),
+            f.get_from(&file, Some(page), 64, UNWATCHED).await.unwrap(),
             b"https://booru.example/"
         );
+    }
+
+    #[tokio::test]
+    async fn a_download_says_how_far_it_has_got() {
+        use axum::body::Body;
+        use axum::http::header::CONTENT_LENGTH;
+        use axum::response::Response;
+        use axum::routing::get;
+        // Three pieces of 1000 bytes, with the size said up front or not.
+        let pieces = || {
+            let chunks = (0..3).map(|_| Ok::<_, std::io::Error>(vec![7u8; 1000]));
+            Body::from_stream(futures_util::stream::iter(chunks))
+        };
+        let app = axum::Router::new()
+            .route(
+                "/sized",
+                get(move || async move {
+                    Response::builder()
+                        .header(CONTENT_LENGTH, 3000)
+                        .body(pieces())
+                        .unwrap()
+                }),
+            )
+            .route(
+                "/unsized",
+                get(move || async move { Response::new(pieces()) }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        let f = Fetcher::new(Reach::Any).unwrap();
+        for (path, total) in [("sized", Some(3000)), ("unsized", None)] {
+            let seen = std::sync::Mutex::new(Vec::new());
+            let watch = |done: u64, total: Option<u64>| seen.lock().unwrap().push((done, total));
+            let body = f
+                .get_from(&format!("http://{addr}/{path}"), None, 4096, &watch)
+                .await
+                .unwrap();
+            assert_eq!(body.len(), 3000);
+            let seen = seen.into_inner().unwrap();
+            assert_eq!(seen.first(), Some(&(0, total)), "{path}");
+            assert_eq!(seen.last(), Some(&(3000, total)), "{path}");
+            assert!(seen.windows(2).all(|pair| pair[0].0 <= pair[1].0));
+        }
     }
 
     #[tokio::test]

@@ -7,8 +7,8 @@ use dioxus::prelude::*;
 use starbooru_core::tag::TagError;
 use starbooru_core::{ImportJob, JobState, Rating, parse_tag_list};
 
-use super::notify;
 use super::post::RatingPicker;
+use super::{TransferBar, notify};
 use crate::Route;
 use crate::activity::{self, Item, JOBS, QUEUE, Source, Status};
 use crate::icons::{Ico, Icon};
@@ -538,6 +538,9 @@ fn QueueRow(item: Item) -> Element {
             if let Status::Failed(msg) = &item.status {
                 p { class: "queue-error", role: "alert", "{msg}" }
             }
+            if item.status == Status::Uploading && matches!(item.source, Source::File(_)) {
+                TransferBar { progress: item.progress }
+            }
             if item.status == Status::Draft {
                 label { class: "queue-tags",
                     Ico { icon: Icon::Label, size: 18 }
@@ -597,6 +600,9 @@ fn JobRow(job: ImportJob, onerror: EventHandler<String>) -> Element {
                         {t!("upload-job-cancel")}
                     }
                 }
+            }
+            if job.state == JobState::Running {
+                TransferBar { progress: job.progress }
             }
             if let Some(msg) = job.error.as_ref().filter(|_| job.state != JobState::Done) {
                 p { class: if job.state == JobState::Failed { "queue-error" } else { "queue-note" }, "{msg}" }

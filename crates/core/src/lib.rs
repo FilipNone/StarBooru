@@ -27,6 +27,7 @@ pub mod remote;
 pub mod saved;
 pub mod share;
 pub mod tag;
+pub mod transfer;
 pub mod typo;
 pub mod vocab;
 
@@ -70,6 +71,7 @@ pub use remote::{
 pub use saved::clean_saved_search;
 pub use share::{NewShare, Share, ShareError, SharedPost, SharedView};
 pub use tag::{normalize_tag, parse_tag_list};
+pub use transfer::{Meter, Transfer};
 pub use typo::closest_tag;
 pub use vocab::{SECTIONS, VARIANTS, VOCAB, VOCAB_VERSION, split_category};
 

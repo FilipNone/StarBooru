@@ -54,6 +54,7 @@ impl From<Row> for ImportJob {
             error: r.error,
             created_at: r.created_at,
             finished_at: r.finished_at,
+            progress: None,
         }
     }
 }
@@ -143,7 +144,11 @@ pub async fn list(
     .bind(MAX_WAITING.saturating_add(500))
     .fetch_all(&state.db)
     .await?;
-    Ok(Json(rows.into_iter().map(ImportJob::from).collect()))
+    let mut jobs: Vec<ImportJob> = rows.into_iter().map(ImportJob::from).collect();
+    for job in jobs.iter_mut().filter(|job| job.state == JobState::Running) {
+        job.progress = state.transfers.get(job.id);
+    }
+    Ok(Json(jobs))
 }
 
 /// `DELETE /imports/{id}`: cancels a waiting import or hides a finished one.
@@ -286,10 +291,11 @@ pub(crate) async fn run_next(state: &AppState) -> AppResult<bool> {
             rating: Rating::from_db(job.rating).unwrap_or_default(),
             source: job.source,
         };
-        import_one(state, job.user_id, req).await
+        import_one(state, job.user_id, req, Some(job.id)).await
     } else {
         Err(AppError::Denied("this account is disabled"))
     };
+    state.transfers.end(job.id);
     let (done, post_id, error) = match outcome {
         Ok(post) => (JobState::Done, Some(post.id), None),
         Err(AppError::Conflict {
@@ -424,6 +430,63 @@ mod tests {
         let failed = by_url("/missing");
         assert_eq!(failed["state"], "failed");
         assert!(failed["error"].as_str().unwrap().contains("404"));
+        app.finish().await;
+    }
+
+    #[tokio::test]
+    async fn a_running_import_says_how_far_it_is() {
+        let Some(app) = app().await else {
+            return;
+        };
+        let t = app.register("admin").await;
+        let base = site().await;
+        let jobs = queue(
+            &app,
+            &t,
+            json!([{ "url": format!("{base}/a.png") }, { "url": format!("{base}/hop") }]),
+        )
+        .await
+        .json();
+        let id = jobs[0]["id"].as_i64().unwrap();
+        let waiting = jobs[1]["id"].as_i64().unwrap();
+        assert!(jobs[0].get("progress").is_none());
+
+        // As a worker halfway through the first would have it.
+        sqlx::query("UPDATE import_jobs SET state = 'running' WHERE id = $1")
+            .bind(id)
+            .execute(app.db())
+            .await
+            .unwrap();
+        app.state.transfers.seen(id, 50, Some(200), Utc::now());
+        // Left over from somewhere: a job that isn't running shows nothing.
+        app.state.transfers.seen(waiting, 1, None, Utc::now());
+        let list = app.get("/api/v1/imports", &t).await.json();
+        let job = |id: i64| {
+            list.as_array()
+                .unwrap()
+                .iter()
+                .find(|j| j["id"] == id)
+                .unwrap()
+                .clone()
+        };
+        assert_eq!(
+            job(id)["progress"],
+            json!({"done": 50, "total": 200, "speed": 0})
+        );
+        assert!(job(waiting).get("progress").is_none());
+
+        // Run for real, the download is followed and then forgotten.
+        assert_eq!(requeue_interrupted(&app.state).await.unwrap(), 1);
+        assert_eq!(drain(&app).await, 2);
+        assert_eq!(app.state.transfers.get(id), None);
+        assert_eq!(app.state.transfers.get(waiting), None);
+        let list = app.get("/api/v1/imports", &t).await.json();
+        assert!(
+            list.as_array()
+                .unwrap()
+                .iter()
+                .all(|j| j.get("progress").is_none())
+        );
         app.finish().await;
     }
 

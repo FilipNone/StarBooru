@@ -284,7 +284,7 @@ Errors:
 
 The server downloads each address on its own, so an import goes on when every app is closed and survives a restart (an import a restart interrupts starts over). Each item follows the rules of `POST /posts/import`; the whole batch is refused (400) when one address is not http(s), has credentials, is on a private network (unless the server allows it), has a bad tag, or URL import is off. 409 `too_many_imports` past 2000 waiting imports per account. Two imports run at once, server-wide, oldest first. Finished imports are deleted after 7 days.
 
-`ImportJob` is `{id, url, source, tags, rating, state, post_id, error, created_at, finished_at}`. `state` is `queued`, `running`, `done` (`post_id` is the new post), `duplicate` (the file was already here; `error` says which post) or `failed` (`error` says why, e.g. the site answered 404, the file is over the upload limit, the storage limit, a disabled account). File uploads (`POST /posts`) are sent by the app, so they stop when it closes.
+`ImportJob` is `{id, url, source, tags, rating, state, post_id, error, created_at, finished_at, progress?}`. `progress` is there while the import is `running` and its download has started: `{done, total?, speed}`, bytes so far, the file's size when the site says it, and bytes per second over the last moments (0 until measured). `state` is `queued`, `running`, `done` (`post_id` is the new post), `duplicate` (the file was already here; `error` says which post) or `failed` (`error` says why, e.g. the site answered 404, the file is over the upload limit, the storage limit, a disabled account). File uploads (`POST /posts`) are sent by the app, so they stop when it closes.
 
 ## Library imports
 

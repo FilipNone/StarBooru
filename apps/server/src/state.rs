@@ -14,6 +14,7 @@ use crate::ocr::Ocr;
 use crate::oidc::Oidc;
 use crate::storage::Storage;
 use crate::throttle::Guards;
+use crate::transfers::Transfers;
 use crate::uploads::Uploads;
 
 /// Cheap-to-clone handle shared by all handlers.
@@ -41,6 +42,8 @@ pub struct Inner {
     pub ocr: Option<Ocr>,
     /// Woken when background imports are queued.
     pub imports: tokio::sync::Notify,
+    /// How far each running import's download has got.
+    pub transfers: Transfers,
     /// Woken when a library import is queued.
     pub library_imports: tokio::sync::Notify,
     /// The built-in AI models and the process that runs them.
@@ -84,6 +87,7 @@ impl AppState {
             oidc,
             ocr,
             imports: tokio::sync::Notify::new(),
+            transfers: Transfers::default(),
             library_imports: tokio::sync::Notify::new(),
             local_ai,
             started_at: Utc::now(),

@@ -916,14 +916,16 @@ pub async fn import(
     user: AuthUser,
     Json(req): Json<ImportRequest>,
 ) -> AppResult<Json<Post>> {
-    import_one(&state, user.id, req).await.map(Json)
+    import_one(&state, user.id, req, None).await.map(Json)
 }
 
-/// Downloads `req.url` and adds it for `user_id`; also runs background imports.
+/// Downloads `req.url` and adds it for `user_id`; also runs background
+/// imports, whose progress is kept under their `job` number.
 pub(super) async fn import_one(
     state: &AppState,
     user_id: i64,
     req: ImportRequest,
+    job: Option<i64>,
 ) -> AppResult<Post> {
     let fetcher = state
         .fetcher
@@ -931,8 +933,13 @@ pub(super) async fn import_one(
         .ok_or_else(|| AppError::BadRequest("URL import is turned off on this server".into()))?;
     // Checked before anything is downloaded.
     normalize_tags(req.tags.iter().map(String::as_str))?;
+    let watch = |done: u64, total: Option<u64>| {
+        if let Some(job) = job {
+            state.transfers.seen(job, done, total, Utc::now());
+        }
+    };
     let (fetched, req) =
-        crate::remote::lookup::fetch(fetcher, req, state.config.max_upload_bytes).await?;
+        crate::remote::lookup::fetch(fetcher, req, state.config.max_upload_bytes, &watch).await?;
     let tags = normalize_tags(req.tags.iter().map(String::as_str))?;
     let source = clean_source(req.source.unwrap_or(req.url))?;
     create_post(

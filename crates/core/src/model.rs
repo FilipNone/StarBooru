@@ -463,6 +463,9 @@ pub struct ImportJob {
     pub error: Option<String>,
     pub created_at: DateTime<Utc>,
     pub finished_at: Option<DateTime<Utc>>,
+    /// How far the download has got, while it is running.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progress: Option<crate::transfer::Transfer>,
 }
 
 /// A search a user kept, listed on their gallery page.

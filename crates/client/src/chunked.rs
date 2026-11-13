@@ -107,8 +107,13 @@ impl Client {
     /// Uploads a file, calling `read(offset, len)` for each piece of it as it
     /// is sent, so a big file is never in memory whole. Anything that fits in
     /// one chunk goes in one `POST /posts`, as it does to a server too old for
-    /// chunks.
-    pub async fn upload_file<F, Fut>(&self, upload: FileUpload, read: F) -> Result<Post>
+    /// chunks. `sent` hears how many bytes the server has taken so far.
+    pub async fn upload_file<F, Fut>(
+        &self,
+        upload: FileUpload,
+        read: F,
+        sent: &dyn Fn(u64),
+    ) -> Result<Post>
     where
         F: Fn(u64, u64) -> Fut,
         Fut: Future<Output = std::result::Result<Bytes, String>>,
@@ -131,16 +136,16 @@ impl Client {
             other => other?,
         };
 
-        let sent = match self.send_chunks(&session, upload.size, &read).await {
+        let outcome = match self.send_chunks(&session, upload.size, &read, sent).await {
             Ok(()) => self.finish_upload(&session.id).await,
             Err(e) => Err(e),
         };
-        if let Err(e) = &sent
+        if let Err(e) = &outcome
             && e.code() != Some("upload_gone")
         {
             self.cancel_upload(&session.id).await;
         }
-        sent
+        outcome
     }
 
     async fn upload_whole<F, Fut>(&self, upload: FileUpload, read: &F) -> Result<Post>
@@ -159,12 +164,20 @@ impl Client {
         .await
     }
 
-    async fn send_chunks<F, Fut>(&self, session: &UploadSession, size: u64, read: &F) -> Result<()>
+    async fn send_chunks<F, Fut>(
+        &self,
+        session: &UploadSession,
+        size: u64,
+        read: &F,
+        sent: &dyn Fn(u64),
+    ) -> Result<()>
     where
         F: Fn(u64, u64) -> Fut,
         Fut: Future<Output = std::result::Result<Bytes, String>>,
     {
         let mut pace = Pace::new();
+        // Bytes of the chunks the server has taken, in whatever order.
+        let mut taken = 0u64;
         let mut next_index = 0;
         let mut retries = VecDeque::new();
         let mut flying = FuturesUnordered::new();
@@ -188,7 +201,14 @@ impl Client {
                 return Ok(());
             };
             match result {
-                Ok(took_ms) => pace.answered(took_ms),
+                Ok(took_ms) => {
+                    pace.answered(took_ms);
+                    let len =
+                        starbooru_core::upload_chunk_range(size, session.chunk_size, chunk.index)
+                            .map_or(0, |(_, len)| len);
+                    taken = taken.saturating_add(len).min(size);
+                    sent(taken);
+                }
                 Err(e) if is_passing(&e) && chunk.attempt < RETRIES => {
                     pace.back_off();
                     retries.push_back(Chunk {
@@ -443,12 +463,20 @@ mod tests {
     async fn sends_a_big_file_in_parallel_chunks() {
         let (client, fake) = fake_server(BIG, |_, _| None).await;
         let bytes = file(BIG);
+        let sent = std::cell::RefCell::new(Vec::new());
         let post = client
-            .upload_file(request(BIG), reader(bytes.clone()))
+            .upload_file(request(BIG), reader(bytes.clone()), &|done| {
+                sent.borrow_mut().push(done)
+            })
             .await
             .unwrap();
         assert_eq!(post.id, 7);
         assert_eq!(fake.reassembled(BIG), bytes);
+        // One report per chunk, each further along, ending at the whole file.
+        let sent = sent.into_inner();
+        assert_eq!(sent.len() as u32, upload_chunks(BIG, CHUNK));
+        assert!(sent.windows(2).all(|pair| pair[0] < pair[1]));
+        assert_eq!(sent.last(), Some(&BIG));
         assert_eq!(fake.logged("POST /uploads/abc/finish"), 1);
         assert_eq!(fake.logged("DELETE"), 0);
         let most = fake.most_flying.load(Ordering::SeqCst);
@@ -460,7 +488,7 @@ mod tests {
     async fn the_first_chunk_goes_alone() {
         let (client, fake) = fake_server(BIG, |_, _| None).await;
         client
-            .upload_file(request(BIG), reader(file(BIG)))
+            .upload_file(request(BIG), reader(file(BIG)), &|_| {})
             .await
             .unwrap();
         let log = fake.log.lock().unwrap();
@@ -475,7 +503,7 @@ mod tests {
         .await;
         let bytes = file(BIG);
         client
-            .upload_file(request(BIG), reader(bytes.clone()))
+            .upload_file(request(BIG), reader(bytes.clone()), &|_| {})
             .await
             .unwrap();
         assert_eq!(fake.reassembled(BIG), bytes);
@@ -486,7 +514,7 @@ mod tests {
     async fn a_refusal_stops_the_upload_and_cleans_up() {
         let (client, fake) = fake_server(BIG, |_, _| Some(415)).await;
         let err = client
-            .upload_file(request(BIG), reader(file(BIG)))
+            .upload_file(request(BIG), reader(file(BIG)), &|_| {})
             .await
             .unwrap_err();
         assert!(matches!(err, ClientError::Api { status: 415, .. }), "{err}");
@@ -500,7 +528,7 @@ mod tests {
         let (client, fake) = fake_server(BIG, |_, _| None).await;
         let unreadable = |_, _| std::future::ready(Err("gone".to_owned()));
         let err = client
-            .upload_file(request(BIG), unreadable)
+            .upload_file(request(BIG), unreadable, &|_| {})
             .await
             .unwrap_err();
         assert!(matches!(err, ClientError::Read(_)), "{err}");
@@ -508,7 +536,10 @@ mod tests {
         assert_eq!(fake.logged("DELETE"), 1);
 
         let short = |_, _| std::future::ready(Ok(Bytes::from_static(b"short")));
-        let err = client.upload_file(request(BIG), short).await.unwrap_err();
+        let err = client
+            .upload_file(request(BIG), short, &|_| {})
+            .await
+            .unwrap_err();
         assert!(matches!(err, ClientError::Read(_)), "{err}");
     }
 
@@ -517,7 +548,7 @@ mod tests {
         let (client, fake) = fake_server(10, |_, _| None).await;
         // The fake doesn't know `/posts`, which answers 500.
         let err = client
-            .upload_file(request(10), reader(file(10)))
+            .upload_file(request(10), reader(file(10)), &|_| {})
             .await
             .unwrap_err();
         assert!(matches!(err, ClientError::Api { status: 500, .. }), "{err}");
@@ -562,7 +593,7 @@ mod tests {
             }
         });
         let post = client
-            .upload_file(request(BIG), reader(file(BIG)))
+            .upload_file(request(BIG), reader(file(BIG)), &|_| {})
             .await
             .unwrap();
         assert_eq!(post.id, 7);

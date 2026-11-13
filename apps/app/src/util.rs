@@ -29,6 +29,21 @@ pub fn human_size(bytes: i64) -> String {
     }
 }
 
+/// What to say beside a transfer's bar: `42% · 1.2 MB/s`, or the bytes so
+/// far when the size isn't known. The speed is left out until it is measured.
+pub fn transfer_label(progress: &starbooru_core::Transfer) -> String {
+    let size = |bytes: u64| human_size(i64::try_from(bytes).unwrap_or(i64::MAX));
+    let how_far = match progress.percent() {
+        Some(percent) => format!("{percent}%"),
+        None => size(progress.done),
+    };
+    if progress.speed == 0 {
+        how_far
+    } else {
+        format!("{how_far} · {}/s", size(progress.speed))
+    }
+}
+
 /// `m:ss`, or `h:mm:ss` from an hour. `None` for nonsense.
 pub fn format_duration(ms: i64) -> Option<String> {
     if ms < 0 {
@@ -496,6 +511,23 @@ mod tests {
             ["https://a.example/1.png", "HTTP://b.example/2"]
         );
         assert!(parse_urls("").is_empty());
+    }
+
+    #[test]
+    fn says_how_far_and_how_fast() {
+        let t = |done, total, speed| starbooru_core::Transfer { done, total, speed };
+        assert_eq!(transfer_label(&t(0, Some(1000), 0)), "0%");
+        assert_eq!(
+            transfer_label(&t(420, Some(1000), 1_288_490)),
+            "42% · 1.2 MB/s"
+        );
+        assert_eq!(transfer_label(&t(1000, Some(1000), 512)), "100% · 512 B/s");
+        // No size from the site: the bytes so far.
+        assert_eq!(transfer_label(&t(3_565_158, None, 0)), "3.4 MB");
+        assert_eq!(
+            transfer_label(&t(3_565_158, None, 2048)),
+            "3.4 MB · 2.0 KB/s"
+        );
     }
 
     #[test]

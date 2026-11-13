@@ -1427,6 +1427,12 @@ button.chip:disabled { cursor: default; }
 .upload-jobs .section-head { margin-bottom: 0; }
 .upload-jobs .section-head > .icon { color: var(--primary); }
 .upload-jobs .upload-hint { margin-top: 4px; }
+/* The bar moves for as long as it takes the next reading to come, so it
+   goes on evenly without jumping from one to the next. */
+.transfer { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.transfer .meter { flex: 1 1 auto; max-width: none; }
+.transfer .meter:not(.unknown) span { min-width: 6px; transition: width 1s linear; }
+.transfer-text { flex: none; font-size: 13px; font-variant-numeric: tabular-nums; color: var(--on-surface-2); }
 .queue-tags { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--on-surface-2); font-size: 14px; }
 .queue-tags input {
   flex: 1; min-width: 0; min-height: 34px; padding: 0 12px; border: 1px solid var(--outline);

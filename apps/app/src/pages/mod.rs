@@ -93,6 +93,34 @@ pub fn ErrorBanner(message: String, onretry: Option<EventHandler<()>>) -> Elemen
     }
 }
 
+/// A bar for a download or an upload under way, with how much is done and
+/// how fast it goes. Without `progress`, or without a size to measure
+/// against, the bar only shows that something is moving.
+#[component]
+pub fn TransferBar(progress: Option<starbooru_core::Transfer>) -> Element {
+    let percent = progress.and_then(|p| p.percent());
+    let label = progress
+        .as_ref()
+        .map(crate::util::transfer_label)
+        .unwrap_or_default();
+    rsx! {
+        div { class: "transfer",
+            span {
+                class: if percent.is_some() { "meter" } else { "meter unknown" },
+                role: "progressbar",
+                aria_valuemin: "0",
+                aria_valuemax: "100",
+                aria_valuenow: percent.map(|p| p.to_string()),
+                aria_valuetext: label.clone(),
+                span { style: percent.map(|p| format!("width: {p}%")) }
+            }
+            if !label.is_empty() {
+                span { class: "transfer-text", "{label}" }
+            }
+        }
+    }
+}
+
 #[component]
 pub fn Spinner() -> Element {
     rsx! { span { class: "spinner", role: "status", "aria-label": t!("loading") } }

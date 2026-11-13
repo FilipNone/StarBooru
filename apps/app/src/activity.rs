@@ -10,7 +10,7 @@ use dioxus::html::FileData;
 use dioxus::prelude::*;
 use starbooru_client::{ClientError, FileUpload};
 use starbooru_core::{
-    ImportJob, ImportRequest, JobState, MAX_IMPORT_BATCH, Rating, parse_tag_list,
+    ImportJob, ImportRequest, JobState, MAX_IMPORT_BATCH, Meter, Rating, Transfer, parse_tag_list,
 };
 
 use crate::pages::notify;
@@ -40,6 +40,8 @@ pub struct Item {
     /// Tags for this item only, on top of the shared ones.
     pub tags: String,
     pub status: Status,
+    /// How far its upload has got, once the first piece is through.
+    pub progress: Option<Transfer>,
 }
 
 impl Item {
@@ -68,9 +70,22 @@ static STALE: GlobalSignal<bool> = Signal::global(|| true);
 /// Jobs seen running since the list was last idle, for the notice when it is.
 static WATCHED: GlobalSignal<HashSet<i64>> = Signal::global(HashSet::new);
 
-/// Seconds between job list checks while some are running, and otherwise.
+/// Seconds between job list checks while a download is going (its progress
+/// shows), while some are waiting, and otherwise.
+const POLL_RUNNING: u32 = 1;
 const POLL_BUSY: u32 = 2;
 const POLL_IDLE: u32 = 60;
+
+/// How often to ask for the job list, given what is on it.
+fn poll_every(jobs: &[ImportJob]) -> u32 {
+    if jobs.iter().any(|j| j.state == JobState::Running) {
+        POLL_RUNNING
+    } else if jobs.iter().any(|j| j.state.is_active()) {
+        POLL_BUSY
+    } else {
+        POLL_IDLE
+    }
+}
 
 /// Adds a draft and returns its key.
 pub fn add(source: Source, tags: String) -> u64 {
@@ -81,6 +96,7 @@ pub fn add(source: Source, tags: String) -> u64 {
         source,
         tags,
         status: Status::Draft,
+        progress: None,
     });
     key
 }
@@ -230,7 +246,7 @@ async fn run_uploads() {
             break;
         };
         set_status(key, Status::Uploading);
-        let status = upload(file, tags, rating).await;
+        let status = upload(key, file, tags, rating).await;
         match status {
             Status::Done(_) => done = done.saturating_add(1),
             _ => failed = failed.saturating_add(1),
@@ -243,7 +259,7 @@ async fn run_uploads() {
     }
 }
 
-async fn upload(file: FileData, tags: Vec<String>, rating: Rating) -> Status {
+async fn upload(key: u64, file: FileData, tags: Vec<String>, rating: Rating) -> Status {
     let Some(client) = store::client() else {
         return Status::Failed(t!("activity-signed-out"));
     };
@@ -255,7 +271,20 @@ async fn upload(file: FileData, tags: Vec<String>, rating: Rating) -> Status {
         source: None,
     };
     let read = |offset, len| crate::util::read_range(&file, offset, len);
-    match client.upload_file(request, read).await {
+    let total = file.size();
+    let meter = std::cell::RefCell::new(Meter::new(chrono::Utc::now()));
+    let sent = |done: u64| {
+        let speed = meter.borrow_mut().seen(done, chrono::Utc::now());
+        let progress = Transfer {
+            done,
+            total: Some(total),
+            speed,
+        };
+        if let Some(item) = QUEUE.write().iter_mut().find(|i| i.key == key) {
+            item.progress = Some(progress);
+        }
+    };
+    match client.upload_file(request, read, &sent).await {
         Ok(post) => Status::Done(post.id),
         Err(ClientError::Read(e)) => Status::Failed(t!("upload-unreadable", error = e)),
         Err(e) => Status::Failed(e.to_string()),
@@ -296,8 +325,7 @@ pub fn Activity() -> Element {
     use_future(|| async {
         let mut waited = 0u32;
         loop {
-            let busy = JOBS.peek().iter().any(|j| j.state.is_active());
-            let every = if busy { POLL_BUSY } else { POLL_IDLE };
+            let every = poll_every(&JOBS.peek());
             if *STALE.peek() || waited >= every {
                 *STALE.write() = false;
                 waited = 0;
@@ -423,7 +451,20 @@ mod tests {
             error: None,
             created_at: Utc::now(),
             finished_at: None,
+            progress: None,
         }
+    }
+
+    #[test]
+    fn asks_more_often_while_a_download_shows_its_progress() {
+        assert_eq!(poll_every(&[]), POLL_IDLE);
+        assert_eq!(poll_every(&[job(1, JobState::Done, None)]), POLL_IDLE);
+        assert_eq!(poll_every(&[job(1, JobState::Queued, None)]), POLL_BUSY);
+        let jobs = [
+            job(1, JobState::Queued, None),
+            job(2, JobState::Running, None),
+        ];
+        assert_eq!(poll_every(&jobs), POLL_RUNNING);
     }
 
     #[test]

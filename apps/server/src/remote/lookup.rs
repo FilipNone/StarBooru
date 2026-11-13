@@ -9,7 +9,7 @@ use url::Url;
 
 use super::{base_url, html, parse, post_url};
 use crate::error::{AppError, AppResult};
-use crate::fetch::{FetchError, Fetcher};
+use crate::fetch::{FetchError, Fetcher, Watch};
 
 /// Largest answer about one post.
 const MAX_ANSWER: usize = 4 * 1024 * 1024;
@@ -79,11 +79,12 @@ pub fn wants_lookup(req: &ImportRequest) -> bool {
 /// Downloads what an import asks for. An address that is a post on a booru
 /// becomes that post's original file, tags and rating; any other web page
 /// becomes the picture it is about. Returns the file and the import as it
-/// ended up.
+/// ended up. `watch` hears how far each download has got.
 pub async fn fetch(
     fetcher: &Fetcher,
     req: ImportRequest,
     max_bytes: usize,
+    watch: Watch<'_>,
 ) -> AppResult<(Vec<u8>, ImportRequest)> {
     let mut req = req;
     let mut refused = None;
@@ -97,7 +98,7 @@ pub async fn fetch(
     // The page a file belongs to, which some sites want named.
     let from = req.source.clone();
     let bytes = fetcher
-        .get_from(&req.url, from.as_deref(), max_bytes)
+        .get_from(&req.url, from.as_deref(), max_bytes, watch)
         .await
         .map_err(download_error)?;
     if !html::is_html(&bytes) {
@@ -120,7 +121,7 @@ pub async fn fetch(
         url: file_url,
     };
     let bytes = fetcher
-        .get_from(&req.url, Some(&page_url), max_bytes)
+        .get_from(&req.url, Some(&page_url), max_bytes, watch)
         .await
         .map_err(download_error)?;
     if html::is_html(&bytes) {
@@ -160,6 +161,7 @@ mod tests {
     use starbooru_core::Rating;
 
     use super::*;
+    use crate::fetch::UNWATCHED;
 
     fn req(url: &str, source: Option<&str>) -> ImportRequest {
         ImportRequest {
@@ -242,7 +244,9 @@ mod tests {
         let fetcher = Fetcher::new(crate::fetch::Reach::Any).unwrap();
         let site = fake_booru(false).await;
         let page = format!("{site}/index.php?page=post&s=view&id=7");
-        let (bytes, got) = fetch(&fetcher, req(&page, None), 1 << 20).await.unwrap();
+        let (bytes, got) = fetch(&fetcher, req(&page, None), 1 << 20, UNWATCHED)
+            .await
+            .unwrap();
         assert_eq!(bytes, crate::testing::png(16, 12, 3));
         assert_eq!(got.url, format!("{site}/images/a.png"));
         // The API doesn't say which tag is the artist.
@@ -258,7 +262,7 @@ mod tests {
         let fetcher = Fetcher::new(crate::fetch::Reach::Any).unwrap();
         let site = fake_booru(true).await;
         let page = format!("{site}/index.php?page=post&s=view&id=7");
-        let (bytes, got) = fetch(&fetcher, req(&page, Some(&page)), 1 << 20)
+        let (bytes, got) = fetch(&fetcher, req(&page, Some(&page)), 1 << 20, UNWATCHED)
             .await
             .unwrap();
         assert_eq!(bytes, crate::testing::png(16, 12, 3));
@@ -269,7 +273,7 @@ mod tests {
 
         // A page with no picture says so, and says why when the site refused.
         let empty = format!("{site}/index.php?page=post&s=view&id=8");
-        let error = fetch(&fetcher, req(&empty, None), 1 << 20)
+        let error = fetch(&fetcher, req(&empty, None), 1 << 20, UNWATCHED)
             .await
             .unwrap_err();
         assert!(
@@ -278,7 +282,7 @@ mod tests {
         );
         let open = fake_booru(false).await;
         let empty = format!("{open}/index.php?page=post&s=view&id=8");
-        let error = fetch(&fetcher, req(&empty, None), 1 << 20)
+        let error = fetch(&fetcher, req(&empty, None), 1 << 20, UNWATCHED)
             .await
             .unwrap_err();
         assert!(matches!(error, AppError::Unsupported(_)), "{error}");
@@ -289,7 +293,9 @@ mod tests {
         let fetcher = Fetcher::new(crate::fetch::Reach::Any).unwrap();
         let site = fake_booru(false).await;
         let file = format!("{site}/images/a.png");
-        let (_, got) = fetch(&fetcher, req(&file, None), 1 << 20).await.unwrap();
+        let (_, got) = fetch(&fetcher, req(&file, None), 1 << 20, UNWATCHED)
+            .await
+            .unwrap();
         assert_eq!(
             (got.url.as_str(), got.rating),
             (file.as_str(), Rating::Explicit)
@@ -300,12 +306,14 @@ mod tests {
         let locked = fake_booru(true).await;
         let file = format!("{locked}/images/a.png");
         let page = format!("{locked}/index.php?page=post&s=view&id=7");
-        let (_, got) = fetch(&fetcher, req(&file, Some(&page)), 1 << 20)
+        let (_, got) = fetch(&fetcher, req(&file, Some(&page)), 1 << 20, UNWATCHED)
             .await
             .unwrap();
         assert_eq!(got.source.as_deref(), Some(page.as_str()));
         assert_eq!(got.rating, Rating::Explicit);
-        let error = fetch(&fetcher, req(&file, None), 8).await.unwrap_err();
+        let error = fetch(&fetcher, req(&file, None), 8, UNWATCHED)
+            .await
+            .unwrap_err();
         assert!(matches!(error, AppError::PayloadTooLarge), "{error}");
     }
 
