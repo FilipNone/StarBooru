@@ -10,7 +10,7 @@ use starbooru_core::{
 };
 
 use super::editor::{EditorSheet, Saved};
-use super::gallery::{forget_lists, forget_post, tint};
+use super::gallery::{PostPress, forget_lists, forget_post, tint};
 use super::people::People;
 use super::share::{ShareSheet, copy_text};
 use super::shell::{notify, notify_undo};
@@ -94,13 +94,22 @@ document.addEventListener('fullscreenchange', window.__sbFs);
 ///   turn to take it from there (`motion.rs`, `take`).
 /// - down, the same: `swipe-down`, to leave fullscreen or the post. It shrinks
 ///   and the rest of the page fades as it comes down. Outside fullscreen only
-///   from the top of the page; further down, the page scrolls.
+///   from the top of the page; further down, the page scrolls. Leaving the
+///   post, a copy of it stays where it was let go and flies to its tile
+///   (`motion.rs`, `carry`).
 /// - a tap on the picture: `tap`, for fullscreen. It waits to be sure it isn't
 ///   the first of a double tap, which zooms.
 ///
 /// Anything else and it goes back. Where it is lives in `--swipe-x`,
-/// `--swipe-y` and `--pull` on the post's layout, and `data-swipe` says how
-/// it moves: with the finger (`drag`), back (`back`) or away (`gone`).
+/// `--swipe-y` and `--swipe-s` (its size) on the post's layout, with `--pull`
+/// for how far the rest has faded. `data-swipe` says how it moves: with the
+/// finger (`drag`), back (`back`), away (`gone`), or between the page and
+/// fullscreen (`fly`).
+///
+/// Fullscreen changes the stage's size in one step. `lift` is called just
+/// before, and has the picture grow or shrink to its new place from where it
+/// was, a swipe's offset included. On the way out, `data-full="out"` keeps the
+/// dark behind it, which fades as it goes.
 ///
 /// `html[data-sb-top]` says the page is at its top, where a finger moving down
 /// on the picture is the viewer's and not the page's (`touch-action`).
@@ -108,7 +117,9 @@ const STAGE: &str = r#"
 window.__sbStage?.off();
 window.__sbStage = (() => {
   const send = (m) => dioxus.send(m);
-  let p = null, roll = null, tapping = 0, back = 0;
+  let p = null, roll = null, tapping = 0, back = 0, flight = null;
+  const calm = () => matchMedia('(prefers-reduced-motion: reduce)').matches
+    || !!document.querySelector('.app[data-saver="on"]');
   const host = (stage) => stage.closest('.post-layout') ?? stage;
   const media = (stage) => stage.querySelector(':scope > #stage-img, :scope > video');
   const atEnd = (stage, forward) => !!stage.querySelector(forward ? '.stage-next:disabled' : '.stage-prev:disabled');
@@ -117,18 +128,26 @@ window.__sbStage = (() => {
   const deep = (stage) => Math.min(160, stage.clientHeight * 0.18);
   const top = () => document.documentElement.toggleAttribute('data-sb-top', scrollY <= 1);
 
+  const read = (h, name) => parseFloat(h.style.getPropertyValue(name)) || 0;
   const clear = (h) => {
     clearTimeout(back);
     h.removeAttribute('data-swipe');
-    for (const name of ['--swipe-x', '--swipe-y', '--pull']) h.style.removeProperty(name);
+    h.removeAttribute('data-full');
+    for (const name of ['--swipe-x', '--swipe-y', '--swipe-s', '--pull']) h.style.removeProperty(name);
+  };
+  const place = (h, x, y, s) => {
+    h.style.setProperty('--swipe-x', `${x.toFixed(1)}px`);
+    h.style.setProperty('--swipe-y', `${y.toFixed(1)}px`);
+    h.style.setProperty('--swipe-s', s.toFixed(4));
   };
   const show = (stage, x, y, how) => {
     const h = host(stage);
+    flight?.stop();
     clearTimeout(back);
+    const pull = Math.min(1, Math.max(0, y) / Math.max(1, stage.clientHeight * 0.5));
     h.dataset.swipe = how;
-    h.style.setProperty('--swipe-x', `${x.toFixed(1)}px`);
-    h.style.setProperty('--swipe-y', `${y.toFixed(1)}px`);
-    h.style.setProperty('--pull', Math.min(1, Math.max(0, y) / Math.max(1, stage.clientHeight * 0.5)).toFixed(3));
+    place(h, x, y, 1 - pull * 0.25);
+    h.style.setProperty('--pull', pull.toFixed(3));
     if (how === 'back') back = setTimeout(() => clear(h), 400);
   };
   const home = (stage) => show(stage, 0, 0, 'back');
@@ -139,17 +158,88 @@ window.__sbStage = (() => {
     h.dataset.swipe = 'gone';
     clearTimeout(back);
     back = setTimeout(() => {
-      if (h.isConnected && h.dataset.swipe === 'gone') home(stage);
+      if (!h.isConnected || h.dataset.swipe !== 'gone') return;
+      window.__sbHero?.uncarry();
+      home(stage);
     }, 900);
   };
   const sideways = (stage, forward) => {
     send(forward ? 'swipe-next' : 'swipe-prev');
     went(stage);
   };
+  // Out of fullscreen it stays where it is for `lift`. Out of the post, a copy
+  // takes its place and outlives the page.
   const downwards = (stage) => {
+    if (!stage.matches('.full')) window.__sbHero?.carry();
     send('swipe-down');
-    if (stage.matches('.full')) home(stage);
-    else went(stage);
+    went(stage);
+  };
+  // The picture itself, by its width and its middle. Its box is the bigger of
+  // the two where its size isn't known and it fits inside.
+  const seen = (m) => {
+    const r = m.getBoundingClientRect();
+    const [nw, nh] = m.tagName === 'VIDEO' ? [m.videoWidth, m.videoHeight] : [m.naturalWidth, m.naturalHeight];
+    const w = nw > 0 && nh > 0 ? Math.min(r.width, (r.height * nw) / nh) : r.width;
+    return { w, cx: r.left + r.width / 2, cy: r.top + r.height / 2 };
+  };
+  const lift = (on) => {
+    const stage = document.querySelector('.stage');
+    const m = stage && media(stage);
+    if (!m || calm() || stage.matches('.zoomed') || stage.matches('.full') === on) return;
+    flight?.stop();
+    const h = host(stage);
+    const from = seen(m);
+    // How dark it is behind the picture now: a pull has let some of the page through.
+    const dark = on ? 0 : 1 - read(h, '--pull');
+    const me = {};
+    let clock = null;
+    // Told of the change before the page paints it, whoever makes it and when.
+    const changed = new MutationObserver(() => {
+      if (stage.matches('.full') === on) begin();
+    });
+    const late = setTimeout(() => me.stop(), 1000);
+    me.stop = () => {
+      changed.disconnect();
+      clearTimeout(late);
+      clock?.cancel();
+      if (flight === me) flight = null;
+      if (h.dataset.swipe === 'fly') clear(h);
+    };
+    const begin = () => {
+      changed.disconnect();
+      clearTimeout(late);
+      clearTimeout(back);
+      let at = { x: read(h, '--swipe-x'), y: read(h, '--swipe-y'), s: read(h, '--swipe-s') || 1 };
+      h.dataset.swipe = 'fly';
+      h.style.removeProperty('--pull');
+      if (!on) h.dataset.full = 'out';
+      // Moves nothing itself: it keeps the time and the easing.
+      clock = m.animate([], { duration: 300, easing: 'cubic-bezier(0.2, 0, 0, 1)' });
+      const frame = () => {
+        if (flight !== me) return;
+        const t = clock.effect.getComputedTiming().progress;
+        if (t == null || t >= 1 || !m.isConnected) {
+          me.stop();
+          return;
+        }
+        // Its place in the stage as it is now, which the window may still be
+        // changing: where it shows, less the offset it has.
+        const v = seen(m);
+        const to = { w: v.w / at.s, cx: v.cx - at.x, cy: v.cy - at.y };
+        const w = from.w + (to.w - from.w) * t;
+        at = {
+          x: from.cx + (to.cx - from.cx) * t - to.cx,
+          y: from.cy + (to.cy - from.cy) * t - to.cy,
+          s: to.w > 0 ? w / to.w : 1,
+        };
+        place(h, at.x, at.y, at.s);
+        if (!on) h.style.setProperty('--pull', (dark * (1 - t)).toFixed(3));
+        requestAnimationFrame(frame);
+      };
+      frame();
+    };
+    changed.observe(stage, { attributes: true, attributeFilter: ['class'] });
+    flight = me;
   };
   const resist = (stage, dx) => (atEnd(stage, dx < 0) ? dx * 0.25 : dx);
   const speed = (trail, i) => {
@@ -237,6 +327,7 @@ window.__sbStage = (() => {
   };
 
   const self = {
+    lift,
     // The start of a wheel gesture: is it two fingers swiping on a touchpad?
     // A mouse wheel's notch is bigger, or counted in lines.
     rollStarts(e, stage) {
@@ -292,8 +383,11 @@ window.__sbStage = (() => {
       removeEventListener('pointercancel', lost, true);
       removeEventListener('scroll', top);
       clearTimeout(tapping);
+      clearTimeout(back);
+      flight?.stop();
       document.documentElement.removeAttribute('data-sb-top');
-      const h = document.querySelector('.post-layout[data-swipe]');
+      // A picture swiped away stays as it is while its page goes.
+      const h = document.querySelector('.post-layout[data-swipe]:not([data-swipe="gone"])');
       if (h) clear(h);
     },
   };
@@ -328,6 +422,14 @@ fn browser_fullscreen(on: bool) {
     } else {
         "if (document.fullscreenElement) document.exitFullscreen().catch(() => {})"
     });
+}
+
+/// Before the stage goes into fullscreen or comes out of it: the page notes
+/// where the picture is, to have it grow or shrink from there (`STAGE`, `lift`).
+async fn lift_stage(on: bool) {
+    let _ = document::eval(&format!("window.__sbStage?.lift({on}); return true"))
+        .join::<bool>()
+        .await;
 }
 
 /// Nothing pressed for this long, and the user has stopped on a post. Until then
@@ -600,9 +702,20 @@ pub fn PostView(id: i64, q: String) -> Element {
             navigator().replace(Route::PostView { id, q });
         });
     });
-    let mut set_full = move |on: bool| {
-        full.set(on);
+    // The stage changes once the page has seen where the picture is.
+    let show_full = move |on: bool| {
+        if *full.peek() == on {
+            return;
+        }
+        spawn(async move {
+            lift_stage(on).await;
+            full.set(on);
+        });
+    };
+    // The browser is asked at once, while the press that asked still counts.
+    let set_full = move |on: bool| {
         browser_fullscreen(on);
+        show_full(on);
     };
     // Where the arrow goes: where you came from, or the gallery if this is the
     // first page. The web build always says it can go back, so that one finds out
@@ -649,7 +762,7 @@ pub fn PostView(id: i64, q: String) -> Element {
                 "ArrowLeft" => press(false),
                 "ArrowRight" => press(true),
                 "f" => set_full(!full()),
-                "fullscreen-exit" => full.set(false),
+                "fullscreen-exit" => show_full(false),
                 "+" | "=" => zoom.set(zoom().zoom_at(STEP, (0.0, 0.0), size_of(rect()))),
                 "-" => zoom.set(zoom().zoom_at(1.0 / STEP, (0.0, 0.0), size_of(rect()))),
                 "0" => zoom.set(Zoom::default()),
@@ -1357,8 +1470,16 @@ fn Related(id: i64, onopen: EventHandler<Post>) -> Element {
     if posts.is_empty() {
         return rsx! {};
     }
+    let find = use_callback(move |id: i64| {
+        let related = related.peek();
+        let (_, posts) = related.as_ref()?.as_ref()?;
+        posts.iter().find(|post| post.id == id).cloned()
+    });
     rsx! {
         section { class: "related",
+            // Inside the section: every child of the viewer's main column has
+            // a place in the stacking order while a picture flies (motion.rs).
+            PostPress { find, onopen: move |post: Post| onopen.call(post) }
             h2 { class: "card-title", {t!("post-related")} }
             // Another post's related posts are another grid, which starts its
             // count over. In a loop, as a key only counts on what a loop gives:
@@ -1400,15 +1521,24 @@ fn RelatedGrid(posts: Vec<Post>, onopen: EventHandler<Post>) -> Element {
                         style.push_str(&format!("; --tint: {colour}"));
                     }
                     let id = near.id;
+                    let to = Route::PostView { id, q: String::new() };
+                    let title = label.clone();
                     rsx! {
-                        Link {
+                        a {
                             key: "{id}",
                             class: "thumb",
                             style,
-                            to: Route::PostView { id, q: String::new() },
-                            title: "{label}",
-                            onclick: move |_| onopen.call(near.clone()),
-                            onclick_only: true,
+                            href: "{to}",
+                            title,
+                            // Held or right-clicked for its menu (gesture.rs).
+                            "data-press": "post:{id}",
+                            onclick: move |e: MouseEvent| {
+                                // With a modifier the browser opens the link elsewhere.
+                                if e.modifiers().is_empty() {
+                                    e.prevent_default();
+                                    onopen.call(near.clone());
+                                }
+                            },
                             match src {
                                 Some(src) => rsx! {
                                     RelatedThumb { id, src, alt: label, place, come }
@@ -2518,5 +2648,120 @@ mod tests {
         assert_eq!(stage_src(false, "file", None).as_deref(), Some("file"));
         // Nothing to stand in: no file is asked for either.
         assert_eq!(stage_src(true, "file", None), None);
+    }
+
+    #[test]
+    fn a_swipe_down_hands_the_picture_over_before_the_page_goes() {
+        let (_, down) = STAGE.split_once("const downwards = (stage) => {").unwrap();
+        let (down, _) = down.split_once("\n  };").unwrap();
+        let carried = down.find("window.__sbHero?.carry();").unwrap();
+        assert!(carried < down.find("send('swipe-down');").unwrap());
+        // Fullscreen keeps its picture: it only leaves the stage it's in.
+        assert!(down.contains("if (!stage.matches('.full'))"));
+        // Nothing came of it: the picture goes back, and is its own again.
+        let (_, went) = STAGE.split_once("const went = (stage) => {").unwrap();
+        let (went, _) = went.split_once("\n  };").unwrap();
+        assert!(went.contains("window.__sbHero?.uncarry();"));
+        // The page going doesn't put back a picture that's on its way out.
+        let (_, off) = STAGE.split_once("    off() {").unwrap();
+        assert!(off.contains(r#".post-layout[data-swipe]:not([data-swipe="gone"])"#));
+    }
+
+    #[test]
+    fn fullscreen_grows_from_where_the_picture_is() {
+        // Regression: the stage changed size in one step, and the picture with it.
+        let source = include_str!("post.rs");
+        let (_, show) = source
+            .split_once("let show_full = move |on: bool| {")
+            .unwrap();
+        let (show, _) = show.split_once("\n    };").unwrap();
+        let lifted = show.find("lift_stage(on).await;").unwrap();
+        assert!(lifted < show.find("full.set(on);").unwrap());
+        // The browser leaving fullscreen by itself goes the same way.
+        assert!(source.contains(r#""fullscreen-exit" => show_full(false),"#));
+        let (_, lift) = STAGE.split_once("const lift = (on) => {").unwrap();
+        let (lift, _) = lift.split_once("\n  };").unwrap();
+        // Told of the change before it's painted, or the picture would show in
+        // its new place for a frame first.
+        assert!(lift.contains("new MutationObserver("));
+        assert!(lift.contains("attributeFilter: ['class']"));
+        // From where it shows, a swipe's offset included, to where it lies now.
+        assert!(lift.contains("const from = seen(m);"));
+        assert!(
+            lift.contains("read(h, '--swipe-x')") && lift.contains("requestAnimationFrame(frame)")
+        );
+        assert!(
+            rule(".stage > :is(#stage-img, video, .panel-layer)")
+                .contains("scale: var(--swipe-s, 1)")
+        );
+    }
+
+    #[test]
+    fn the_flight_into_fullscreen_always_ends_and_can_be_left_out() {
+        let (_, lift) = STAGE.split_once("const lift = (on) => {").unwrap();
+        let (lift, _) = lift.split_once("\n  };").unwrap();
+        assert!(lift.contains("if (!m || calm() ||"));
+        assert!(lift.contains("const late = setTimeout(() => me.stop(), 1000);"));
+        let (_, stop) = lift.split_once("me.stop = () => {").unwrap();
+        let (stop, _) = stop.split_once("\n    };").unwrap();
+        assert!(stop.contains("if (h.dataset.swipe === 'fly') clear(h);"));
+        let (_, clear) = STAGE.split_once("const clear = (h) => {").unwrap();
+        let (clear, _) = clear.split_once("\n  };").unwrap();
+        assert!(clear.contains("h.removeAttribute('data-full');") && clear.contains("'--swipe-s'"));
+        // A finger on the picture takes it from the flight.
+        let (_, show) = STAGE
+            .split_once("const show = (stage, x, y, how) => {")
+            .unwrap();
+        assert!(
+            show.trim_start()
+                .starts_with("const h = host(stage);\n    flight?.stop();")
+        );
+    }
+
+    #[test]
+    fn leaving_fullscreen_keeps_the_dark_until_the_picture_is_back() {
+        let out = r#".post-layout[data-full="out"]"#;
+        // Over the bars while it shrinks, as it was in fullscreen.
+        assert!(rule(&format!("{out} .stage")).contains("z-index: 50"));
+        let dark = rule(&format!("{out} .post-glow"));
+        assert!(dark.contains("position: fixed") && dark.contains("z-index: 49"));
+        assert!(
+            dark.contains("background: var(--stage)") && dark.contains("opacity: var(--pull, 0)")
+        );
+        // Shown even where the glow is turned off, as in fullscreen.
+        assert!(dark.contains("display: block"));
+        // The page's own glow comes back with an entrance of its own.
+        assert!(dark.contains("animation: none"));
+        assert!(rule(".post-glow").contains("animation: glow-in"));
+        assert!(rule(".post-layout.full-open .post-glow").contains("animation: fade-in"));
+    }
+
+    #[test]
+    fn the_page_behind_fullscreen_keeps_the_stages_room() {
+        // Regression: with the stage off the page, everything under it moved
+        // up, which showed through the dark as it came and went.
+        let room = rule(".post-layout.full-open .post-main::before");
+        assert!(room.contains(r#"content: """#) && room.contains("height: var(--stage-h)"));
+        assert!(rule(".stage").contains("--fit-h: var(--stage-h)"));
+        assert!(rule(".stage.full").contains("--fit-h: 100dvh"));
+        // Pulled down in fullscreen, only the dark fades: the page behind is
+        // what the picture goes back to.
+        let css = include_str!("../../assets/main.css");
+        assert!(css.contains(
+            ".post-layout[data-swipe]:not(.full-open, [data-full]) :is(.post-bar, .post-main > .banner, .related, .post-layout > .side) {"
+        ));
+    }
+
+    #[test]
+    fn related_posts_open_their_menu_like_the_gallerys() {
+        let source = include_str!("post.rs");
+        let (_, grid) = source.split_once("fn RelatedGrid(").unwrap();
+        let (grid, _) = grid.split_once("\nfn RelatedThumb(").unwrap();
+        assert!(grid.contains(r#""data-press": "post:{id}","#));
+        // Still a link: a click with a modifier opens it elsewhere.
+        assert!(grid.contains(r#"href: "{to}","#) && grid.contains("if e.modifiers().is_empty()"));
+        let (_, related) = source.split_once("fn Related(").unwrap();
+        let (related, _) = related.split_once("\nfn RelatedGrid(").unwrap();
+        assert!(related.contains("PostPress { find, onopen:"));
     }
 }

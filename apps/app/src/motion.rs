@@ -11,6 +11,7 @@ use dioxus::prelude::*;
 const HERO: &str = r##"
 window.__sbHero ??= {
   ghost: null, hidden: null, flying: false, holding: false, past: null, stage: null, timer: 0, veil: 0, unwatch: null,
+  carried: null,
   calm() {
     return matchMedia("(prefers-reduced-motion: reduce)").matches
       || !!document.querySelector('.app[data-saver="on"]');
@@ -21,6 +22,8 @@ window.__sbHero ??= {
     this.ghost = null;
     this.flying = false;
     this.holding = false;
+    this.carried?.removeAttribute("data-gone");
+    this.carried = null;
     this.past?.remove();
     this.past = null;
     this.uncover();
@@ -146,6 +149,44 @@ window.__sbHero ??= {
     };
     frame();
   },
+  // Swiped away (post.rs, `STAGE`): a copy takes the picture's place where the
+  // finger let go of it, and stays there while the page changes underneath, so
+  // the picture is never off the screen. The gallery's tile takes it from
+  // there (`back`).
+  carry() {
+    const el = document.querySelector("#stage-img, .stage video");
+    if (!el || this.calm()) return;
+    const box = el.getBoundingClientRect();
+    const src = el.tagName === "IMG" ? el.currentSrc || el.src : el.poster;
+    if (box.width < 2 || !src) return;
+    this.clear();
+    // Pulled down, it has shrunk, and its corners with it.
+    const shrunk = el.offsetWidth ? box.width / el.offsetWidth : 1;
+    this.float(src, box, `${(parseFloat(getComputedStyle(el).borderRadius) || 0) * shrunk}px`);
+    this.ghost.decoding = "sync";
+    // Its thumbnail, in case the picture itself hadn't come yet.
+    const thumb = el.style.getPropertyValue("--thumb");
+    if (thumb) this.ghost.style.background = `center / cover no-repeat ${thumb}`;
+    el.dataset.gone = "";
+    this.carried = el;
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => this.drop(), 1500);
+  },
+  // Nothing came of the swipe: the picture is its own again.
+  uncarry() {
+    if (this.carried) this.clear();
+  },
+  // No tile to land on: the copy fades where it is.
+  drop() {
+    const ghost = this.ghost;
+    if (!ghost || !this.carried) return;
+    this.ghost = null;
+    this.clear();
+    if (this.stage) this.stage.back = true;
+    const gone = () => ghost.remove();
+    ghost.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 160, easing: "ease-out", fill: "forwards" })
+      .finished.then(gone, gone);
+  },
   open(id) {
     // The page is about to go, and the last scroll may not be noted yet.
     window.__sbSpot?.report();
@@ -190,6 +231,8 @@ window.__sbHero ??= {
   arrive(id) {
     const el = document.querySelector("#stage-img, .stage video");
     if (!el) return;
+    // A picture swiped away came to another post, not to the gallery.
+    if (this.carried && this.carried !== el) this.drop();
     // The flight is its entrance, and the gallery's fade the page's.
     if (this.ghost) {
       const page = el.closest(".page");
@@ -224,6 +267,15 @@ window.__sbHero ??= {
     document.documentElement.classList.add("sb-hero-leaving");
     clearTimeout(this.veil);
     this.veil = setTimeout(() => this.unveil(), 400);
+    // A picture swiped away waits for the gallery. Any other page has no tile
+    // for it, and the gallery may be a few frames in coming.
+    const look = (tries) => {
+      if (!this.carried) return;
+      const page = document.querySelector(".content .page") ?? document.querySelector(".page");
+      if (page && !page.matches(".gallery, .post-layout")) this.drop();
+      else if (tries > 0 && !page?.matches(".gallery")) requestAnimationFrame(() => look(tries - 1));
+    };
+    look(30);
   },
   // The gallery only has tiles near the screen on the page, and the viewer may
   // have moved far from where it was: the tile's place comes from the layout.
@@ -243,6 +295,11 @@ window.__sbHero ??= {
   },
   recent(from) {
     return from?.at && performance.now() - from.at <= 1500;
+  },
+  // No way back to a tile: the gallery shows as it is.
+  lost() {
+    this.unveil();
+    this.drop();
   },
   // The tile a picture is flying back to, which may only now be on the page, or
   // be on it anew. It stays hidden until the picture lands on it.
@@ -267,17 +324,25 @@ window.__sbHero ??= {
       const tile = document.querySelector(`.masonry [data-post="${from.id}"]`)?.closest(".thumb");
       if (!tile) {
         if (tries > 0) requestAnimationFrame(() => go(tries - 1));
-        else this.unveil();
+        else this.lost();
         return;
       }
       const thumb = tile.querySelector(".thumb-media img")?.currentSrc;
       const src = from.src || thumb;
       if (!src) {
-        this.unveil();
+        this.lost();
         return;
       }
-      this.clear();
-      this.float(src, from, from.radius, thumb);
+      if (this.carried && this.ghost) {
+        // Swiped away: it's still where the finger let go of it, and flies on
+        // from there.
+        this.carried = null;
+        this.unveil();
+        if (thumb) this.ghost.style.background = `center / cover no-repeat url(${JSON.stringify(thumb)})`;
+      } else {
+        this.clear();
+        this.float(src, from, from.radius, thumb);
+      }
       document.documentElement.classList.add("sb-hero-back");
       this.fly(() => this.landing(from.id), getComputedStyle(tile).borderRadius, () => {
         const shown = this.hidden?.querySelector("img");
@@ -1166,5 +1231,55 @@ mod tests {
             let (body, _) = body.split_once("\n  },").unwrap();
             assert!(body.contains("this.calm()"), "{call}");
         }
+    }
+
+    #[test]
+    fn a_picture_swiped_away_is_never_off_the_screen() {
+        // Regression: swiped down, the picture went with its page, and a copy
+        // then flew to the tile from the middle of the stage, where the
+        // picture had long left.
+        let (_, carry) = HERO.split_once("  carry() {").unwrap();
+        let (carry, _) = carry.split_once("\n  },").unwrap();
+        // From where it shows, pulled and shrunk, and up before the picture goes.
+        assert!(carry.contains("el.getBoundingClientRect()"));
+        let floated = carry.find("this.float(").unwrap();
+        assert!(floated < carry.find(r#"el.dataset.gone = """#).unwrap());
+        // The gallery's tile takes that copy as it is: a new one would start
+        // from the stage again.
+        let (_, back) = HERO.split_once("  back() {").unwrap();
+        let (back, _) = back.split_once("\n  },").unwrap();
+        let kept = back.find("if (this.carried && this.ghost)").unwrap();
+        assert!(kept < back.find("this.clear();").unwrap());
+        let (_, fly) = HERO.split_once("fly(aim, radius, hold) {").unwrap();
+        assert!(fly.contains("const from = ghost.getBoundingClientRect();"));
+        let css = include_str!("../assets/main.css");
+        assert!(css.contains(
+            ".stage > [data-gone], .stage > [data-gone] ~ .panel-layer { visibility: hidden; }"
+        ));
+    }
+
+    #[test]
+    fn a_picture_swiped_away_always_goes() {
+        // With no tile to land on, it fades: on a page that isn't the gallery,
+        // on another post, in a gallery without its tile, or after a while.
+        let (_, carry) = HERO.split_once("  carry() {").unwrap();
+        let (carry, _) = carry.split_once("\n  },").unwrap();
+        assert!(carry.contains("this.timer = setTimeout(() => this.drop(), 1500);"));
+        let (_, leave) = HERO.split_once("  leave() {").unwrap();
+        let (leave, _) = leave.split_once("\n  },").unwrap();
+        assert!(leave.contains(r#"!page.matches(".gallery, .post-layout")) this.drop();"#));
+        let (_, arrive) = HERO.split_once("  arrive(id) {").unwrap();
+        assert!(arrive.contains("if (this.carried && this.carried !== el) this.drop();"));
+        let (_, lost) = HERO.split_once("  lost() {").unwrap();
+        let (lost, _) = lost.split_once("\n  },").unwrap();
+        assert!(lost.contains("this.unveil();") && lost.contains("this.drop();"));
+        // A swipe nothing came of gives the picture back.
+        let (_, clear) = HERO.split_once("clear() {").unwrap();
+        let (clear, _) = clear.split_once("\n  },").unwrap();
+        assert!(clear.contains(r#"this.carried?.removeAttribute("data-gone");"#));
+        let (_, carry_calm) = HERO.split_once("  carry() {").unwrap();
+        assert!(carry_calm.starts_with(
+            "\n    const el = document.querySelector(\"#stage-img, .stage video\");\n    if (!el || this.calm()) return;"
+        ));
     }
 }

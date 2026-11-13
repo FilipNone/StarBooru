@@ -7,7 +7,8 @@ use chrono::Datelike;
 use dioxus::prelude::*;
 use starbooru_core::{DEFAULT_EXPLORE_DAYS, Order, Post, with_exact, with_order};
 
-use super::gallery::Thumb;
+use super::gallery::{PostPress, Thumb, open_post};
+use super::tags::TagPress;
 use super::{CorrectionBanner, ErrorBanner, Spinner};
 use crate::Route;
 use crate::icons::{Ico, Icon};
@@ -59,6 +60,21 @@ pub fn Explore(q: String) -> Element {
         }
     }));
     use_effect(use_reactive!(|q| filter.set(q)));
+
+    // The post a held or right-clicked thumbnail stands for, in any section.
+    let find = use_callback(move |id: i64| {
+        let shuffled = shuffled.peek();
+        let data = data.peek();
+        let found = data.as_ref()?.as_ref().ok()?;
+        shuffled
+            .iter()
+            .flatten()
+            .chain(&found.trending)
+            .chain(&found.on_this_day)
+            .chain(&found.random)
+            .find(|post| post.id == id)
+            .cloned()
+    });
 
     let random_query = with_order(&q, Order::parse("random"));
     let shuffle_query = random_query.clone();
@@ -137,13 +153,15 @@ pub fn Explore(q: String) -> Element {
                             h2 { id: "popular-tags", {t!("explore-popular-tags")} }
                             span { class: "muted", {t!("explore-tags-note", when = phrase.clone())} }
                         }
-                        div { class: "chips",
+                        // Held or right-clicked for a tag's menu (gesture.rs),
+                        // which reads the name from `.tag-name`.
+                        div { class: "chips", "data-press": "tag",
                             for trend in tags {
                                 Link {
                                     key: "{trend.tag.id}",
                                     class: "chip trend",
                                     to: Route::Gallery { q: format!("{} {}", q.trim(), trend.tag.name).trim().to_owned() },
-                                    "{trend.tag.name}"
+                                    span { class: "tag-name", "{trend.tag.name}" }
                                     span { class: "trend-count", title: t!("explore-added", when = phrase.clone()), "+{trend.recent}" }
                                 }
                             }
@@ -225,6 +243,8 @@ pub fn Explore(q: String) -> Element {
                 }
             }
             {body}
+            PostPress { find, onopen: move |post: Post| open_post(&post, String::new()) }
+            TagPress { q: q.clone() }
         }
     }
 }
@@ -239,5 +259,21 @@ mod tests {
         assert_eq!(window_phrase(7), "this week");
         assert_eq!(window_phrase(365), "this year");
         assert_eq!(window_phrase(14), "in the last 14 days");
+    }
+
+    #[test]
+    fn explore_has_the_menus_the_gallery_has() {
+        let source = include_str!("explore.rs");
+        assert!(source.contains("PostPress { find, onopen:"));
+        assert!(source.contains("TagPress { q: q.clone() }"));
+        // The tag's name alone: the chip also says how many were added.
+        let (_, chips) = source
+            .split_once(r#"div { class: "chips", "data-press": "tag","#)
+            .unwrap();
+        let name = chips
+            .find(r#"span { class: "tag-name", "{trend.tag.name}" }"#)
+            .unwrap();
+        assert!(name < chips.find("trend-count").unwrap());
+        assert!(include_str!("../gesture.rs").contains(r#"link.querySelector(".tag-name")"#));
     }
 }

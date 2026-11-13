@@ -987,8 +987,13 @@ button.thumb { width: 100%; padding: 0; border: 0; font: inherit; color: inherit
 .post-layout {
   display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 20px; align-items: start;
   --post-bar-h: 60px; --post-gap: 12px; --peek: 48px;
+  /* The stage's height on the page, which is also the media's height limit there. */
+  --stage-h: max(280px, calc(100dvh - var(--bar-end) - 16px - var(--post-gap) - var(--post-bar-h) - var(--post-gap) - var(--peek)));
 }
 .post-main { display: grid; gap: var(--post-gap); min-width: 0; }
+/* In fullscreen the stage is off the page, and its room stays: what shows
+   behind the picture as it goes and comes back is the page as it was. */
+.post-layout.full-open .post-main::before { content: ""; height: var(--stage-h); }
 /* Painted after the stage, so a picture sliding in passes under the panels. No
    z-index: a menu in a panel still has to reach over the bars. */
 .post-layout > .side { position: relative; }
@@ -997,9 +1002,13 @@ button.thumb { width: 100%; padding: 0; border: 0; font: inherit; color: inherit
 /* The glow's negative z-index stops here, above the canvas on `.app`. */
 .app { isolation: isolate; }
 
+/* The glow fades in with the page, and again when fullscreen gives it back. An
+   animation only starts when its name changes, so this one and fullscreen's
+   (`fade-in`) have a name each. */
 .post-glow {
   position: absolute; inset: 0 0 auto; height: 100dvh; z-index: -1; overflow: hidden; pointer-events: none;
   mask-image: linear-gradient(#000 40%, transparent);
+  animation: glow-in var(--fade) ease-in-out;
 }
 /* Already blurred when drawn (motion.rs), so only opacity moves: one layer fades
    out as the other fades in. */
@@ -1008,7 +1017,7 @@ button.thumb { width: 100%; padding: 0; border: 0; font: inherit; color: inherit
   opacity: 0; transition: opacity var(--fade) ease-in-out;
 }
 .glow-layer.on { opacity: var(--glow-a); }
-.post-layout.full-open .post-glow { position: fixed; inset: 0; height: auto; z-index: 49; mask-image: none; background: var(--stage); }
+.post-layout.full-open .post-glow { position: fixed; inset: 0; height: auto; z-index: 49; mask-image: none; background: var(--stage); animation: fade-in var(--med) var(--ease); }
 .post-layout.full-open .glow-layer.on { opacity: 0.6; }
 .app[data-saver="on"] .post-glow { display: none; }
 .app[data-effects="lite"] .post-glow { display: none; }
@@ -1027,7 +1036,7 @@ button.thumb { width: 100%; padding: 0; border: 0; font: inherit; color: inherit
   --tool-w: 40px; --zoom-w: 52px;
   --tools-w: calc(3 * var(--tool-w) + var(--zoom-w) + 10px);
   /* the media's height limit; the image box is sized from it before loading */
-  --fit-h: max(280px, calc(100dvh - var(--bar-end) - 16px - var(--post-gap) - var(--post-bar-h) - var(--post-gap) - var(--peek)));
+  --fit-h: var(--stage-h);
 }
 .stage img, .stage video {
   display: block; max-width: 100%; max-height: var(--fit-h); object-fit: contain;
@@ -1116,22 +1125,36 @@ html:has(.stage.full) { overflow-y: hidden; }
    it's pulled down while the rest of the viewer fades. `translate` and `scale`,
    as the zoom has `transform`. */
 .stage > :is(#stage-img, video, .panel-layer) {
-  translate: var(--swipe-x, 0px) var(--swipe-y, 0px); scale: calc(1 - var(--pull, 0) * 0.25);
+  translate: var(--swipe-x, 0px) var(--swipe-y, 0px); scale: var(--swipe-s, 1);
 }
 .post-layout[data-swipe="back"] .stage > :is(#stage-img, video, .panel-layer) {
   transition: translate var(--med) var(--ease), scale var(--med) var(--ease), transform var(--fast) var(--ease);
 }
-.post-layout[data-swipe] :is(.post-bar, .post-main > .banner, .related, .post-layout > .side, .post-glow) {
+/* In fullscreen only the dark behind the picture fades, and the page it goes
+   back to shows through as it is. */
+.post-layout[data-swipe]:not(.full-open, [data-full]) :is(.post-bar, .post-main > .banner, .related, .post-layout > .side) {
   opacity: calc(1 - var(--pull, 0));
 }
+.post-layout[data-swipe]:not([data-full]) .post-glow { opacity: calc(1 - var(--pull, 0)); }
 .post-layout[data-swipe="back"] :is(.post-bar, .post-main > .banner, .related, .post-layout > .side, .post-glow) {
   transition: opacity var(--med) var(--ease);
 }
-.post-layout[data-swipe] .stage:not(.full) :is(.stage-back, .stage-prev:not(:disabled), .stage-next:not(:disabled), .stage-tools, .stage-translate) {
+.post-layout[data-swipe] .stage :is(.stage-back, .stage-prev:not(:disabled), .stage-next:not(:disabled), .stage-tools, .stage-translate) {
   opacity: calc(1 - var(--pull, 0) * 2);
 }
-/* The picture handed to the turn (motion.rs) is a copy now. */
-.stage > [data-gone] { visibility: hidden; }
+/* Out of fullscreen (post.rs, `lift`): the stage is back on the page with the
+   picture shrinking to its place, over the bars until it's there. The dark
+   that was behind it stays as long, and fades by `--pull`. */
+.post-layout[data-full="out"] .stage { z-index: 50; }
+.post-layout[data-full="out"] .post-glow {
+  position: fixed; inset: 0; height: auto; z-index: 49; mask-image: none; background: var(--stage);
+  display: block; opacity: var(--pull, 0); animation: none;
+}
+.post-layout[data-full="out"] .glow-layer.on { opacity: 0.6; }
+.app[data-effects="lite"] .post-layout[data-full="out"] .glow-layer { display: none; }
+/* The picture handed to the turn or carried off to the gallery (motion.rs) is
+   a copy now. */
+.stage > [data-gone], .stage > [data-gone] ~ .panel-layer { visibility: hidden; }
 .panel-layer {
   position: relative; max-width: 100%; max-height: var(--fit-h); pointer-events: none;
   transform-origin: center; transition: transform var(--fast) var(--ease);
@@ -1251,8 +1274,8 @@ html:has(.stage.full) { overflow-y: hidden; }
 }
 
 @media (max-width: 900px) {
-  .post-layout { grid-template-columns: minmax(0, 1fr); }
-  .stage { --r: var(--radius-l); --fit-h: clamp(240px, 58dvh, 760px); }
+  .post-layout { grid-template-columns: minmax(0, 1fr); --stage-h: clamp(240px, 58dvh, 760px); }
+  .stage { --r: var(--radius-l); }
 }
 /* A window too short to spare the room: the picture comes first. */
 @media (max-height: 640px) {
@@ -1496,6 +1519,7 @@ kbd { box-shadow: inset 0 -1px 0 var(--outline); white-space: nowrap; }
 @keyframes slide-in { from { opacity: 0; transform: translateY(-6px); } }
 @keyframes drop-in { from { opacity: 0; transform: translateY(-4px) scale(0.98); } }
 @keyframes fade-in { from { opacity: 0; } }
+@keyframes glow-in { from { opacity: 0; } }
 @keyframes pop-in { from { opacity: 0; transform: scale(0.85); } }
 @keyframes zoom-in { from { opacity: 0; transform: scale(0.97); } }
 @keyframes pop { 0% { transform: scale(0.6); } 100% { transform: scale(1); } }
@@ -1534,8 +1558,6 @@ html.sb-hero-back .page.gallery { animation: fade-in var(--med) var(--ease); }
 /* Held or right-clicked, a tile or a tag opens a menu (gesture.rs, menu.rs). */
 .thumb, [data-press] a { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
 [data-press="tag"] a { -webkit-user-drag: none; }
-.thumb[data-pressing] .thumb-media, [data-press] a[data-pressing] { animation: hold 350ms var(--ease) 100ms both; }
-@keyframes hold { to { scale: 0.94; } }
 .press-backdrop { position: fixed; inset: 0; z-index: 60; }
 .press-menu {
   position: fixed; z-index: 61; display: grid; align-content: start; gap: 2px; padding: 6px; overflow-y: auto; overscroll-behavior: contain;

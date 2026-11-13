@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 
 use chrono::{DateTime, Utc};
@@ -1046,7 +1046,10 @@ pub fn Gallery(q: String) -> Element {
             PostMenu {
                 post,
                 at,
-                q: q.clone(),
+                onopen: {
+                    let q = q.clone();
+                    move |post: Rc<Post>| open_post(&post, q.clone())
+                },
                 onpick: move |(action, post)| {
                     menu.set(None);
                     run(action, post);
@@ -1596,12 +1599,15 @@ fn ViewMenu(width: f64, gap: f64) -> Element {
     }
 }
 
-/// What can be done with a post held or right-clicked in the grid.
+/// What can be done with a post held or right-clicked in the grid. Outside the
+/// gallery (`listed` off) it leaves out what needs the gallery's list:
+/// selecting, and deleting from it.
 #[component]
 fn PostMenu(
     post: Rc<Post>,
     at: MenuAt,
-    q: String,
+    #[props(default = true)] listed: bool,
+    onopen: EventHandler<Rc<Post>>,
     onpick: EventHandler<(SwipeAction, Rc<Post>)>,
     onclose: EventHandler<()>,
 ) -> Element {
@@ -1619,7 +1625,7 @@ fn PostMenu(
                 label: t!("press-open"),
                 onclick: move |()| {
                     onclose.call(());
-                    open_post(&opened, q.clone());
+                    onopen.call(opened.clone());
                 },
             }
             MenuItem {
@@ -1627,10 +1633,84 @@ fn PostMenu(
                 label: if liked { t!("press-unlike") } else { t!("swipe-like") },
                 onclick: pick(SwipeAction::Like),
             }
-            MenuItem { icon: Icon::Check, label: t!("swipe-select"), onclick: pick(SwipeAction::Select) }
+            if listed {
+                MenuItem { icon: Icon::Check, label: t!("swipe-select"), onclick: pick(SwipeAction::Select) }
+            }
             MenuItem { icon: Icon::Share, label: t!("share-button"), onclick: pick(SwipeAction::Share) }
             MenuItem { icon: Icon::Download, label: t!("post-download"), onclick: pick(SwipeAction::Download) }
-            MenuItem { icon: Icon::Delete, label: t!("post-delete-title"), danger: true, onclick: pick(SwipeAction::Delete) }
+            if listed {
+                MenuItem { icon: Icon::Delete, label: t!("post-delete-title"), danger: true, onclick: pick(SwipeAction::Delete) }
+            }
+        }
+    }
+}
+
+/// The menu a held or right-clicked thumbnail opens on a page that isn't the
+/// gallery: the related posts under a picture, Explore. `find` gives the post
+/// a thumbnail stands for, and `onopen` opens it as a click on it would.
+#[component]
+pub(super) fn PostPress(find: Callback<i64, Option<Post>>, onopen: EventHandler<Post>) -> Element {
+    let mut menu = use_signal(|| None::<(Rc<Post>, MenuAt)>);
+    let mut sharing = use_signal(|| None::<i64>);
+    // Votes cast from here. The lists these posts come from aren't asked for
+    // again, and the menu should still say which way the next press goes.
+    let mut votes = use_signal(HashMap::<i64, i16>::new);
+    use_press(
+        "post",
+        use_callback(move |press: Press| {
+            if let Press::Menu(Target::Post(id), at) = press
+                && let Some(mut post) = find.call(id)
+            {
+                if let Some(vote) = votes.peek().get(&id) {
+                    post.my_vote = *vote;
+                }
+                menu.set(Some((Rc::new(post), at)));
+            }
+        }),
+    );
+    let run = move |(action, post): (SwipeAction, Rc<Post>)| {
+        menu.set(None);
+        let id = post.id;
+        match action {
+            SwipeAction::Share => sharing.set(Some(id)),
+            SwipeAction::Download => download::start(&post.file_url, &file_name(&post)),
+            SwipeAction::Like => {
+                let Some(client) = store::client() else {
+                    return;
+                };
+                let vote = if post.my_vote > 0 { 0 } else { 1 };
+                spawn(async move {
+                    match client.vote(id, vote).await {
+                        Ok(fresh) => {
+                            votes.write().insert(id, fresh.my_vote);
+                            forget_lists();
+                            notify(if vote > 0 {
+                                t!("press-liked")
+                            } else {
+                                t!("press-unliked")
+                            });
+                        }
+                        Err(e) if e.is_unauthorized() => store::forget_session(),
+                        Err(e) => notify(e.to_string()),
+                    }
+                });
+            }
+            SwipeAction::Off | SwipeAction::Select | SwipeAction::Delete => {}
+        }
+    };
+    rsx! {
+        if let Some((post, at)) = menu() {
+            PostMenu {
+                post,
+                at,
+                listed: false,
+                onopen: move |post: Rc<Post>| onopen.call((*post).clone()),
+                onpick: run,
+                onclose: move |()| menu.set(None),
+            }
+        }
+        if let Some(id) = sharing() {
+            ShareSheet { post_ids: vec![id], onclose: move |()| sharing.set(None) }
         }
     }
 }
@@ -2035,5 +2115,32 @@ mod tests {
         let selected = BTreeSet::from([2, 5, 9, 40]);
         assert_eq!(in_gallery_order(&[9, 7, 5, 2], &selected), [9, 5, 2, 40]);
         assert!(in_gallery_order(&[1], &BTreeSet::new()).is_empty());
+    }
+
+    #[test]
+    fn the_menu_outside_the_gallery_leaves_out_what_needs_its_list() {
+        let source = include_str!("gallery.rs");
+        let (_, menu) = source.split_once("fn PostMenu(").unwrap();
+        let (menu, _) = menu.split_once("\npub(super) fn PostPress(").unwrap();
+        for item in ["SwipeAction::Select)", "SwipeAction::Delete)"] {
+            let at = menu.find(item).unwrap();
+            let before = menu.get(..at).unwrap_or_default();
+            let guard = before.rfind("if listed {").unwrap();
+            // Nothing else between the guard and the item.
+            assert_eq!(
+                before
+                    .get(guard..)
+                    .unwrap_or_default()
+                    .matches("MenuItem")
+                    .count(),
+                1
+            );
+        }
+        let (_, press) = source.split_once("pub(super) fn PostPress(").unwrap();
+        let (press, _) = press.split_once("\n}\n").unwrap();
+        assert!(press.contains("listed: false,"));
+        assert!(
+            press.contains("SwipeAction::Off | SwipeAction::Select | SwipeAction::Delete => {}")
+        );
     }
 }

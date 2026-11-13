@@ -61,6 +61,7 @@
 - **Tag con una struttura:** categorie, albero padre e figlio, alias, implicazioni, tag per ogni persona in un'immagine e correzione dei refusi.
 - **Ricerca veloce:** per tag, rating, data, dimensioni, colore e testo nell'immagine, con completamento automatico e ricerche salvate. Le ricerche per tag richiedono 3–19 ms con un milione di post.
 - **Un visualizzatore fatto per guardare:** zoom, schermo intero, scorciatoie da tastiera, video, voti e post correlati. Ritaglia, raddrizza, ruota e rifletti le immagini, o accorcia i video.
+- **Gesti per touchscreen e touchpad:** scorri l'immagine per passare alla precedente o alla successiva, trascinala in basso per chiuderla, toccala per lo schermo intero. Tieni premuta una miniatura o un tag, o fai clic destro, per aprirne il menu, e scegli cosa fa lo scorrimento laterale di una miniatura.
 - **Testo e IA, tutto facoltativo:** OCR per cercare nel testo, suggerimenti di tag e traduzione di fumetti e manga disegnata sulla pagina, con modelli locali o qualsiasi API compatibile con OpenAI.
 - **Attento ai tuoi file:** gli originali restano identici byte per byte, i duplicati vengono individuati, i post eliminati finiscono nel cestino e i backup del database partono da soli.
 - **Pronto per altre persone:** account, limiti di spazio, accesso con OpenID Connect, chiavi API, link di condivisione con scadenza e statistiche del server.

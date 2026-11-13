@@ -133,9 +133,10 @@ impl Press {
 }
 
 /// Listens for holds, right clicks and swipes on whatever is marked
-/// `data-press="<kind>…"`, for as long as the component is there. One page at a
-/// time listens: the newest one takes over, and the one before can't stop it
-/// on its way out.
+/// `data-press="<kind>…"`, for as long as the component is there. Each kind has
+/// one listener at a time: the newest takes it over, and the one before can't
+/// stop it on its way out. A page can listen for both kinds, as the viewer
+/// does for its tags and its related posts.
 pub fn use_press(kind: &'static str, on: Callback<Press>) {
     let token = use_hook(|| {
         static NEXT: AtomicU32 = AtomicU32::new(1);
@@ -159,10 +160,11 @@ pub fn use_press(kind: &'static str, on: Callback<Press>) {
 /// The page's side of [`use_press`].
 ///
 /// A finger held still on a target for `HOLD` ms opens its menu, and the target
-/// sinks a little meanwhile (`data-pressing`, after a short wait, so a finger
-/// that only starts a scroll doesn't make it twitch). A right click, or the
-/// menu key, opens it at once. Android also sends a `contextmenu` for a long
-/// press, which is dropped if the menu has just opened.
+/// sinks a little meanwhile (after a short wait, so a finger that only starts
+/// a scroll doesn't make it twitch), then comes back from wherever it got to.
+/// A right click, or the menu key, opens it at once. Android also sends a
+/// `contextmenu` for a long press, which is dropped if the menu has just
+/// opened.
 ///
 /// A thumbnail with a `.swipe-hint` for a side can be swiped that way. Its
 /// picture follows the finger (or two fingers on a touchpad) and shows the
@@ -173,22 +175,25 @@ pub fn use_press(kind: &'static str, on: Callback<Press>) {
 /// post or close the menu that just opened.
 const PRESS: &str = r##"
 window.__sbPress ??= (() => {
-  const HOLD = 450, SLOP = 10;
-  const self = { token: 0, kind: null, send: null };
+  const HOLD = 450, SLOP = 10, EASE = "cubic-bezier(0.2, 0, 0, 1)";
+  // Who listens for each kind: its token and where to send.
+  const self = { kinds: new Map() };
   let press = null, shown = -1e9, swallow = -1e9, wheel = { quiet: -1e9, p: null };
 
   const find = (e) => {
-    if (!self.send || !(e.target instanceof Element)) return null;
+    if (!self.kinds.size || !(e.target instanceof Element)) return null;
     const host = e.target.closest("[data-press]");
     if (!host) return null;
     const value = host.dataset.press;
     const at = value.indexOf(":");
-    if ((at < 0 ? value : value.slice(0, at)) !== self.kind) return null;
-    if (at >= 0) return { el: host, key: value };
+    const kind = at < 0 ? value : value.slice(0, at);
+    const send = self.kinds.get(kind)?.send;
+    if (!send) return null;
+    if (at >= 0) return { el: host, key: value, send };
     const link = e.target.closest("a");
     if (!link || !host.contains(link)) return null;
     const name = (link.querySelector(".tag-name") ?? link).textContent.trim();
-    return name ? { el: link, key: `${self.kind}:${name}` } : null;
+    return name ? { el: link, key: `${kind}:${name}`, send } : null;
   };
   const sidesOf = (el) => new Set([...el.querySelectorAll(":scope > .swipe-hint")].map((h) => h.dataset.side));
   const reach = (el) => Math.min(120, Math.max(56, el.clientWidth * 0.4));
@@ -196,7 +201,22 @@ window.__sbPress ??= (() => {
     const now = performance.now();
     if (now - shown < 800) return;
     shown = now;
-    self.send({ kind: "menu", key: t.key, x, y, vw: innerWidth, vh: innerHeight });
+    t.send({ kind: "menu", key: t.key, x, y, vw: innerWidth, vh: innerHeight });
+  };
+  const calm = () => matchMedia("(prefers-reduced-motion: reduce)").matches
+    || !!document.querySelector('.app[data-saver="on"]');
+  // Held, it sinks. Its values are spelled out, as the script has no use for tokens.
+  const sink = (p) => {
+    if (!calm()) p.sunk = p.el.animate([{ scale: 1 }, { scale: 0.94 }], { duration: 350, delay: 100, easing: EASE, fill: "forwards" });
+  };
+  // Let go, it comes back from as far as it sank.
+  const rise = (p) => {
+    const sunk = p.sunk;
+    if (!sunk) return;
+    p.sunk = null;
+    const from = getComputedStyle(p.el).scale;
+    sunk.cancel();
+    if (from && from !== "none" && from !== "1") p.el.animate([{ scale: from }, { scale: 1 }], { duration: 180, easing: EASE });
   };
 
   // The picture under the finger, `dx` from its place.
@@ -220,7 +240,7 @@ window.__sbPress ??= (() => {
     }, 320);
     if (side) {
       navigator.vibrate?.(8);
-      self.send({ kind: "swipe", key: p.key, side });
+      p.send({ kind: "swipe", key: p.key, side });
     }
   };
   const speed = (trail) => {
@@ -234,7 +254,7 @@ window.__sbPress ??= (() => {
     press = null;
     if (!p) return;
     clearTimeout(p.timer);
-    delete p.el.dataset.pressing;
+    rise(p);
     if (p.axis === "x") settle(p, null);
   };
   const down = (e) => {
@@ -247,13 +267,13 @@ window.__sbPress ??= (() => {
     const t = find(e);
     if (!t) return;
     const p = {
-      id: e.pointerId, key: t.key, el: t.el, x0: e.clientX, y0: e.clientY, dx: 0, axis: null,
+      id: e.pointerId, key: t.key, el: t.el, send: t.send, x0: e.clientX, y0: e.clientY, dx: 0, axis: null,
       trail: [[e.timeStamp, e.clientX]], sides: sidesOf(t.el), media: t.el.querySelector(":scope > .thumb-media"),
     };
-    t.el.dataset.pressing = "";
+    sink(p);
     p.timer = setTimeout(() => {
       if (press !== p || p.axis) return;
-      delete p.el.dataset.pressing;
+      rise(p);
       p.held = true;
       navigator.vibrate?.(12);
       open(t, p.x0, p.y0);
@@ -269,7 +289,7 @@ window.__sbPress ??= (() => {
     if (!p.axis) {
       if (Math.hypot(dx, dy) < SLOP) return;
       clearTimeout(p.timer);
-      delete p.el.dataset.pressing;
+      rise(p);
       // Up or down is a scroll, and the browser's.
       if (!p.sides.size || Math.abs(dx) < Math.abs(dy) * 1.2) {
         press = null;
@@ -285,7 +305,7 @@ window.__sbPress ??= (() => {
     if (!p || e.pointerId !== p.id) return;
     press = null;
     clearTimeout(p.timer);
-    delete p.el.dataset.pressing;
+    rise(p);
     if (p.held || p.axis) swallow = e.timeStamp + 500;
     if (p.axis !== "x") return;
     const side = p.dx < 0 ? "left" : "right";
@@ -329,7 +349,7 @@ window.__sbPress ??= (() => {
         const t = find(e);
         const sides = t ? sidesOf(t.el) : new Set();
         if (t && sides.size) {
-          wheel.p = { key: t.key, el: t.el, sides, media: t.el.querySelector(":scope > .thumb-media"), dx: 0, done: false };
+          wheel.p = { key: t.key, el: t.el, send: t.send, sides, media: t.el.querySelector(":scope > .thumb-media"), dx: 0, done: false };
         }
       }
     }
@@ -355,15 +375,20 @@ window.__sbPress ??= (() => {
     ["click", click, true], ["contextmenu", context], ["wheel", roll],
   ];
   self.start = (token, kind, send) => {
-    self.stop(self.token);
-    Object.assign(self, { token, kind, send });
-    for (const [type, fn, capture] of on) addEventListener(type, fn, { capture: !!capture, passive: type !== "click" && type !== "contextmenu" });
+    if (!self.kinds.size) {
+      for (const [type, fn, capture] of on) addEventListener(type, fn, { capture: !!capture, passive: type !== "click" && type !== "contextmenu" });
+    }
+    self.kinds.set(kind, { token, send });
   };
   self.stop = (token) => {
-    if (token !== self.token) return;
+    let mine = false;
+    for (const [kind, by] of self.kinds) {
+      if (by.token === token) mine = self.kinds.delete(kind);
+    }
+    if (!mine) return;
     cancel();
+    if (self.kinds.size) return;
     for (const [type, fn, capture] of on) removeEventListener(type, fn, { capture: !!capture });
-    Object.assign(self, { kind: null, send: null });
   };
   return self;
 })();
@@ -511,5 +536,41 @@ mod tests {
                 "{s}"
             );
         }
+    }
+
+    #[test]
+    fn each_kind_has_a_listener_of_its_own() {
+        // Regression: one page listened for one kind, so the viewer's tags
+        // had a menu and its related posts none.
+        assert!(PRESS.contains("self.kinds.set(kind, { token, send });"));
+        assert!(PRESS.contains("const send = self.kinds.get(kind)?.send;"));
+        // A page on its way out only stops what is still its own.
+        let (_, stop) = PRESS.split_once("self.stop = (token) => {").unwrap();
+        let (stop, _) = stop.split_once("\n  };").unwrap();
+        assert!(stop.contains("if (by.token === token) mine = self.kinds.delete(kind);"));
+        assert!(stop.contains("if (!mine) return;"));
+        // The page's listeners stay while any kind is listened for.
+        let kept = stop.find("if (self.kinds.size) return;").unwrap();
+        assert!(kept < stop.find("removeEventListener(").unwrap());
+        // What a gesture is sent to is settled when it starts.
+        assert!(PRESS.contains("p.send({ kind: \"swipe\", key: p.key, side });"));
+        assert!(PRESS.contains(
+            "t.send({ kind: \"menu\", key: t.key, x, y, vw: innerWidth, vh: innerHeight });"
+        ));
+    }
+
+    #[test]
+    fn a_held_thing_comes_back_from_where_it_sank() {
+        // Regression: let go, it snapped back to its size.
+        let (_, rise) = PRESS.split_once("const rise = (p) => {").unwrap();
+        let (rise, _) = rise.split_once("\n  };").unwrap();
+        let read = rise.find("getComputedStyle(p.el).scale").unwrap();
+        assert!(read < rise.find("sunk.cancel();").unwrap());
+        assert!(rise.contains("{ scale: from }, { scale: 1 }"));
+        let (_, sink) = PRESS.split_once("const sink = (p) => {").unwrap();
+        let (sink, _) = sink.split_once("\n  };").unwrap();
+        assert!(sink.contains("if (!calm())"));
+        // Every way a press ends lets it up.
+        assert_eq!(PRESS.matches("rise(p);").count(), 4);
     }
 }
