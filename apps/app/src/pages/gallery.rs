@@ -886,6 +886,68 @@ pub fn Gallery(q: String) -> Element {
             }
             DropToUpload {}
         }
+        ToTop { selecting: selecting() }
+    }
+}
+
+/// Says whether the page is more than a screen down, each time that changes.
+const WATCH_FAR: &str = r#"
+window.__sbFar?.stop();
+let frame = 0, far = null;
+const check = () => {
+  frame = 0;
+  const now = scrollY > innerHeight;
+  if (now !== far) {
+    far = now;
+    dioxus.send(now);
+  }
+};
+const soon = () => {
+  frame ||= requestAnimationFrame(check);
+};
+addEventListener("scroll", soon, { passive: true });
+addEventListener("resize", soon);
+window.__sbFar = {
+  stop() {
+    cancelAnimationFrame(frame);
+    removeEventListener("scroll", soon);
+    removeEventListener("resize", soon);
+  },
+};
+check();
+"#;
+const WATCH_FAR_OFF: &str = "window.__sbFar?.stop(); window.__sbFar = null;";
+
+/// The arrow back to the top, once the page is a screen down. A component of
+/// its own, so the gallery isn't drawn again each time it comes or goes. It
+/// stays out of the way of a selection's bar.
+#[component]
+fn ToTop(selecting: bool) -> Element {
+    let mut far = use_signal(|| false);
+    use_hook(move || {
+        spawn(async move {
+            let mut watch = document::eval(WATCH_FAR);
+            while let Ok(seen) = watch.recv::<bool>().await {
+                if *far.peek() != seen {
+                    far.set(seen);
+                }
+            }
+        });
+    });
+    use_drop(|| {
+        document::eval(WATCH_FAR_OFF);
+        motion::stop_to_top();
+    });
+    let shown = far() && !selecting;
+    rsx! {
+        button {
+            class: if shown { "to-top shown" } else { "to-top" },
+            r#type: "button",
+            title: t!("gallery-to-top"),
+            aria_label: t!("gallery-to-top"),
+            onclick: move |_| motion::to_top(),
+            Ico { icon: Icon::ArrowUp }
+        }
     }
 }
 
@@ -1682,6 +1744,31 @@ mod tests {
         // One test, as the two share the counter.
         assert_eq!(probe_renders(fresh, 3), 4);
         assert_eq!(probe_renders(kept, 3), 1);
+    }
+
+    #[test]
+    fn the_arrow_to_the_top_is_in_the_middle_unless_the_bar_is_at_the_bottom() {
+        let css = include_str!("../../assets/main.css");
+        // In the middle of what the rail leaves, wherever the rail is.
+        assert!(css.contains("left: calc(50% + (var(--rail-l) - var(--rail-r)) / 2 - 24px);"));
+        // On a phone the bar is at the bottom, and the arrow goes above it on
+        // the side of the hand, the right unless the left is chosen.
+        assert!(css.contains(
+            "@media (max-width: 760px) {\n  .to-top { left: auto; right: 12px; bottom: calc(max(12px, env(safe-area-inset-bottom)) + 72px); }\n  .app[data-hand=\"left\"] .to-top { left: 12px; right: auto; }"
+        ));
+    }
+
+    #[test]
+    fn the_arrow_to_the_top_cannot_be_reached_while_it_is_away() {
+        // Hidden, it is out of the way of a click and of the Tab key.
+        let css = include_str!("../../assets/main.css");
+        assert!(
+            css.contains("opacity: 0; visibility: hidden; transform: translateY(16px) scale(0.8);")
+        );
+        assert!(css.contains(".to-top.shown { opacity: 1; visibility: visible;"));
+        // It comes a screen down, and the app hears only when that changes.
+        assert!(WATCH_FAR.contains("const now = scrollY > innerHeight;"));
+        assert!(WATCH_FAR.contains("if (now !== far) {"));
     }
 
     #[test]

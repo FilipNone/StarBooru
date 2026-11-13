@@ -625,6 +625,7 @@ view-columns-auto = Automatic
 gallery-stop-selecting = Stop selecting
 gallery-select = Select posts
 gallery-syntax = Search syntax
+gallery-to-top = Back to the top
 search-corrected = Spelling corrected: { $tags }
 search-exact = Search exactly as typed
 gallery-empty = No posts yet

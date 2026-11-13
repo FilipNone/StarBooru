@@ -633,6 +633,7 @@ view-columns-auto = Automatico
 gallery-stop-selecting = Termina la selezione
 gallery-select = Seleziona i post
 gallery-syntax = Sintassi di ricerca
+gallery-to-top = Torna all'inizio
 search-corrected = Ortografia corretta: { $tags }
 search-exact = Cerca esattamente come scritto
 gallery-empty = Ancora nessun post

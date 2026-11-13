@@ -638,6 +638,177 @@ return true;"#
     .await;
 }
 
+/// Back to the top of the gallery without scrolling past everything in between.
+/// Copies of the tiles on the screen float over the page, the page jumps to the
+/// top under them, and each copy moves up its column to the place of a tile at
+/// the top while that tile's picture fades in over its own. The grid itself
+/// stays hidden until they have landed, and where there are more tiles on one
+/// side than the other, the extra ones fade. Any wheel, touch, click or key
+/// stops it and shows the grid as it is.
+const TO_TOP: &str = r##"
+window.__sbTop ??= {
+  layer: null, timer: 0, head: [],
+  calm() {
+    return matchMedia("(prefers-reduced-motion: reduce)").matches
+      || !!document.querySelector('.app[data-saver="on"]');
+  },
+  cut() {
+    window.__sbTop.clear();
+  },
+  clear() {
+    clearTimeout(this.timer);
+    this.layer?.remove();
+    this.layer = null;
+    for (const el of this.head) el.style.visibility = "";
+    this.head = [];
+    for (const kind of ["wheel", "touchstart", "pointerdown", "keydown"]) removeEventListener(kind, this.cut);
+    document.documentElement.classList.remove("sb-to-top");
+  },
+  // The tiles on the screen, in the grid's order.
+  seen() {
+    const out = [];
+    for (const tile of document.querySelectorAll(".masonry .thumb")) {
+      const box = tile.getBoundingClientRect();
+      if (box.bottom <= 0 || box.top >= innerHeight || !box.width) continue;
+      out.push({ box, img: tile.querySelector(".thumb-media > img"), tint: tile.style.getPropertyValue("--tint") });
+    }
+    return out;
+  },
+  // The tiles on the screen once the app has put the top of the grid there.
+  top() {
+    const grid = document.querySelector(".masonry")?.getBoundingClientRect();
+    const tiles = this.seen();
+    return grid && tiles.some((t) => t.box.top - grid.top < 1) ? tiles : [];
+  },
+  // A tile's colour, and its picture if it has one to show yet.
+  copy(item, name) {
+    const el = document.createElement("div");
+    el.className = name;
+    if (item.tint) el.style.setProperty("--tint", item.tint);
+    const img = item.img;
+    if (img?.complete && img.naturalWidth) {
+      const pic = new Image();
+      pic.alt = "";
+      pic.decoding = "sync";
+      pic.src = img.currentSrc || img.src;
+      el.append(pic);
+    }
+    return el;
+  },
+  async go() {
+    this.clear();
+    const jump = () => {
+      scrollTo({ top: 0, behavior: "instant" });
+      window.__sbNear?.check(true);
+    };
+    const app = document.querySelector(".app");
+    const from = this.seen();
+    if (!app || !from.length || this.calm()) return jump();
+    const at = (b) => ({ left: `${b.left}px`, top: `${b.top}px`, width: `${b.width}px`, height: `${b.height}px` });
+    const layer = document.createElement("div");
+    layer.className = "to-top-layer";
+    layer.setAttribute("aria-hidden", "true");
+    const olds = from.map((item) => {
+      const el = this.copy(item, "to-top-tile");
+      Object.assign(el.style, at(item.box));
+      layer.append(el);
+      return el;
+    });
+    app.append(layer);
+    this.layer = layer;
+    document.documentElement.classList.add("sb-to-top");
+    this.timer = setTimeout(() => this.clear(), 3000);
+    for (const kind of ["wheel", "touchstart", "pointerdown", "keydown"]) {
+      addEventListener(kind, this.cut, { passive: true });
+    }
+    jump();
+    // The top of the grid comes once the app has heard where the page is.
+    let to = [];
+    for (let frame = 0; frame < 30 && !to.length; frame++) {
+      await new Promise(requestAnimationFrame);
+      if (this.layer !== layer) return;
+      to = this.top();
+    }
+    if (!to.length) to = this.seen();
+    // Their pictures decoded, or their colours if that takes too long.
+    await Promise.race([
+      Promise.allSettled(to.map((t) => t.img?.decode?.())),
+      new Promise((done) => setTimeout(done, 300)),
+    ]);
+    if (this.layer !== layer) return;
+    to = this.seen();
+    const ease = "cubic-bezier(0.2, 0, 0, 1)";
+    const time = 560;
+    // A wave from the top left corner.
+    const wave = (b) => Math.round(Math.max(0, b.top) / innerHeight * 140 + b.left / innerWidth * 60);
+    // Each tile goes to the tile at the top in the same column and the same
+    // place down it, so it moves up its column and doesn't cross the others.
+    const columns = (list) => {
+      const by = new Map();
+      for (const item of list) {
+        const key = Math.round(item.box.left);
+        if (!by.has(key)) by.set(key, []);
+        by.get(key).push(item);
+      }
+      for (const column of by.values()) column.sort((a, b) => a.box.top - b.box.top);
+      return by;
+    };
+    const tops = columns(to);
+    const taken = new Set();
+    const moves = [];
+    for (const [key, column] of columns(from.map((item, i) => ({ ...item, el: olds[i] })))) {
+      column.forEach((item, rank) => {
+        const goal = tops.get(key)?.[rank];
+        const el = item.el;
+        if (!goal) {
+          moves.push(el.animate([{ opacity: 1 }, { opacity: 0, transform: "scale(0.9)" }],
+            { duration: time / 2, delay: wave(item.box), easing: ease, fill: "both" }));
+          return;
+        }
+        taken.add(goal);
+        const next = this.copy(goal, "to-top-next");
+        el.append(next);
+        moves.push(el.animate([at(item.box), at(goal.box)],
+          { duration: time, delay: wave(goal.box), easing: ease, fill: "both" }));
+        next.animate([{ opacity: 0 }, { opacity: 1 }],
+          { duration: time * 0.7, delay: wave(goal.box) + time * 0.15, easing: "ease-in-out", fill: "both" });
+      });
+    }
+    for (const goal of to.filter((t) => !taken.has(t))) {
+      const el = this.copy(goal, "to-top-tile");
+      Object.assign(el.style, at(goal.box));
+      layer.append(el);
+      moves.push(el.animate([{ opacity: 0, transform: "scale(0.9)" }, { opacity: 1, transform: "none" }],
+        { duration: time, delay: wave(goal.box) + time / 3, easing: ease, fill: "both" }));
+    }
+    // The title and the menus above the grid come down into their places.
+    this.head = [...document.querySelectorAll(".page.gallery > :not(.masonry-box)")];
+    for (const el of this.head) {
+      el.style.visibility = "visible";
+      el.animate([{ opacity: 0, transform: "translateY(-12px)" }, { opacity: 1, transform: "none" }],
+        { duration: time, delay: time / 3, easing: ease, fill: "backwards" });
+    }
+    await Promise.allSettled(moves.map((m) => m.finished));
+    if (this.layer !== layer) return;
+    // The copies end where the tiles are, so the grid shows under them a
+    // frame before they go.
+    document.documentElement.classList.remove("sb-to-top");
+    await new Promise(requestAnimationFrame);
+    if (this.layer === layer) this.clear();
+  },
+};
+"##;
+
+/// Takes the gallery back to its top, its tiles moving to their new places.
+pub fn to_top() {
+    document::eval(&format!("{TO_TOP}\nwindow.__sbTop.go();"));
+}
+
+/// The gallery is going: its tiles stop wherever they were.
+pub fn stop_to_top() {
+    document::eval(&format!("{TO_TOP}\nwindow.__sbTop.clear();"));
+}
+
 /// The viewer's picture is on the page: the floating one flies to it, and the
 /// viewer keeps note of where it is for the way back.
 pub fn arrive(id: i64) {
@@ -667,6 +838,54 @@ mod tests {
             css.contains("position: fixed; z-index: 9; left: var(--bar-gap); width: var(--rail-w)")
         );
         assert!(css.contains("position: fixed; inset: 0 0 auto; z-index: 10;"));
+    }
+
+    #[test]
+    fn tiles_going_to_the_top_stay_under_the_bars() {
+        let css = include_str!("../assets/main.css");
+        assert!(css.contains(".to-top-layer { position: fixed; inset: 0; z-index: 1;"));
+        assert!(TO_TOP.contains(r#"const app = document.querySelector(".app");"#));
+        assert!(TO_TOP.contains("app.append(layer);"));
+    }
+
+    #[test]
+    fn tiles_going_to_the_top_keep_to_their_columns() {
+        // Paired in the grid's order, a tile at the bottom of one column flew
+        // across the screen to the top of another, through all the rest.
+        assert!(TO_TOP.contains("const key = Math.round(item.box.left);"));
+        assert!(TO_TOP.contains("const goal = tops.get(key)?.[rank];"));
+    }
+
+    #[test]
+    fn going_to_the_top_jumps_while_motion_is_calmed() {
+        assert!(TO_TOP.contains(r#"matchMedia("(prefers-reduced-motion: reduce)").matches"#));
+        assert!(TO_TOP.contains("if (!app || !from.length || this.calm()) return jump();"));
+    }
+
+    #[test]
+    fn going_to_the_top_always_ends() {
+        // A wheel, touch, click or key stops it, and if nothing does and the
+        // tiles never come, a timer does. Each way shows the grid again.
+        assert!(TO_TOP.contains("this.timer = setTimeout(() => this.clear(), 3000);"));
+        let (_, clear) = TO_TOP.split_once("clear() {").unwrap();
+        let (clear, _) = clear.split_once("\n  },").unwrap();
+        assert!(clear.contains(r#"classList.remove("sb-to-top")"#));
+        assert!(clear.contains("removeEventListener(kind, this.cut)"));
+        assert!(clear.contains("this.layer?.remove();"));
+        assert!(include_str!("pages/gallery.rs").contains("motion::stop_to_top();"));
+    }
+
+    #[test]
+    fn the_grid_shows_again_before_the_copies_go() {
+        // The copies end where the tiles are; taking them away first would
+        // leave the page empty for a frame.
+        let shown = TO_TOP.rfind(r#"classList.remove("sb-to-top")"#).unwrap();
+        let gone = TO_TOP
+            .rfind("if (this.layer === layer) this.clear();")
+            .unwrap();
+        assert!(shown < gone);
+        let css = include_str!("../assets/main.css");
+        assert!(css.contains("html.sb-to-top .page.gallery { visibility: hidden; }"));
     }
 
     #[test]
