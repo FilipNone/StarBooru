@@ -4,7 +4,7 @@
 //! gives its tags, rating and source. No I/O, and no HTML parser either: the
 //! page is only scanned for the few tags that matter.
 
-use starbooru_core::{Rating, TagCategory, TagGroups, remote_tags};
+use starbooru_core::{Rating, RemotePost, TagCategory, TagGroups, remote_tags};
 use url::Url;
 
 /// Most of a page looked at; what matters is in its head or its sidebar.
@@ -19,6 +19,11 @@ pub struct Page {
     pub groups: TagGroups,
     pub rating: Option<Rating>,
     pub source: Option<String>,
+    /// The copy the page itself shows, when it isn't the file.
+    pub sample_url: Option<String>,
+    pub width: u32,
+    pub height: u32,
+    pub md5: Option<String>,
 }
 
 /// Whether a download is a web page, going by how it starts.
@@ -248,6 +253,15 @@ pub fn read(page: &Url, bytes: &[u8]) -> Option<Page> {
         if let Some(address) = tag.attr("data-source").filter(|a| !a.is_empty()) {
             source = source.or_else(|| absolute(page, address));
         }
+        if let Some(md5) = tag.attr("data-md5").filter(|m| m.len() == 32) {
+            found.md5 = found.md5.or_else(|| Some(md5.to_ascii_lowercase()));
+            let size = |name: &str| tag.attr(name).and_then(|n| n.parse().ok()).unwrap_or(0);
+            found.width = size("data-width");
+            found.height = size("data-height");
+        }
+        if tag.name == "img" && tag.attr("id") == Some("image") {
+            found.sample_url = tag.attr("src").and_then(|src| absolute(page, src));
+        }
         match tag.name.as_str() {
             "meta" => {
                 let key = tag.attr("property").or_else(|| tag.attr("name"));
@@ -316,6 +330,9 @@ pub fn read(page: &Url, bytes: &[u8]) -> Option<Page> {
     // smaller copy, and a preview picture a still of a video.
     found.file_url = original.or(og_video).or(video).or(og_image);
     found.file_url.as_ref()?;
+    if found.sample_url == found.file_url {
+        found.sample_url = None;
+    }
     found.tags = remote_tags(raw_tags.iter().map(String::as_str));
     for (category, name) in groups {
         if let Some(tag) = remote_tags([name.as_str()]).first()
@@ -328,9 +345,130 @@ pub fn read(page: &Url, bytes: &[u8]) -> Option<Page> {
     Some(found)
 }
 
+/// The posts on a Gelbooru list page (`page=post&s=list`), which is how the
+/// site is searched without a key. A list says less than the API: no file, no
+/// size and no categories, so `file_url` is empty and an import or a closer
+/// look goes through the post's own page.
+pub fn read_list(page: &Url, bytes: &[u8]) -> Vec<RemotePost> {
+    let bytes = bytes
+        .get(..bytes.len().min(MAX_PAGE_BYTES))
+        .unwrap_or(bytes);
+    let html = String::from_utf8_lossy(bytes);
+    let site = page
+        .join("/")
+        .map(|u| u.as_str().trim_end_matches('/').to_owned());
+    let mut posts: Vec<RemotePost> = Vec::new();
+    // The post whose link the walk is inside, until its thumbnail comes.
+    let mut linked: Option<u64> = None;
+    for tag in tags(&html) {
+        match tag.name.as_str() {
+            "a" => {
+                linked = tag
+                    .attr("id")
+                    .and_then(|id| id.strip_prefix('p'))
+                    .and_then(|id| id.parse().ok())
+                    .filter(|id| *id > 0);
+            }
+            "img" => {
+                let Some(id) = linked.take() else { continue };
+                let Some(preview) = tag.attr("src").and_then(|src| absolute(page, src)) else {
+                    continue;
+                };
+                let Ok(page_url) = page.join(&format!("index.php?page=post&s=view&id={id}")) else {
+                    continue;
+                };
+                // The title is the tags, then `score:N` and `rating:word`.
+                let title = tag.attr("title").unwrap_or_default();
+                let fact = |key: &str| {
+                    title
+                        .split_whitespace()
+                        .rev()
+                        .find_map(|word| word.strip_prefix(key))
+                };
+                let names = title
+                    .split_whitespace()
+                    .filter(|word| !word.starts_with("score:") && !word.starts_with("rating:"));
+                if posts.iter().any(|p| p.id == id) {
+                    continue;
+                }
+                posts.push(RemotePost {
+                    id,
+                    site: site.clone().unwrap_or_default(),
+                    page_url: page_url.to_string(),
+                    preview_url: preview,
+                    sample_url: None,
+                    file_url: String::new(),
+                    tags: remote_tags(names),
+                    groups: TagGroups::default(),
+                    rating: fact("rating:")
+                        .and_then(rating)
+                        .unwrap_or(Rating::Questionable),
+                    width: 0,
+                    height: 0,
+                    md5: None,
+                    source: None,
+                    score: fact("score:").and_then(|n| n.parse().ok()),
+                    created_at: None,
+                    file_size: None,
+                    post_id: None,
+                });
+            }
+            _ => {}
+        }
+    }
+    posts
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_a_gelbooru_list_page() {
+        // As Gelbooru writes its lists (November 2026), with made-up values.
+        let html = r#"<div class="thumbnail-container">
+            <article class="thumbnail-preview">
+              <a id="p15250367" href="https://b.example/index.php?page=post&amp;s=view&amp;id=15250367&tags=blue_eyes">
+                <img src="https://img4.b.example/thumbnails/65/20/thumbnail_6520c64a8351872ae7d1164290ca4a3d.jpg" title=" 2boys blue_eyes :3 some_one  score:12 rating:general"  alt="Rule 34 | 2boys, blue eyes"/>
+              </a></article>
+            <article class="thumbnail-preview">
+              <a id="p7" href="index.php?page=post&amp;s=view&amp;id=7"><img src="/thumbnails/1/thumbnail_a.jpg" title="solo score:-1 rating:explicit"/></a>
+            </article>
+            <a id="pool3" href="x"><img src="/pool.jpg" title="not a post"></a>
+            <a id="p7" href="x"><img src="/again.jpg" title="twice"></a>
+            <a href="index.php?page=post&s=list&pid=42"><img src="/next.png"></a></div>"#;
+        let posts = read_list(
+            &Url::parse("https://b.example/index.php?page=post&s=list&tags=blue_eyes").unwrap(),
+            html.as_bytes(),
+        );
+        assert_eq!(posts.len(), 2);
+        let p = &posts[0];
+        assert_eq!((p.id, p.site.as_str()), (15_250_367, "https://b.example"));
+        assert_eq!(
+            p.page_url,
+            "https://b.example/index.php?page=post&s=view&id=15250367"
+        );
+        assert!(
+            p.preview_url
+                .ends_with("thumbnail_6520c64a8351872ae7d1164290ca4a3d.jpg")
+        );
+        assert_eq!(p.tags, ["2boys", "blue_eyes", ":3", "some_one"]);
+        assert_eq!((p.rating, p.score), (Rating::Safe, Some(12)));
+        // What a list doesn't say.
+        assert_eq!(
+            (p.file_url.as_str(), p.width, p.md5.as_deref()),
+            ("", 0, None)
+        );
+        assert_eq!(
+            (posts[1].rating, posts[1].score),
+            (Rating::Explicit, Some(-1))
+        );
+        assert_eq!(
+            posts[1].preview_url,
+            "https://b.example/thumbnails/1/thumbnail_a.jpg"
+        );
+        assert!(read_list(&Url::parse("https://b.example/").unwrap(), b"<html></html>").is_empty());
+    }
 
     fn page(html: &str) -> Option<Page> {
         read(
@@ -471,6 +609,18 @@ mod tests {
         assert_eq!(
             found.source.as_deref(),
             Some("https://art.example/works/1?a=1&b=2")
+        );
+        // What the page says of the picture itself.
+        assert_eq!((found.width, found.height), (1365, 2048));
+        assert_eq!(
+            found.md5.as_deref(),
+            Some("6520c64a8351872ae7d1164290ca4a3d")
+        );
+        assert_eq!(
+            found.sample_url.as_deref(),
+            Some(
+                "https://img4.b.example//samples/65/20/sample_6520c64a8351872ae7d1164290ca4a3d.jpg"
+            )
         );
     }
 

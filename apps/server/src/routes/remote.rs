@@ -6,9 +6,12 @@ use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use chrono::{DateTime, Utc};
+use sqlx::FromRow;
 use starbooru_core::remote::{REMOTE_PAGE_SIZE, clean_base};
 use starbooru_core::{
-    BooruAccount, MAX_BOORU_ACCOUNTS, RemoteError, RemotePage, RemoteSearch, SaveBooruAccount,
+    BooruAccount, BooruApi, MAX_BOORU_ACCOUNTS, MAX_REMOTE_SEARCHES, RemoteError, RemotePage,
+    RemotePost, RemotePostQuery, RemoteSearch, RemoteSite, RemoteTag, RemoteTagQuery,
+    SaveBooruAccount, SaveRemoteSearch, SavedRemoteSearch,
 };
 
 use crate::auth::AuthUser;
@@ -116,10 +119,20 @@ pub async fn search(
     let bad_base = || AppError::BadRequest(RemoteError::BadBase.to_string());
     let base = remote::base_url(&req.base).ok_or_else(bad_base)?;
     let url = remote::search_url(&req).ok_or_else(bad_base)?;
+    // A Gelbooru known to want a key isn't asked again without one: its
+    // website lists the same search.
+    let keyless = req.api == BooruApi::Gelbooru && req.api_key.is_none();
+    let site = pace::api_key(&base);
+    if keyless && state.pace.locked(&site, Utc::now()) {
+        return listed(&state, user.id, &req).await;
+    }
     let answer = pace::ask(&state.pace, fetcher, req.api, &url).await?;
     if !answer.is_success() {
         if matches!(answer.status, 401 | 403) && req.api_key.is_none() {
-            state.pace.lock(&pace::site_key(&url), Utc::now());
+            state.pace.lock(&site, Utc::now());
+            if keyless {
+                return listed(&state, user.id, &req).await;
+            }
         }
         return Err(refusal(&answer));
     }
@@ -135,7 +148,190 @@ pub async fn search(
     })?;
     let full = sent >= usize::try_from(REMOTE_PAGE_SIZE).unwrap_or(usize::MAX);
     let more = full && req.page < req.api.limits().max_page;
+    let posts = finished(&state, posts).await?;
     Ok(Json(RemotePage { posts, more }))
+}
+
+/// A Gelbooru search read from the site's own list pages, for when its API
+/// wants a key the user hasn't got.
+async fn listed(state: &AppState, _user: i64, req: &RemoteSearch) -> AppResult<Json<RemotePage>> {
+    let fetcher = state
+        .fetcher
+        .as_ref()
+        .ok_or_else(|| AppError::BadRequest("URL import is turned off on this server".into()))?;
+    let url = remote::list_url(req)
+        .ok_or_else(|| AppError::BadRequest(RemoteError::BadBase.to_string()))?;
+    let answer = pace::ask(&state.pace, fetcher, req.api, &url).await?;
+    if !answer.is_success() {
+        return Err(refusal(&answer));
+    }
+    let posts = remote::html::read_list(&url, &answer.body);
+    let full = posts.len() >= usize::try_from(remote::LIST_PAGE_SIZE).unwrap_or(usize::MAX);
+    let more = full && req.page < req.api.limits().max_page;
+    let posts = finished(state, posts).await?;
+    Ok(Json(RemotePage { posts, more }))
+}
+
+/// Search results as they go out: each marked with the post it became here,
+/// if it was imported, and with its pictures behind this server where its
+/// site wouldn't show them to a page of ours.
+async fn finished(state: &AppState, mut posts: Vec<RemotePost>) -> AppResult<Vec<RemotePost>> {
+    let pages: Vec<&str> = posts.iter().map(|p| p.page_url.as_str()).collect();
+    let known: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT source, min(id) FROM posts WHERE source = ANY($1) AND deleted_at IS NULL \
+         GROUP BY source",
+    )
+    .bind(&pages)
+    .fetch_all(&state.db)
+    .await?;
+    let now = Utc::now().timestamp();
+    for post in &mut posts {
+        post.post_id = known
+            .iter()
+            .find(|(source, _)| *source == post.page_url)
+            .map(|(_, id)| *id);
+        state.relay.guard(post, now);
+    }
+    Ok(posts)
+}
+
+/// `POST /remote/tags`: tags on a site that start with what was typed, for
+/// the search box. A site with nothing to say gives none; that isn't an error.
+pub async fn tags(
+    State(state): State<AppState>,
+    _user: AuthUser,
+    Json(req): Json<RemoteTagQuery>,
+) -> AppResult<Json<Vec<RemoteTag>>> {
+    let fetcher = state
+        .fetcher
+        .as_ref()
+        .ok_or_else(|| AppError::BadRequest("URL import is turned off on this server".into()))?;
+    let base = clean_base(&req.base).map_err(|e| AppError::BadRequest(e.to_string()))?;
+    let term = req.term.trim();
+    if term.is_empty() || term.len() > 128 || term.chars().any(|c| c.is_control()) {
+        return Ok(Json(Vec::new()));
+    }
+    let url = remote::base_url(&base).and_then(|base| remote::tags_url(req.api, &base, term));
+    let Some(url) = url else {
+        return Ok(Json(Vec::new()));
+    };
+    // A site that is slow or down has no suggestions; only "busy" is passed
+    // on, so the app stops asking for a while.
+    let answer = match pace::ask(&state.pace, fetcher, req.api, &url).await {
+        Ok(answer) if answer.is_success() => answer,
+        Err(busy @ AppError::TooManyRequests { .. }) => return Err(busy),
+        _ => return Ok(Json(Vec::new())),
+    };
+    Ok(Json(remote::parse_tags(req.api, &answer.body)))
+}
+
+/// `POST /remote/post`: one post in full, from a link to it.
+pub async fn post(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Json(req): Json<RemotePostQuery>,
+) -> AppResult<Json<RemotePost>> {
+    let fetcher = state
+        .fetcher
+        .as_ref()
+        .ok_or_else(|| AppError::BadRequest("URL import is turned off on this server".into()))?;
+    let accounts = accounts::load(&state, user.id).await?;
+    let found = remote::lookup::post(&state.pace, fetcher, &accounts, &req.url)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    let mut posts = finished(&state, vec![found]).await?;
+    posts.pop().map(Json).ok_or(AppError::NotFound)
+}
+
+#[derive(FromRow)]
+struct SearchRow {
+    id: i64,
+    name: String,
+    query: String,
+    sites: String,
+    created_at: DateTime<Utc>,
+}
+
+impl From<SearchRow> for SavedRemoteSearch {
+    fn from(row: SearchRow) -> Self {
+        SavedRemoteSearch {
+            id: row.id,
+            name: row.name,
+            query: row.query,
+            // Sites of a kind this version doesn't know are left out.
+            sites: serde_json::from_str::<Vec<serde_json::Value>>(&row.sites)
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|site| serde_json::from_value::<RemoteSite>(site).ok())
+                .collect(),
+            created_at: row.created_at,
+        }
+    }
+}
+
+/// `GET /remote/searches`: the caller's saved searches on other sites, by name.
+pub async fn searches(
+    State(state): State<AppState>,
+    user: AuthUser,
+) -> AppResult<Json<Vec<SavedRemoteSearch>>> {
+    let rows: Vec<SearchRow> = sqlx::query_as(
+        "SELECT id, name, query, sites, created_at FROM remote_searches WHERE user_id = $1 \
+         ORDER BY lower(name), id",
+    )
+    .bind(user.id)
+    .fetch_all(&state.db)
+    .await?;
+    Ok(Json(rows.into_iter().map(Into::into).collect()))
+}
+
+/// `POST /remote/searches`: keeps a search and the sites it goes to.
+pub async fn save_search(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Json(req): Json<SaveRemoteSearch>,
+) -> AppResult<Json<SavedRemoteSearch>> {
+    let req = req
+        .clean()
+        .map_err(|e| AppError::BadRequest(e.to_string()))?;
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM remote_searches WHERE user_id = $1")
+        .bind(user.id)
+        .fetch_one(&state.db)
+        .await?;
+    if usize::try_from(count).unwrap_or(usize::MAX) >= MAX_REMOTE_SEARCHES {
+        return Err(AppError::Conflict {
+            code: "too_many_searches",
+            message: format!("at most {MAX_REMOTE_SEARCHES} searches can be saved"),
+        });
+    }
+    let sites = serde_json::to_string(&req.sites).map_err(AppError::internal)?;
+    let row: SearchRow = sqlx::query_as(
+        "INSERT INTO remote_searches (user_id, name, query, sites) VALUES ($1, $2, $3, $4) \
+         RETURNING id, name, query, sites, created_at",
+    )
+    .bind(user.id)
+    .bind(&req.name)
+    .bind(&req.query)
+    .bind(sites)
+    .fetch_one(&state.db)
+    .await?;
+    Ok(Json(row.into()))
+}
+
+/// `DELETE /remote/searches/{id}`.
+pub async fn delete_search(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<i64>,
+) -> AppResult<StatusCode> {
+    let gone = sqlx::query("DELETE FROM remote_searches WHERE id = $1 AND user_id = $2")
+        .bind(id)
+        .bind(user.id)
+        .execute(&state.db)
+        .await?;
+    if gone.rows_affected() == 0 {
+        return Err(AppError::NotFound);
+    }
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// What a site's refusal means for the user, in the site's own words when it
@@ -223,7 +419,44 @@ mod tests {
                     r#"<?xml version="1.0" encoding="UTF-8"?><response success="false" reason="Search error: API limited due to abuse."/>"#
                 }),
             )
-            .route("/html/posts.json", get(|| async { "<html>hi</html>" }));
+            .route("/html/posts.json", get(|| async { "<html>hi</html>" }))
+            .route(
+                "/d/autocomplete.json",
+                get(|| async {
+                    json!([{"type": "tag-word", "label": "blue sky", "value": "blue_sky",
+                            "category": 0, "post_count": 12},
+                           {"type": "tag-word", "label": "x", "value": "blue_archive",
+                            "category": 3, "post_count": 5}])
+                    .to_string()
+                }),
+            )
+            .route("/d/a.png", get(|| async { testing::png(8, 8, 2) }))
+            .route("/d/page.html", get(|| async { "<!DOCTYPE html><html></html>" }))
+            // A Gelbooru that wants a key for its API, and lists posts on its pages.
+            .route(
+                "/k/index.php",
+                get(|RawQuery(q): RawQuery| async move {
+                    let q = q.unwrap_or_default();
+                    if q.contains("page=dapi") {
+                        return (StatusCode::UNAUTHORIZED, String::new());
+                    }
+                    let item = |id: u32| {
+                        format!(
+                            r#"<article class="thumbnail-preview"><a id="p{id}" href="index.php?page=post&amp;s=view&amp;id={id}">
+                            <img src="/thumbnails/{id}.jpg" title=" sky t{id} score:{id} rating:general"/></a></article>"#
+                        )
+                    };
+                    let from: u32 = q
+                        .split('&')
+                        .find_map(|pair| pair.strip_prefix("pid="))
+                        .and_then(|n| n.parse().ok())
+                        .unwrap_or(0);
+                    // 42 on the first page, 3 on the next.
+                    let count = if from == 0 { 42 } else { 3 };
+                    let items: String = (1..=count).map(|i| item(from + i)).collect();
+                    (StatusCode::OK, format!("<!DOCTYPE html><html><body>{items}</body></html>"))
+                }),
+            );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await });
@@ -506,6 +739,173 @@ mod tests {
         let list = app.get("/api/v1/remote/accounts", &t).await.json();
         assert_eq!(list[0]["usable"], false);
         assert_eq!(list[0]["login"], "42");
+        app.finish().await;
+    }
+
+    #[tokio::test]
+    async fn gelbooru_is_listed_from_its_pages_without_a_key() {
+        let Some(app) = testing::app_with(|c| c.url_import = Some(crate::fetch::Reach::Any)).await
+        else {
+            return;
+        };
+        let t = app.register("admin").await;
+        let site = fake_booru().await;
+        let search = |page: u32| {
+            let body = json!({"api": "gelbooru", "base": format!("{site}/k"), "tags": "sky", "page": page});
+            app.call(Method::POST, "/api/v1/remote/search", Some(&t), Some(body))
+        };
+        let r = search(1).await;
+        assert_eq!(r.status, StatusCode::OK, "{:?}", r.json());
+        let page = r.json();
+        assert_eq!(page["posts"].as_array().map(Vec::len), Some(42));
+        assert_eq!(page["more"], true);
+        let first = &page["posts"][0];
+        assert_eq!(first["id"], 1);
+        assert_eq!(first["tags"], json!(["sky", "t1"]));
+        assert_eq!(
+            (first["rating"].as_str(), first["score"].as_i64()),
+            (Some("safe"), Some(1))
+        );
+        assert_eq!(
+            first["page_url"],
+            format!("{site}/k/index.php?page=post&s=view&id=1")
+        );
+        // A list doesn't say where the file is: an import goes by the page.
+        assert_eq!(first["file_url"], "");
+        let r = search(2).await;
+        assert_eq!(r.json()["posts"].as_array().map(Vec::len), Some(3));
+        assert_eq!(r.json()["posts"][0]["id"], 43);
+        assert_eq!(r.json()["more"], false);
+        app.finish().await;
+    }
+
+    #[tokio::test]
+    async fn suggests_tags_marks_imported_posts_and_keeps_searches() {
+        let Some(app) = testing::app_with(|c| {
+            c.url_import = Some(crate::fetch::Reach::Any);
+            c.max_upload_bytes = 1 << 20;
+        })
+        .await
+        else {
+            return;
+        };
+        let t = app.register("admin").await;
+        let other = app.register("other").await;
+        let site = fake_booru().await;
+        let base = format!("{site}/d");
+
+        let tags = |term: &str| {
+            let body = json!({"api": "danbooru", "base": base, "term": term});
+            app.call(Method::POST, "/api/v1/remote/tags", Some(&t), Some(body))
+        };
+        let found = tags("blu").await.json();
+        assert_eq!(
+            found[0],
+            json!({"name": "blue_sky", "category": "general", "count": 12})
+        );
+        assert_eq!(found[1]["category"], "copyright");
+        // Nothing typed, or a site without suggestions: none, not an error.
+        assert_eq!(tags("  ").await.json(), json!([]));
+        let nowhere = json!({"api": "moebooru", "base": format!("{site}/missing"), "term": "blu"});
+        let r = app
+            .call(Method::POST, "/api/v1/remote/tags", Some(&t), Some(nowhere))
+            .await;
+        assert_eq!((r.status, r.json()), (StatusCode::OK, json!([])));
+
+        // A result imported before says which post it is here.
+        let search = json!({"api": "danbooru", "base": base, "tags": "x"});
+        let import = json!({"url": format!("{base}/a.png"), "source": format!("{base}/posts/2")});
+        let made = app
+            .call(Method::POST, "/api/v1/posts/import", Some(&t), Some(import))
+            .await;
+        assert_eq!(made.status, StatusCode::OK, "{:?}", made.json());
+        let r = app
+            .call(
+                Method::POST,
+                "/api/v1/remote/search",
+                Some(&t),
+                Some(search),
+            )
+            .await;
+        let posts = r.json()["posts"].clone();
+        assert!(posts[0].get("post_id").is_none());
+        assert_eq!(posts[1]["post_id"], made.json()["id"]);
+
+        // Saved searches: kept with their sites, each account its own.
+        let save = |name: &str, sites: serde_json::Value| {
+            let body = json!({"name": name, "query": " blue_sky  rating:safe ", "sites": sites});
+            app.call(
+                Method::POST,
+                "/api/v1/remote/searches",
+                Some(&t),
+                Some(body),
+            )
+        };
+        let sites = json!([{"api": "danbooru", "base": "https://danbooru.donmai.us/"},
+                           {"api": "moebooru", "base": "https://yande.re"}]);
+        let r = save("Skies", sites).await;
+        assert_eq!(r.status, StatusCode::OK, "{:?}", r.json());
+        let kept = r.json();
+        assert_eq!(kept["query"], "blue_sky rating:safe");
+        assert_eq!(kept["sites"][0]["base"], "https://danbooru.donmai.us");
+        assert_eq!(
+            save("None", json!([])).await.status,
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            save(" ", json!([{"api": "e621", "base": "https://e926.net"}]))
+                .await
+                .status,
+            StatusCode::BAD_REQUEST
+        );
+        let list = app.get("/api/v1/remote/searches", &t).await.json();
+        assert_eq!(list.as_array().map(Vec::len), Some(1));
+        assert_eq!(list[0]["sites"].as_array().map(Vec::len), Some(2));
+        assert_eq!(
+            app.get("/api/v1/remote/searches", &other).await.json(),
+            json!([])
+        );
+        let path = format!("/api/v1/remote/searches/{}", kept["id"]);
+        let r = app.call(Method::DELETE, &path, Some(&other), None).await;
+        assert_eq!(r.status, StatusCode::NOT_FOUND);
+        let r = app.call(Method::DELETE, &path, Some(&t), None).await;
+        assert_eq!(r.status, StatusCode::NO_CONTENT);
+        assert_eq!(
+            app.get("/api/v1/remote/searches", &t).await.json(),
+            json!([])
+        );
+        app.finish().await;
+    }
+
+    #[tokio::test]
+    async fn passes_on_only_pictures_it_signed_for() {
+        let Some(app) = testing::app_with(|c| c.url_import = Some(crate::fetch::Reach::Any)).await
+        else {
+            return;
+        };
+        let site = fake_booru().await;
+        let now = chrono::Utc::now().timestamp();
+        let signed = |path: &str| app.state.relay.url(&format!("{site}{path}"), now);
+        // No sign-in: the address is the permission, as for `/media`.
+        let r = app.call(Method::GET, &signed("/d/a.png"), None, None).await;
+        assert_eq!(r.status, StatusCode::OK);
+        assert_eq!(r.headers["content-type"], "image/png");
+        assert_eq!(r.body, testing::png(8, 8, 2));
+        // Signed or not, a page isn't passed on as a picture.
+        let r = app
+            .call(Method::GET, &signed("/d/page.html"), None, None)
+            .await;
+        assert_eq!(r.status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+        // An address nobody signed, or one changed afterwards.
+        let forged = signed("/d/a.png").replace("a.png", "page.html");
+        let r = app.call(Method::GET, &forged, None, None).await;
+        assert_eq!(r.status, StatusCode::FORBIDDEN);
+        let bare = format!(
+            "/api/v1/remote/media?u={site}/d/a.png&exp={}&sig=00",
+            now + 60
+        );
+        let r = app.call(Method::GET, &bare, None, None).await;
+        assert_eq!(r.status, StatusCode::FORBIDDEN);
         app.finish().await;
     }
 

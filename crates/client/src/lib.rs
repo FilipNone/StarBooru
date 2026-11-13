@@ -24,7 +24,8 @@ use starbooru_core::{
 };
 use starbooru_core::{
     AiAdminStatus, AiGeneralUpdate, AiStatus, AiTestResult, AiTool, AiToolUpdate, BooruAccount,
-    PanelTranslation, SaveBooruAccount, TagSuggestions, TranslateRequest, Translation,
+    PanelTranslation, RemotePost, RemotePostQuery, RemoteTag, RemoteTagQuery, SaveBooruAccount,
+    SaveRemoteSearch, SavedRemoteSearch, TagSuggestions, TranslateRequest, Translation,
 };
 use std::time::Duration;
 use thiserror::Error;
@@ -673,6 +674,32 @@ impl Client {
     /// a result with [`Client::import_url`].
     pub async fn remote_search(&self, search: &RemoteSearch) -> Result<RemotePage> {
         self.json(Method::POST, "/remote/search", search).await
+    }
+
+    /// Tags on another site that start with `term`, for its search box.
+    pub async fn remote_tags(&self, query: &RemoteTagQuery) -> Result<Vec<RemoteTag>> {
+        self.json(Method::POST, "/remote/tags", query).await
+    }
+
+    /// One post on another site in full, from a link to it.
+    pub async fn remote_post(&self, url: &str) -> Result<RemotePost> {
+        let query = RemotePostQuery {
+            url: url.to_owned(),
+        };
+        self.json(Method::POST, "/remote/post", &query).await
+    }
+
+    /// The searches on other sites the user kept, by name.
+    pub async fn remote_searches(&self) -> Result<Vec<SavedRemoteSearch>> {
+        Self::send(self.request(Method::GET, "/remote/searches")?).await
+    }
+
+    pub async fn save_remote_search(&self, search: &SaveRemoteSearch) -> Result<SavedRemoteSearch> {
+        self.json(Method::POST, "/remote/searches", search).await
+    }
+
+    pub async fn delete_remote_search(&self, id: i64) -> Result<()> {
+        Self::send_empty(self.request(Method::DELETE, &format!("/remote/searches/{id}"))?).await
     }
 
     /// The accounts on other boorus saved on the server, without their keys.

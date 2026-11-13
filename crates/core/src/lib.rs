@@ -65,9 +65,10 @@ pub use query::{
     FigureTerm, Order, SearchQuery, SortKey, parse_query, with_color, with_exact, with_order,
 };
 pub use remote::{
-    BooruAccount, BooruApi, BooruSite, Limits, MAX_BOORU_ACCOUNTS, PostLink, PostRef, RemoteError,
-    RemotePage, RemotePost, RemoteSearch, SITES, SaveBooruAccount, TagGroups, counted_tags,
-    post_link, remote_tags,
+    BooruAccount, BooruApi, BooruSite, Limits, MAX_BOORU_ACCOUNTS, MAX_REMOTE_SEARCHES,
+    MAX_SEARCH_SITES, PostLink, PostRef, RemoteError, RemotePage, RemotePost, RemotePostQuery,
+    RemoteSearch, RemoteSite, RemoteTag, RemoteTagQuery, SITES, SaveBooruAccount, SaveRemoteSearch,
+    SavedRemoteSearch, TagGroups, counted_tags, for_site, guarded_by, post_link, remote_tags,
 };
 pub use saved::clean_saved_search;
 pub use share::{NewShare, Share, ShareError, SharedPost, SharedView};

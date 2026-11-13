@@ -259,6 +259,12 @@ Tags are resolved the same way everywhere: an alias in a post's tags or in a sea
 | Method | Path | Body | Returns |
 |---|---|---|---|
 | POST | `/remote/search` | `RemoteSearch {api, base, tags?, page?, login?, api_key?}` | `RemotePage {posts, more}` |
+| POST | `/remote/tags` | `RemoteTagQuery {api, base, term}` | `RemoteTag[]`, at most 10: `{name, category, count?}`, the site's tags that start with `term`, most used first. Empty when the site has none to offer or can't be reached (e621 completes from three letters). |
+| POST | `/remote/post` | `RemotePostQuery {url}` | One `RemotePost` in full, from a link to it (a post's page, or a file whose address carries its MD5). 404 when the link isn't to a post or nothing could be read of it. |
+| GET | `/remote/media?u=&exp=&sig=` | | A picture or video from another site, passed on by the server. No sign-in: the address is signed, as for `/media`, and only the server makes such addresses. 403 for any other; 415 when what the site sent is neither a picture nor a video. |
+| GET | `/remote/searches` | | `SavedRemoteSearch[]` by name: `{id, name, query, sites: [{api, base}], created_at}` |
+| POST | `/remote/searches` | `SaveRemoteSearch {name, query?, sites}` | `SavedRemoteSearch`. 1 to 8 sites; an empty `query` is a site's newest posts. 409 `too_many_searches` past 200. |
+| DELETE | `/remote/searches/{id}` | | 204; 404 if it isn't yours |
 | GET | `/remote/accounts` | | `BooruAccount[]`: the caller's saved accounts on other boorus, `{id, api, base, login, usable, updated_at}`. Never the key. |
 | PUT | `/remote/accounts` | `SaveBooruAccount {api, base, login, api_key}` | `BooruAccount`. Saves the account for the site at `base`, in place of the one saved for it before. 400 without both `login` and `api_key`; 409 `too_many_accounts` past 50. |
 | DELETE | `/remote/accounts/{id}` | | 204; 404 if it isn't yours |
@@ -271,6 +277,10 @@ The server searches another booru for you, so the app needs no cross-site access
 - A saved account's key is encrypted before it reaches the database (ChaCha20-Poly1305, with a key derived from `STARBOORU_SECRET` and bound to the user and the site) and is only ever opened to be sent to its site: no answer of the API carries it. `usable` is false when it no longer opens, which is what changing `STARBOORU_SECRET` does; save it again.
 - A `RemotePost` is `{id, site, page_url, preview_url, sample_url?, file_url, tags, groups?, rating, width, height, md5?, source?, score?, created_at?, file_size?}`. `tags` holds only tags valid here (the rest are dropped); `groups` is `{artist?, copyright?, character?, meta?}`, the names among `tags` that aren't general ones, where the site says (Danbooru, e621, Moebooru). `rating` is mapped to StarBooru's scale. `sample_url` is a copy sized for a screen, when the site makes one. Posts without a file the account may see are left out. `more` is true when the site sent a full page and has a next one.
 - The server keeps to each site's limits (`starbooru_core::Limits`): how deep a search goes (Danbooru 1000 pages, e621 750, Gelbooru 500, as it stops 20,000 posts in), how many tags one takes without an account (Danbooru 2, e621 40; `rating:` doesn't count), and the time between two requests to a site, which every account's searches and imports share (Danbooru, Gelbooru and Moebooru half a second, e621 a second). A request waits up to 8 seconds for its turn.
+- `tags` may be written the StarBooru way and goes out in the site's own: `rating:safe`, `rating:sensitive`, `rating:questionable` and `rating:explicit` become that site's values (`g`/`s`/`q`/`e` on Danbooru, the full words on Gelbooru, `s`/`q`/`e` elsewhere, where sensitive is `q`), and `order:score` and `sort:score:desc` each other. A site's own short forms (`rating:s`) are left as typed. One search can so go to several sites; the app sends one request per site and merges the answers.
+- `post_id` is the post here whose source is that post's page: it was imported before.
+- Gelbooru's API wants a key. Without one, the search is read from the site's own list pages: 42 posts a page, with tags, rating and score, but no file, size or categories. Such a post has an empty `file_url`; import it by its `page_url` alone (no `source`), or ask `POST /remote/post` for the rest.
+- Gelbooru's file servers answer only their own pages, so for its posts `preview_url` and `sample_url` are `/remote/media` addresses on this server (relative, like a post's `/media` ones); `file_url` stays the site's, for importing. `sample_url` is always there for them, as the page has nothing else to show.
 - Import results with `POST /imports` (in the background) or `POST /posts/import` (one, waiting for it), `url` = `file_url` and `source` = `page_url`.
 
 Errors:

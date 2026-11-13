@@ -14,6 +14,7 @@ use crate::ocr::Ocr;
 use crate::oidc::Oidc;
 use crate::remote::accounts::Vault;
 use crate::remote::pace::Pace;
+use crate::remote::relay::Relay;
 use crate::storage::Storage;
 use crate::throttle::Guards;
 use crate::transfers::Transfers;
@@ -50,6 +51,8 @@ pub struct Inner {
     pub pace: Pace,
     /// Seals the keys of saved booru accounts.
     pub vault: Vault,
+    /// Signs the addresses that pass other sites' pictures on.
+    pub relay: Relay,
     /// Woken when a library import is queued.
     pub library_imports: tokio::sync::Notify,
     /// The built-in AI models and the process that runs them.
@@ -62,6 +65,7 @@ impl AppState {
         let signer = Signer::new(&config.secret);
         let backups = Backups::new(&config.secret);
         let vault = Vault::new(&config.secret);
+        let relay = Relay::new(&config.secret);
         let oidc = config.oidc.clone().and_then(|c| match Oidc::new(c) {
             Ok(o) => Some(o),
             Err(e) => {
@@ -97,6 +101,7 @@ impl AppState {
             transfers: Transfers::default(),
             pace: Pace::default(),
             vault,
+            relay,
             library_imports: tokio::sync::Notify::new(),
             local_ai,
             started_at: Utc::now(),

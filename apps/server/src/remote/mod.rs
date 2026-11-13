@@ -7,12 +7,14 @@ pub mod accounts;
 pub mod html;
 pub mod lookup;
 pub mod pace;
+pub mod relay;
 
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use starbooru_core::remote::REMOTE_PAGE_SIZE;
 use starbooru_core::{
-    BooruApi, PostRef, Rating, RemotePost, RemoteSearch, TagCategory, TagGroups, remote_tags,
+    BooruApi, PostRef, Rating, RemotePost, RemoteSearch, RemoteTag, TagCategory, TagGroups,
+    for_site, remote_tags,
 };
 use url::Url;
 
@@ -102,7 +104,7 @@ pub fn post_url(api: BooruApi, base: &Url, post: &PostRef, account: Account<'_>)
 pub fn search_url(search: &RemoteSearch) -> Option<Url> {
     let base = base_url(&search.base)?;
     let (path, mut pairs) = listing(search.api);
-    pairs.push(("tags", search.tags.clone()));
+    pairs.push(("tags", for_site(search.api, &search.tags)));
     match search.api {
         BooruApi::Gelbooru => pairs.push(("pid", search.page.saturating_sub(1).to_string())),
         _ => pairs.push(("page", search.page.to_string())),
@@ -110,6 +112,129 @@ pub fn search_url(search: &RemoteSearch) -> Option<Url> {
     pairs.push(("limit", REMOTE_PAGE_SIZE.to_string()));
     let account = search.login.as_deref().zip(search.api_key.as_deref());
     with_query(&base, search.api, path, pairs, account)
+}
+
+/// Posts on one of Gelbooru's own list pages.
+pub const LIST_PAGE_SIZE: u32 = 42;
+
+/// The page of Gelbooru's website that lists a search, for when its API
+/// wants a key the user doesn't have. It counts in posts, not pages.
+pub fn list_url(search: &RemoteSearch) -> Option<Url> {
+    let base = base_url(&search.base)?;
+    let offset = search.page.saturating_sub(1).saturating_mul(LIST_PAGE_SIZE);
+    let pairs = vec![
+        ("page", "post".to_owned()),
+        ("s", "list".to_owned()),
+        ("tags", for_site(search.api, &search.tags)),
+        ("pid", offset.to_string()),
+    ];
+    with_query(&base, search.api, "index.php", pairs, None)
+}
+
+/// Fewest letters e621 completes.
+const E621_MIN_TERM: usize = 3;
+/// Suggestions asked for.
+const SUGGESTIONS: usize = 10;
+
+/// Where a site suggests tags that start with `term`. `None` when the site
+/// has nothing to ask (e621 wants three letters).
+pub fn tags_url(api: BooruApi, base: &Url, term: &str) -> Option<Url> {
+    let count = SUGGESTIONS.to_string();
+    let (path, pairs) = match api {
+        BooruApi::Danbooru | BooruApi::Blombooru => (
+            "autocomplete.json",
+            vec![
+                ("search[query]", term.to_owned()),
+                ("search[type]", "tag_query".to_owned()),
+                ("limit", count),
+            ],
+        ),
+        // Gelbooru itself has a newer one; its forks kept the old.
+        BooruApi::Gelbooru if base.host_str().is_some_and(|h| h.ends_with("gelbooru.com")) => (
+            "index.php",
+            vec![
+                ("page", "autocomplete2".to_owned()),
+                ("term", term.to_owned()),
+                ("type", "tag_query".to_owned()),
+                ("limit", count),
+            ],
+        ),
+        BooruApi::Gelbooru => ("autocomplete.php", vec![("q", term.to_owned())]),
+        BooruApi::Moebooru => (
+            "tag.json",
+            vec![
+                ("name", format!("{term}*")),
+                ("order", "count".to_owned()),
+                ("limit", count),
+            ],
+        ),
+        BooruApi::E621 if term.chars().count() < E621_MIN_TERM => return None,
+        BooruApi::E621 => (
+            "tags/autocomplete.json",
+            vec![
+                ("search[name_matches]", term.to_owned()),
+                ("expiry", "7".to_owned()),
+            ],
+        ),
+    };
+    with_query(base, api, path, pairs, None)
+}
+
+/// A category as these sites number or name it. e621 counts its own way.
+fn tag_category(api: BooruApi, v: Option<&Value>) -> TagCategory {
+    let number = v.and_then(Value::as_u64);
+    let name = v.and_then(Value::as_str).unwrap_or_default();
+    match (api, number, name) {
+        (_, Some(1), _) | (_, _, "artist") => TagCategory::Artist,
+        (_, Some(3), _) | (_, _, "copyright") => TagCategory::Copyright,
+        (_, Some(4), _) | (_, _, "character") => TagCategory::Character,
+        (BooruApi::E621, Some(7 | 8), _) => TagCategory::Meta,
+        (BooruApi::E621, ..) => TagCategory::General,
+        (_, Some(5 | 6), _) | (_, _, "metadata" | "meta") => TagCategory::Meta,
+        _ => TagCategory::General,
+    }
+}
+
+/// The suggestions in a site's answer; nothing when it isn't one.
+pub fn parse_tags(api: BooruApi, body: &[u8]) -> Vec<RemoteTag> {
+    let Ok(Value::Array(list)) = serde_json::from_slice::<Value>(body) else {
+        return Vec::new();
+    };
+    let mut tags: Vec<RemoteTag> = Vec::new();
+    for item in &list {
+        let text = |key: &str| item.get(key).and_then(Value::as_str);
+        // Danbooru and Gelbooru call the tag `value`; the others `name`.
+        let Some(name) = text("value").or_else(|| text("name")).map(str::trim) else {
+            continue;
+        };
+        let counted = ["post_count", "count"].into_iter().find_map(|key| {
+            let v = item.get(key)?;
+            v.as_u64().or_else(|| v.as_str()?.trim().parse().ok())
+        });
+        // The old Gelbooru one only says it in the label: `blush (1663819)`.
+        let labelled = || {
+            let (_, count) = text("label")?.trim_end_matches(')').rsplit_once('(')?;
+            count.trim().parse().ok()
+        };
+        let known = item.get("category").or_else(|| item.get("type"));
+        let known = known.filter(|v| v.is_u64() || api == BooruApi::Gelbooru);
+        if name.is_empty()
+            || name.chars().count() > 128
+            || name.chars().any(|c| c.is_control() || c.is_whitespace())
+            || tags.iter().any(|t| t.name == name)
+        {
+            continue;
+        }
+        tags.push(RemoteTag {
+            name: name.to_owned(),
+            category: tag_category(api, known),
+            count: counted.or_else(labelled),
+        });
+        if tags.len() >= SUGGESTIONS {
+            break;
+        }
+    }
+    tags
 }
 
 /// The posts in an answer, and how many the site sent (some may be skipped),
@@ -366,6 +491,7 @@ fn post(api: BooruApi, base: &Url, p: &Value) -> Option<RemotePost> {
         score: fields.score,
         created_at: fields.created,
         file_size: fields.size,
+        post_id: None,
     })
 }
 
@@ -478,6 +604,134 @@ mod tests {
         // A key without a login is not sent.
         s.login = None;
         assert!(!search_url(&s).unwrap().as_str().contains("api_key"));
+    }
+
+    #[test]
+    fn asks_each_site_for_suggestions_its_own_way() {
+        let url = |api, b: &str, term| tags_url(api, &base(b), term).map(|u| u.to_string());
+        assert_eq!(
+            url(BooruApi::Danbooru, "https://d.org/", "blu").as_deref(),
+            Some(
+                "https://d.org/autocomplete.json?search%5Bquery%5D=blu&search%5Btype%5D=tag_query&limit=10"
+            )
+        );
+        assert_eq!(
+            url(BooruApi::Gelbooru, "https://gelbooru.com/", "blu").as_deref(),
+            Some(
+                "https://gelbooru.com/index.php?page=autocomplete2&term=blu&type=tag_query&limit=10"
+            )
+        );
+        assert_eq!(
+            url(BooruApi::Gelbooru, "https://safebooru.org/", "blu").as_deref(),
+            Some("https://safebooru.org/autocomplete.php?q=blu")
+        );
+        assert_eq!(
+            url(BooruApi::Moebooru, "https://m.org/", "blu").as_deref(),
+            Some("https://m.org/tag.json?name=blu*&order=count&limit=10")
+        );
+        assert_eq!(url(BooruApi::E621, "https://e.net/", "bl"), None);
+        assert!(
+            url(BooruApi::E621, "https://e.net/", "blu")
+                .unwrap()
+                .contains("name_matches%5D=blu")
+        );
+    }
+
+    #[test]
+    fn reads_each_sites_suggestions() {
+        let read = |api, body: serde_json::Value| {
+            parse_tags(api, body.to_string().as_bytes())
+                .into_iter()
+                .map(|t| (t.name, t.category, t.count))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            read(
+                BooruApi::Danbooru,
+                json!([
+                {"type": "tag-word", "label": "blush", "value": "blush", "category": 0, "post_count": 4_217_021},
+                {"type": "tag-word", "label": "blue archive", "value": "blue_archive", "category": 3, "post_count": 9},
+                {"type": "tag-word", "label": "again", "value": "blush", "category": 0, "post_count": 1}])
+            ),
+            [
+                ("blush".into(), TagCategory::General, Some(4_217_021)),
+                ("blue_archive".into(), TagCategory::Copyright, Some(9))
+            ]
+        );
+        assert_eq!(
+            read(
+                BooruApi::Gelbooru,
+                json!([
+                {"type": "tag", "label": "blue eyes", "value": "blue_eyes", "post_count": "2880857", "category": "tag"},
+                {"type": "tag", "label": "x", "value": "blue_archive", "post_count": "5", "category": "copyright"}])
+            ),
+            [
+                ("blue_eyes".into(), TagCategory::General, Some(2_880_857)),
+                ("blue_archive".into(), TagCategory::Copyright, Some(5))
+            ]
+        );
+        assert_eq!(
+            read(
+                BooruApi::Gelbooru,
+                json!([{"label": "blush (1663819)", "value": "blush"}])
+            ),
+            [("blush".into(), TagCategory::General, Some(1_663_819))]
+        );
+        assert_eq!(
+            read(
+                BooruApi::Moebooru,
+                json!([
+                {"id": 1, "name": "animal_ears", "count": 169_778, "type": 0, "ambiguous": false},
+                {"id": 2, "name": "someone", "count": 3, "type": 1},
+                {"id": 3, "name": "tagme", "count": 3, "type": 6}])
+            ),
+            [
+                ("animal_ears".into(), TagCategory::General, Some(169_778)),
+                ("someone".into(), TagCategory::Artist, Some(3)),
+                ("tagme".into(), TagCategory::Meta, Some(3))
+            ]
+        );
+        assert_eq!(
+            read(
+                BooruApi::E621,
+                json!([
+                {"id": 1, "name": "wolf", "post_count": 7, "category": 5, "antecedent_name": null},
+                {"id": 2, "name": "hi_res", "post_count": 8, "category": 7}])
+            ),
+            [
+                ("wolf".into(), TagCategory::General, Some(7)),
+                ("hi_res".into(), TagCategory::Meta, Some(8))
+            ]
+        );
+        // Not a list, or names that couldn't go in a search.
+        assert!(parse_tags(BooruApi::Danbooru, b"<html>").is_empty());
+        assert!(read(BooruApi::Danbooru, json!({"error": "bad request"})).is_empty());
+        assert!(
+            read(
+                BooruApi::Danbooru,
+                json!([{"value": "two words"}, {"value": ""}, {"label": "x"}, 7])
+            )
+            .is_empty()
+        );
+        let many: Vec<_> = (0..50).map(|i| json!({"value": format!("t{i}")})).collect();
+        assert_eq!(read(BooruApi::Danbooru, json!(many)).len(), 10);
+    }
+
+    #[test]
+    fn lists_gelbooru_without_its_api() {
+        let mut s = search(BooruApi::Gelbooru, "https://g.org");
+        s.tags = "blue_sky rating:safe".into();
+        assert_eq!(
+            list_url(&s).unwrap().as_str(),
+            "https://g.org/index.php?page=post&s=list&tags=blue_sky+rating%3Ageneral&pid=84"
+        );
+        // A search goes out in the site's own words through the API too.
+        assert!(
+            search_url(&s)
+                .unwrap()
+                .as_str()
+                .contains("tags=blue_sky+rating%3Ageneral&pid=2")
+        );
     }
 
     #[test]

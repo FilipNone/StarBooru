@@ -116,6 +116,12 @@ pub fn site_key(url: &Url) -> String {
     }
 }
 
+/// What a site's API is known by: its host, port and folder, as one server
+/// can hold two boorus and only one of them may want an account.
+pub fn api_key(base: &Url) -> String {
+    format!("{}{}", site_key(base), base.path().trim_end_matches('/'))
+}
+
 /// Whether an answer means "slow down": the usual 429, e621's 503 and
 /// Moebooru's 421.
 pub fn is_busy(status: u16) -> bool {
@@ -306,6 +312,10 @@ mod tests {
         assert_eq!(key("https://b.org/posts.json?tags=a"), "b.org:443");
         assert_eq!(key("http://B.org/x"), "b.org:80");
         assert_ne!(key("http://127.0.0.1:8000/"), key("http://127.0.0.1:8001/"));
+        let api = |raw: &str| api_key(&Url::parse(raw).unwrap());
+        assert_eq!(api("http://nas:8000/one/"), "nas:8000/one");
+        assert_ne!(api("http://nas:8000/one/"), api("http://nas:8000/two/"));
+        assert_eq!(api("https://b.org/"), "b.org:443");
     }
 
     #[test]

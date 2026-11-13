@@ -31,6 +31,20 @@ struct Host {
     files: bool,
 }
 
+/// Sites whose file servers only answer their own pages: a picture from one
+/// shows in a page of ours only when the server fetches it, naming the site.
+const GUARDED: [(&str, &str); 1] = [("gelbooru.com", "https://gelbooru.com/")];
+
+/// The page a file wants to be asked from (as a `Referer`), when its site
+/// refuses any other.
+pub fn guarded_by(raw: &str) -> Option<&'static str> {
+    let host = parts(raw)?.host;
+    GUARDED
+        .iter()
+        .find(|(name, _)| under(&host, name))
+        .map(|(_, referer)| *referer)
+}
+
 const fn site(name: &'static str, api: BooruApi, base: &'static str) -> Host {
     Host {
         name,
@@ -376,6 +390,21 @@ mod tests {
         ] {
             assert_eq!(found(other), None, "{other}");
         }
+    }
+
+    #[test]
+    fn knows_which_files_want_their_site_named() {
+        assert_eq!(
+            guarded_by("https://img4.gelbooru.com/thumbnails/65/20/thumbnail_x.jpg"),
+            Some("https://gelbooru.com/")
+        );
+        assert_eq!(
+            guarded_by("https://video-cdn3.gelbooru.com/a.mp4"),
+            Some("https://gelbooru.com/")
+        );
+        assert_eq!(guarded_by("https://cdn.donmai.us/original/a.jpg"), None);
+        assert_eq!(guarded_by("https://notgelbooru.com/a.jpg"), None);
+        assert_eq!(guarded_by("/api/v1/remote/media?u=x"), None);
     }
 
     #[test]

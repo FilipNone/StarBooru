@@ -4,6 +4,7 @@
 
 mod limits;
 mod link;
+mod syntax;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -13,7 +14,8 @@ use crate::model::{Rating, TagCategory};
 use crate::tag::{MAX_TAGS_PER_POST, normalize_tag};
 
 pub use limits::{Limits, counted_tags};
-pub use link::{PostLink, PostRef, post_link};
+pub use link::{PostLink, PostRef, guarded_by, post_link};
+pub use syntax::for_site;
 
 /// Posts asked for per page of a remote search.
 pub const REMOTE_PAGE_SIZE: u32 = 40;
@@ -266,6 +268,9 @@ pub struct RemotePost {
     /// The original's size in bytes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file_size: Option<u64>,
+    /// The post here that was imported from this one, when there is one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub post_id: Option<i64>,
 }
 
 impl RemotePost {
@@ -338,6 +343,97 @@ impl SaveBooruAccount {
     }
 }
 
+/// A site to search: its kind and its address.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct RemoteSite {
+    pub api: BooruApi,
+    pub base: String,
+}
+
+/// `POST /remote/tags`: tags on a site that start with what was typed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteTagQuery {
+    pub api: BooruApi,
+    pub base: String,
+    pub term: String,
+}
+
+/// A tag on another site, as a suggestion.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteTag {
+    /// As the site writes it, to put in a search there.
+    pub name: String,
+    #[serde(default)]
+    pub category: TagCategory,
+    /// How many posts carry it, when the site says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub count: Option<u64>,
+}
+
+/// `POST /remote/post`: one post in full, from a link to it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemotePostQuery {
+    pub url: String,
+}
+
+/// Most sites one search goes to.
+pub const MAX_SEARCH_SITES: usize = 8;
+/// Most searches on other sites one user saves.
+pub const MAX_REMOTE_SEARCHES: usize = 200;
+const MAX_SEARCH_NAME_CHARS: usize = 64;
+
+/// A search on other sites that the user kept.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SavedRemoteSearch {
+    pub id: i64,
+    pub name: String,
+    pub query: String,
+    pub sites: Vec<RemoteSite>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// `POST /remote/searches`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SaveRemoteSearch {
+    pub name: String,
+    #[serde(default)]
+    pub query: String,
+    pub sites: Vec<RemoteSite>,
+}
+
+impl SaveRemoteSearch {
+    /// Trims the name and the search, cleans each site's address and drops a
+    /// site listed twice. The search may be empty: a site's newest posts.
+    pub fn clean(self) -> Result<SaveRemoteSearch, RemoteError> {
+        let tidy = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+        let name = tidy(&self.name);
+        let query = tidy(&self.query);
+        if name.is_empty() {
+            return Err(RemoteError::NoName);
+        }
+        if name.chars().count() > MAX_SEARCH_NAME_CHARS
+            || query.len() > MAX_REMOTE_FIELD
+            || name.chars().chain(query.chars()).any(char::is_control)
+        {
+            return Err(RemoteError::TooLong);
+        }
+        let mut sites: Vec<RemoteSite> = Vec::new();
+        for site in self.sites {
+            let site = RemoteSite {
+                api: site.api,
+                base: clean_base(&site.base)?,
+            };
+            if !sites.contains(&site) {
+                sites.push(site);
+            }
+        }
+        if sites.is_empty() || sites.len() > MAX_SEARCH_SITES {
+            return Err(RemoteError::NoSites);
+        }
+        Ok(SaveRemoteSearch { name, query, sites })
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RemotePage {
     pub posts: Vec<RemotePost>,
@@ -361,6 +457,10 @@ pub enum RemoteError {
     TooLong,
     #[error("enter both the login (or user ID) and the key")]
     NoAccount,
+    #[error("give the search a name")]
+    NoName,
+    #[error("a search goes to between 1 and {MAX_SEARCH_SITES} sites")]
+    NoSites,
 }
 
 /// A site's address without a trailing slash, when it is http or https and
@@ -610,7 +710,56 @@ mod tests {
             score: None,
             created_at: None,
             file_size: None,
+            post_id: None,
         }
+    }
+
+    #[test]
+    fn a_saved_search_names_its_sites() {
+        let save = |name: &str, query: &str, sites: Vec<RemoteSite>| SaveRemoteSearch {
+            name: name.into(),
+            query: query.into(),
+            sites,
+        };
+        let site = |base: &str| RemoteSite {
+            api: BooruApi::Danbooru,
+            base: base.into(),
+        };
+        let kept = save(
+            "  Blue   skies ",
+            " blue_sky  rating:safe ",
+            vec![site("https://a.org/"), site("https://a.org")],
+        )
+        .clean()
+        .unwrap();
+        assert_eq!(
+            (kept.name.as_str(), kept.query.as_str()),
+            ("Blue skies", "blue_sky rating:safe")
+        );
+        assert_eq!(kept.sites, [site("https://a.org")], "the same site once");
+        // The newest posts of a site are worth saving too.
+        assert!(
+            save("Latest", "", vec![site("https://a.org")])
+                .clean()
+                .is_ok()
+        );
+        assert_eq!(
+            save(" ", "a", vec![site("https://a.org")]).clean(),
+            Err(RemoteError::NoName)
+        );
+        assert_eq!(save("x", "a", vec![]).clean(), Err(RemoteError::NoSites));
+        assert_eq!(
+            save("x", "a", vec![site("a.org")]).clean(),
+            Err(RemoteError::BadBase)
+        );
+        let many: Vec<RemoteSite> = (0..=MAX_SEARCH_SITES)
+            .map(|i| site(&format!("https://{i}.org")))
+            .collect();
+        assert_eq!(save("x", "a", many).clean(), Err(RemoteError::NoSites));
+        assert_eq!(
+            save(&"n".repeat(65), "a", vec![site("https://a.org")]).clean(),
+            Err(RemoteError::TooLong)
+        );
     }
 
     #[test]

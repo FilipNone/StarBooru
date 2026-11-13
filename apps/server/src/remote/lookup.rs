@@ -5,7 +5,7 @@
 
 use chrono::{TimeDelta, Utc};
 use starbooru_core::tag::MAX_TAGS_PER_POST;
-use starbooru_core::{ImportRequest, RemotePost, post_link};
+use starbooru_core::{ImportRequest, PostRef, RemotePost, post_link};
 use url::Url;
 
 use super::accounts::Accounts;
@@ -42,7 +42,7 @@ pub async fn find(
     let Some((url, base)) = url else {
         return Ok(Lookup::Unknown);
     };
-    let host = pace::site_key(&url);
+    let host = pace::api_key(&base);
     // No use asking again what it refused a moment ago.
     if account.is_none() && pace.locked(&host, Utc::now()) {
         return Ok(Lookup::Refused(Some(401)));
@@ -62,6 +62,55 @@ pub async fn find(
         .and_then(|(posts, _)| posts.into_iter().next())
         .map_or(Lookup::Unknown, |post| Lookup::Found(Box::new(post))))
 }
+
+/// One post in full, from a link to it: from the site's API, or failing that
+/// from the post's own page, which is all Gelbooru gives without a key.
+/// `None` when the link isn't to a post, or nothing could be read of it.
+pub async fn post(
+    pace: &Pace,
+    fetcher: &Fetcher,
+    accounts: &Accounts,
+    raw: &str,
+) -> AppResult<Option<RemotePost>> {
+    if let Lookup::Found(post) = find(pace, fetcher, accounts, raw).await? {
+        return Ok(Some(*post));
+    }
+    let Some(link) = post_link(raw, &accounts.sites()) else {
+        return Ok(None);
+    };
+    let (PostRef::Id(id), Ok(address)) = (link.post, Url::parse(raw.trim())) else {
+        return Ok(None);
+    };
+    let bytes = download(fetcher, pace, raw, None, MAX_PAGE, crate::fetch::UNWATCHED).await?;
+    let Some(page) = html::read(&address, &bytes).filter(|_| html::is_html(&bytes)) else {
+        return Ok(None);
+    };
+    let Some(file_url) = page.file_url else {
+        return Ok(None);
+    };
+    Ok(Some(RemotePost {
+        id,
+        site: link.base,
+        page_url: address.to_string(),
+        preview_url: page.sample_url.clone().unwrap_or_else(|| file_url.clone()),
+        sample_url: page.sample_url,
+        file_url,
+        tags: page.tags,
+        groups: page.groups,
+        rating: page.rating.unwrap_or(starbooru_core::Rating::Questionable),
+        width: page.width,
+        height: page.height,
+        md5: page.md5,
+        source: page.source,
+        score: None,
+        created_at: None,
+        file_size: None,
+        post_id: None,
+    }))
+}
+
+/// Largest post page read.
+const MAX_PAGE: usize = 4 * 1024 * 1024;
 
 /// `own` tags followed by `more`, without repeats, as many as a post takes.
 fn merged(own: &[String], more: Vec<String>) -> Vec<String> {
@@ -406,7 +455,7 @@ mod tests {
             key: "k".into(),
         }]);
         // Refused a moment ago without an account: with one, it is asked again.
-        pace.lock(&pace::site_key(&Url::parse(&site).unwrap()), Utc::now());
+        pace.lock(&pace::api_key(&base_url(&site).unwrap()), Utc::now());
         let found = find(&pace, &fetcher, &mine, &page).await.unwrap();
         let Lookup::Found(post) = found else {
             panic!("the account didn't open the API");
@@ -417,6 +466,35 @@ mod tests {
         let none = Accounts::default();
         let found = find(&pace, &fetcher, &none, &page).await.unwrap();
         assert!(matches!(found, Lookup::Refused(Some(401))));
+    }
+
+    #[tokio::test]
+    async fn a_post_is_read_in_full_from_its_api_or_its_page() {
+        let fetcher = Fetcher::new(crate::fetch::Reach::Any).unwrap();
+        let pace = Pace::default();
+        let none = Accounts::default();
+        // The API answers: its post.
+        let open = fake_booru(false).await;
+        let page = format!("{open}/index.php?page=post&s=view&id=7");
+        let found = post(&pace, &fetcher, &none, &page).await.unwrap().unwrap();
+        assert_eq!((found.id, found.rating), (7, Rating::Questionable));
+        assert!(found.groups.is_empty());
+        // It wants an account: the page, which also knows the artist.
+        let locked = fake_booru(true).await;
+        let page = format!("{locked}/index.php?page=post&s=view&id=7");
+        let found = post(&pace, &fetcher, &none, &page).await.unwrap().unwrap();
+        assert_eq!((found.id, found.site.as_str()), (7, locked.as_str()));
+        assert_eq!(found.file_url, format!("{locked}/images/a.png"));
+        assert_eq!(
+            (found.rating, found.page_url.as_str()),
+            (Rating::Sensitive, page.as_str())
+        );
+        assert_eq!(found.groups.artist, ["some_one"]);
+        // No such post, or no post at all.
+        let missing = format!("{locked}/index.php?page=post&s=view&id=8");
+        assert_eq!(post(&pace, &fetcher, &none, &missing).await.unwrap(), None);
+        let other = format!("{locked}/images/a.png");
+        assert_eq!(post(&pace, &fetcher, &none, &other).await.unwrap(), None);
     }
 
     #[tokio::test]
