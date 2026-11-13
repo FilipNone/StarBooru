@@ -107,7 +107,7 @@ Admins can change the name, open registration, the recycle-bin days and the back
 | `STARBOORU_TRUST_PROXY` | `false` (`true` in `docker-compose.yml`) | Take the client address from the last `X-Forwarded-For` entry, for the sign-in limits. Turn it on only behind a reverse proxy that sets the header (Traefik does); otherwise clients could pick their own address. |
 | `STARBOORU_BIND` | `0.0.0.0:8080` | Listen address |
 | `STARBOORU_DATA_DIR` | `/data` in the image | Media storage |
-| `STARBOORU_WEB_DIR` | `/app/web` in the image | Compiled web app; unset means the server runs API-only |
+| `STARBOORU_WEB_DIR` | `/app/web` in the image | Compiled web app; unset means the server runs API-only. The image and the server package hold a `.br` and a `.gz` of each text file, which are sent as they are. For a web app you built yourself, `starbooru-server precompress <dir>` writes them; without them the server compresses each file as it goes out. |
 | `RUST_LOG` | `info,tower_http=info,sqlx=warn` | Log filter |
 
 ## Local AI

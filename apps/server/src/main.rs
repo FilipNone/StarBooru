@@ -26,10 +26,12 @@ mod storage;
 mod testing;
 mod throttle;
 mod uploads;
+mod web;
 
 use std::process::ExitCode;
 use std::time::Duration;
 
+use axum::serve::ListenerExt;
 use sqlx::postgres::{PgPool, PgPoolOptions};
 use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
@@ -41,8 +43,10 @@ type StartupError = Box<dyn std::error::Error + Send + Sync>;
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    if std::env::args().nth(1).as_deref() == Some("healthcheck") {
-        return healthcheck();
+    match std::env::args().nth(1).as_deref() {
+        Some("healthcheck") => return healthcheck(),
+        Some("precompress") => return precompress(std::env::args().nth(2)),
+        _ => {}
     }
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -97,7 +101,15 @@ async fn run() -> Result<(), StartupError> {
         ocr::backfill(backfill).await;
     });
 
-    let listener = tokio::net::TcpListener::bind(state.config.bind).await?;
+    // Without this the kernel holds back a short answer for up to 40 ms, waiting
+    // for more to send with it (Nagle's algorithm against the client's delayed ACK).
+    let listener = tokio::net::TcpListener::bind(state.config.bind)
+        .await?
+        .tap_io(|stream| {
+            if let Err(e) = stream.set_nodelay(true) {
+                tracing::debug!("cannot set TCP_NODELAY: {e}");
+            }
+        });
     info!("StarBooru listening on http://{}", state.config.bind);
     axum::serve(
         listener,
@@ -132,6 +144,28 @@ fn healthcheck() -> ExitCode {
         Ok(false) => ExitCode::FAILURE,
         Err(e) => {
             eprintln!("healthcheck: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// `starbooru-server precompress <web dir>`: writes the `.br` and `.gz` copies
+/// the server sends instead of compressing each time (`web.rs`). A build step.
+fn precompress(dir: Option<String>) -> ExitCode {
+    let Some(dir) = dir else {
+        eprintln!("usage: starbooru-server precompress <web dir>");
+        return ExitCode::FAILURE;
+    };
+    match web::precompress(std::path::Path::new(&dir)) {
+        Ok(done) => {
+            println!(
+                "precompress: {} files, {} bytes, {} with brotli",
+                done.files, done.bytes, done.brotli_bytes
+            );
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("precompress: {dir}: {e}");
             ExitCode::FAILURE
         }
     }

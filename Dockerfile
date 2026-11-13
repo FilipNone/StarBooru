@@ -40,6 +40,8 @@ RUN cargo build --release --locked -p starbooru-server -p starbooru-ai-worker \
     && cp target/release/starbooru-server /out/starbooru-server \
     && mkdir -p /out/ai \
     && cp target/release/starbooru-ai-worker /out/ai/starbooru-ai-worker
+# A .br and a .gz of each text file, which the server sends as they are.
+RUN /out/starbooru-server precompress /out/web/public
 
 # ONNX Runtime, which runs the models, pinned by version and hash.
 ARG AI_GPU=none

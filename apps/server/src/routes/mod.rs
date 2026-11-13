@@ -44,7 +44,6 @@ use starbooru_core::{ApiError, ServerInfo};
 use tower_http::catch_panic::CatchPanicLayer;
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::{Any as AnyOrigin, CorsLayer};
-use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
 use tracing::{error, warn};
 
@@ -209,19 +208,12 @@ pub fn router(state: AppState) -> Router {
         .route("/healthz", get(health));
 
     if let Some(dir) = &state.config.web_dir {
-        if dir.join("index.html").is_file() {
-            // Single-page app: unknown paths fall back to index.html.
-            let spa = ServeDir::new(dir).fallback(ServeFile::new(dir.join("index.html")));
-            app = app.fallback_service(
-                tower::ServiceBuilder::new()
-                    .layer(CompressionLayer::new())
-                    .service(spa),
-            );
-        } else {
-            warn!(
+        match crate::web::service(dir) {
+            Some(web) => app = app.fallback_service(web),
+            None => warn!(
                 "STARBOORU_WEB_DIR={} has no index.html; web app disabled",
                 dir.display()
-            );
+            ),
         }
     }
 
@@ -416,6 +408,34 @@ mod tests {
             app.get("/api/v1/auth/me", &admin).await.status,
             StatusCode::UNAUTHORIZED
         );
+        app.finish().await;
+    }
+
+    /// The web app takes every path the API and the media don't.
+    #[tokio::test]
+    async fn the_web_app_answers_what_the_api_does_not() {
+        let web = tempfile::tempdir().unwrap();
+        std::fs::write(
+            web.path().join("index.html"),
+            "<html><head></head><body>app</body></html>",
+        )
+        .unwrap();
+        let dir = web.path().to_path_buf();
+        let Some(app) = testing::app_with(move |c| c.web_dir = Some(dir)).await else {
+            return;
+        };
+        for path in ["/", "/post/7", "/settings"] {
+            let page = app.call(Method::GET, path, None, None).await;
+            assert_eq!(page.status, StatusCode::OK, "{path}");
+            assert_eq!(page.headers["cache-control"], "no-cache", "{path}");
+            assert_eq!(page.body, b"<html><head></head><body>app</body></html>");
+        }
+        // Not a page: an API path that doesn't exist says so as JSON.
+        let missing = app.call(Method::GET, "/api/v1/nope", None, None).await;
+        assert_eq!(missing.status, StatusCode::NOT_FOUND);
+        assert_eq!(missing.json()["code"], "not_found");
+        let health = app.call(Method::GET, "/healthz", None, None).await;
+        assert_eq!(health.body, b"ok");
         app.finish().await;
     }
 

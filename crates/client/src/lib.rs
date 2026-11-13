@@ -35,6 +35,21 @@ const RATE_LIMIT_RETRIES: u32 = 2;
 /// A longer `Retry-After` than this is returned to the caller instead of
 /// waited out, so the UI never hangs on one request.
 const MAX_RETRY_WAIT: Duration = Duration::from_secs(30);
+/// How long to wait before sending a read again after it never reached the
+/// server, one entry per try. A phone that just woke up or changed network
+/// fails the first request on its old connection, and the next one works.
+const RECONNECT_WAITS: [Duration; 2] = [Duration::from_millis(300), Duration::from_secs(1)];
+/// How long a connection may take to open. Without a limit a server that isn't
+/// there keeps a page waiting for minutes, until the system gives up.
+#[cfg(not(target_arch = "wasm32"))]
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// How often a connection in use is checked, and how long it has to answer.
+/// A connection that died without a word (Wi-Fi to mobile data, a sleeping
+/// phone) is dropped after these, and the request fails instead of hanging.
+#[cfg(not(target_arch = "wasm32"))]
+const KEEP_ALIVE_EVERY: Duration = Duration::from_secs(20);
+#[cfg(not(target_arch = "wasm32"))]
+const KEEP_ALIVE_ANSWER: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Error)]
 pub enum ClientError {
@@ -109,7 +124,12 @@ fn http_client() -> Result<reqwest::Client> {
         env!("CARGO_PKG_VERSION"),
         std::env::consts::OS
     );
-    let builder = reqwest::Client::builder().user_agent(agent);
+    let builder = reqwest::Client::builder()
+        .user_agent(agent)
+        .connect_timeout(CONNECT_TIMEOUT)
+        .tcp_keepalive(KEEP_ALIVE_EVERY)
+        .http2_keep_alive_interval(KEEP_ALIVE_EVERY)
+        .http2_keep_alive_timeout(KEEP_ALIVE_ANSWER);
     // Android's platform verifier needs JNI setup the app doesn't do;
     // trust the system's CA folder instead (see `roots`).
     #[cfg(target_os = "android")]
@@ -825,11 +845,30 @@ fn segment(s: &str) -> String {
 /// method). Requests whose body can't be replayed, like streamed uploads,
 /// are sent once.
 async fn send_patiently(req: RequestBuilder) -> Result<reqwest::Response> {
+    // Only a read is safe to send twice: a write may have arrived.
+    let read = req
+        .try_clone()
+        .and_then(|copy| copy.build().ok())
+        .is_some_and(|r| matches!(*r.method(), Method::GET | Method::HEAD));
     let mut attempt = 0;
+    let mut lost = 0;
     let mut next = req;
     loop {
         let spare = next.try_clone();
-        match check(next.send().await?).await {
+        let answer = match next.send().await {
+            Ok(answer) => answer,
+            Err(e) => {
+                let wait = reconnect_delay(lost, read && never_arrived(&e));
+                let (Some(wait), Some(again)) = (wait, spare) else {
+                    return Err(e.into());
+                };
+                sleep(wait).await;
+                lost += 1;
+                next = again;
+                continue;
+            }
+        };
+        match check(answer).await {
             Err(ClientError::RateLimited { retry_after }) => {
                 let wait = retry_delay(attempt, retry_after);
                 let (Some(wait), Some(again)) = (wait, spare) else {
@@ -842,6 +881,24 @@ async fn send_patiently(req: RequestBuilder) -> Result<reqwest::Response> {
             other => return other,
         }
     }
+}
+
+/// Whether a request failed on the way, before any answer. Not a timeout:
+/// waiting that long again helps nobody.
+fn never_arrived(e: &reqwest::Error) -> bool {
+    // The browser doesn't say why a fetch failed, only that the request did.
+    #[cfg(not(target_arch = "wasm32"))]
+    let on_the_way = e.is_connect() || e.is_request();
+    #[cfg(target_arch = "wasm32")]
+    let on_the_way = e.is_request();
+    on_the_way && !e.is_timeout() && e.status().is_none()
+}
+
+/// How long to wait before sending a request again after `lost` failures on
+/// the way, or `None` to give up. `resendable` says whether this request and
+/// this failure allow it at all.
+fn reconnect_delay(lost: usize, resendable: bool) -> Option<Duration> {
+    RECONNECT_WAITS.get(lost).copied().filter(|_| resendable)
 }
 
 /// How long to wait before retry number `attempt + 1`, or `None` to give
@@ -894,6 +951,8 @@ async fn check(resp: reqwest::Response) -> Result<reqwest::Response> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use super::*;
 
     #[test]
@@ -931,6 +990,113 @@ mod tests {
         assert_eq!(
             limited(Some(840)),
             "too many attempts, try again in 14 minutes"
+        );
+    }
+
+    #[test]
+    fn plans_reconnects() {
+        assert_eq!(reconnect_delay(0, true), Some(Duration::from_millis(300)));
+        assert_eq!(reconnect_delay(1, true), Some(Duration::from_secs(1)));
+        assert_eq!(reconnect_delay(2, true), None);
+        assert_eq!(reconnect_delay(usize::MAX, true), None);
+        // A write, or a failure that isn't the connection's.
+        assert_eq!(reconnect_delay(0, false), None);
+    }
+
+    /// Hangs up on the first `drops` connections without a word and answers
+    /// `response` on the ones after. Counts the connections.
+    async fn flaky(drops: usize, response: String) -> (String, std::sync::Arc<AtomicUsize>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let seen = std::sync::Arc::new(AtomicUsize::new(0));
+        let count = seen.clone();
+        tokio::spawn(async move {
+            loop {
+                let (mut sock, _) = listener.accept().await.unwrap();
+                let mut buf = [0u8; 4096];
+                let _ = sock.read(&mut buf).await.unwrap();
+                if count.fetch_add(1, Ordering::SeqCst) >= drops {
+                    sock.write_all(response.as_bytes()).await.unwrap();
+                    sock.shutdown().await.unwrap();
+                }
+            }
+        });
+        (url, seen)
+    }
+
+    #[tokio::test]
+    async fn a_read_that_never_arrived_is_sent_again() {
+        let (url, seen) = flaky(2, ok_info()).await;
+        let info = Client::new(&url).unwrap().info().await.unwrap();
+        assert_eq!(info.name, "StarBooru");
+        assert_eq!(seen.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn a_read_gives_up_after_two_more_tries() {
+        let (url, seen) = flaky(usize::MAX, String::new()).await;
+        let err = Client::new(&url).unwrap().info().await.unwrap_err();
+        assert!(matches!(err, ClientError::Http(_)));
+        assert_eq!(seen.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn a_write_is_never_sent_twice() {
+        let (url, seen) = flaky(1, ok_info()).await;
+        let err = Client::new(&url).unwrap().logout().await.unwrap_err();
+        assert!(matches!(err, ClientError::Http(_)));
+        assert_eq!(seen.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn nobody_listening_fails_at_once() {
+        // A port that was just free: refused, sent again twice, then an error.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        drop(listener);
+        let started = std::time::Instant::now();
+        let err = Client::new(&url).unwrap().info().await.unwrap_err();
+        assert!(matches!(err, ClientError::Http(_)));
+        assert!(started.elapsed() < CONNECT_TIMEOUT);
+    }
+
+    #[tokio::test]
+    async fn compressed_answers_are_read() {
+        use std::io::Write;
+        let info = ok_info();
+        let json = info.split("\r\n\r\n").nth(1).unwrap();
+        let mut packer = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        packer.write_all(json.as_bytes()).unwrap();
+        let mut gzip = packer.finish().unwrap();
+        let mut response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Encoding: gzip\r\nConnection: close\r\nContent-Length: {}\r\n\r\n",
+            gzip.len()
+        )
+        .into_bytes();
+        response.append(&mut gzip);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let n = sock.read(&mut buf).await.unwrap();
+            sock.write_all(&response).await.unwrap();
+            sock.shutdown().await.unwrap();
+            String::from_utf8_lossy(&buf[..n]).to_lowercase()
+        });
+        let got = Client::new(&url).unwrap().info().await.unwrap();
+        assert_eq!(got.name, "StarBooru");
+        let request = server.await.unwrap();
+        let accepts = request
+            .lines()
+            .find(|l| l.starts_with("accept-encoding:"))
+            .unwrap()
+            .to_owned();
+        assert!(
+            accepts.contains("gzip") && accepts.contains("br"),
+            "{accepts}"
         );
     }
 

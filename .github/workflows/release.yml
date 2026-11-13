@@ -32,6 +32,8 @@ jobs:
       - run: cargo install dioxus-cli@0.7.10 --locked
       - run: dx bundle --web --release -p starbooru-app --out-dir dist
       - run: cargo build --release --locked -p starbooru-server
+      # A .br and a .gz of each text file, which the server sends as they are.
+      - run: ./target/release/starbooru-server precompress dist/public
       - name: Pack
         run: |
           name="starbooru-server-${GITHUB_REF_NAME#v}-linux-x86_64"

@@ -6186,6 +6186,7 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "chrono",
+ "flate2",
  "futures-util",
  "gloo-timers",
  "reqwest 0.13.5",
@@ -6217,6 +6218,7 @@ dependencies = [
  "argon2",
  "axum",
  "base64 0.22.1",
+ "brotli",
  "chrono",
  "flate2",
  "hex",
@@ -6799,12 +6801,17 @@ version = "0.6.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4cfcf7e2740e6fc6d4d688b4ef00650406bb94adf4731e43c096c3a19fe40840"
 dependencies = [
+ "async-compression",
  "bitflags 2.13.2",
  "bytes",
+ "futures-core",
  "futures-util",
  "http",
  "http-body",
+ "http-body-util",
  "pin-project-lite",
+ "tokio",
+ "tokio-util",
  "tower",
  "tower-layer",
  "tower-service",

@@ -18,7 +18,9 @@ reqwest = { version = "0.13", default-features = false, features = ["json", "mul
 url = "2"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-reqwest = { version = "0.13", default-features = false, features = ["rustls", "http2", "charset"] }
+# gzip and brotli: without them the native apps ask for plain JSON, several times
+# the size. Browsers decompress by themselves.
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "http2", "charset", "gzip", "brotli"] }
 tokio = { version = "1", features = ["time", "fs", "io-util"] }
 rustls-pki-types = { version = "1", features = ["std"] }
 webpki = { package = "rustls-webpki", version = "0.103", default-features = false, features = ["alloc"] }
@@ -28,6 +30,7 @@ chrono = { workspace = true, features = ["wasmbind"] }
 gloo-timers = { version = "0.3", features = ["futures"] }
 
 [dev-dependencies]
+flate2 = "1"
 tokio = { version = "1", features = ["macros", "rt", "time", "net", "io-util"] }
 
 [lints]

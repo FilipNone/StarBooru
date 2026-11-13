@@ -26,6 +26,8 @@ hmac = "0.13"
 sha2 = "0.11"
 hex = "0.4"
 flate2 = "1"
+# The strongest setting, for `precompress`; tower-http brings the same crate.
+brotli = "9"
 tar = "0.4"
 whatlang = "0.18"
 rand = "0.10"
