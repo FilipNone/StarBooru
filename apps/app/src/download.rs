@@ -61,6 +61,12 @@ pub fn DownloadLink(path: String, name: String, label: String) -> Element {
     native::link(path, name, label)
 }
 
+/// Saves the signed `path` under `name` without a button, for a menu or a
+/// swipe. It goes on after whatever asked for it has closed.
+pub fn start(path: &str, name: &str) {
+    native::start(path, name);
+}
+
 #[cfg(feature = "desktop")]
 mod native {
     use std::path::PathBuf;
@@ -105,6 +111,13 @@ mod native {
         }
     }
 
+    pub fn start(path: &str, name: &str) {
+        let (path, name) = (path.to_owned(), name.to_owned());
+        dioxus::core::spawn_forever(async move {
+            notify(save_to_downloads(&path, &name).await);
+        });
+    }
+
     async fn save_to_downloads(path: &str, name: &str) -> String {
         let Some(client) = store::client() else {
             return t!("download-failed", reason = t!("not-signed-in"));
@@ -127,6 +140,26 @@ mod native {
 #[cfg(not(feature = "desktop"))]
 mod native {
     use super::*;
+
+    /// A link the page clicks for itself, as the browser (or Android's
+    /// download manager) saves a link's file.
+    pub fn start(path: &str, name: &str) {
+        let Some(href) = store::client().map(|c| c.absolute(path)) else {
+            return;
+        };
+        let eval = document::eval(
+            "const [href, name] = await dioxus.recv(); \
+             const a = document.createElement('a'); \
+             a.href = href; a.download = name; a.rel = 'noopener'; \
+             document.body.append(a); a.click(); a.remove(); return true;",
+        );
+        let name = name.to_owned();
+        dioxus::core::spawn_forever(async move {
+            if eval.send((href, name)).is_ok() {
+                let _ = eval.await;
+            }
+        });
+    }
 
     pub fn link(path: String, name: String, label: String) -> Element {
         let href = store::client()

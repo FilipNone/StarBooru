@@ -1,6 +1,6 @@
 //! The search cheat sheet: every term of the query language with examples
 //! that run a search, a box that explains a query as you type, and the
-//! viewer's keyboard shortcuts.
+//! viewer's keyboard shortcuts and gestures.
 
 use dioxus::prelude::*;
 use starbooru_core::filter::SizeField;
@@ -81,7 +81,7 @@ fn sections() -> [(String, Vec<(&'static str, String)>); 5] {
     ]
 }
 
-fn shortcuts() -> [(String, String); 8] {
+fn shortcuts() -> [(String, String); 13] {
     [
         ("← →".into(), t!("key-prev-next")),
         ("E".into(), t!("key-edit")),
@@ -91,6 +91,11 @@ fn shortcuts() -> [(String, String); 8] {
         ("Esc".into(), t!("key-escape")),
         (t!("key-double-click"), t!("key-double-click-action")),
         (t!("key-shift-click"), t!("key-shift-click-action")),
+        (t!("key-swipe"), t!("key-swipe-action")),
+        (t!("key-swipe-down"), t!("key-swipe-down-action")),
+        (t!("key-tap"), t!("key-tap-action")),
+        (t!("key-hold"), t!("key-hold-action")),
+        (t!("key-swipe-tile"), t!("key-swipe-tile-action")),
     ]
 }
 

@@ -38,6 +38,7 @@ pub enum Icon {
     RatioCustom,
     RatioFree,
     Redo,
+    Remove,
     Restore,
     RotateLeft,
     RotateRight,
@@ -160,6 +161,8 @@ impl Icon {
             Icon::Undo => Shape::Fill(
                 "M7.16 10.972A7 7 0 0 1 19.5 15.5a1.5 1.5 0 1 0 3 0c0-5.523-4.477-10-10-10a9.973 9.973 0 0 0-7.418 3.295L4.735 6.83a1.5 1.5 0 1 0-2.954.52l1.042 5.91c.069.391.29.74.617.968.403.282.934.345 1.385.202l5.644-.996a1.5 1.5 0 1 0-.52-2.954l-2.788.491z",
             ),
+            // Add without its upright.
+            Icon::Remove => Shape::EvenOdd("M5 10.5h14a1.5 1.5 0 0 1 0 3H5a1.5 1.5 0 0 1 0-3"),
             Icon::Redo => Shape::Fill(
                 "M16.84 10.972A7 7 0 0 0 4.5 15.5a1.5 1.5 0 0 1-3 0c0-5.523 4.477-10 10-10a9.972 9.972 0 0 1 7.418 3.295l.347-1.964a1.5 1.5 0 1 1 2.954.52l-1.042 5.91a1.5 1.5 0 0 1-.617.968 1.607 1.607 0 0 1-1.385.202l-5.644-.996a1.5 1.5 0 1 1 .52-2.954l2.788.491z",
             ),
@@ -265,7 +268,7 @@ pub fn Ico(icon: Icon, #[props(default = 24)] size: u32) -> Element {
 mod tests {
     use super::*;
 
-    const ALL: [Icon; 52] = [
+    const ALL: [Icon; 53] = [
         Icon::Add,
         Icon::ArrowBack,
         Icon::ArrowUp,
@@ -300,6 +303,7 @@ mod tests {
         Icon::RatioCustom,
         Icon::RatioFree,
         Icon::Redo,
+        Icon::Remove,
         Icon::Restore,
         Icon::RotateLeft,
         Icon::RotateRight,

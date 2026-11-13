@@ -5,8 +5,11 @@ use dioxus::prelude::*;
 use starbooru_client::ClientError;
 use starbooru_core::{PostTag, Role, SECTIONS, Tag, TagCategory, TagDetail, TagOrder, TagUpdate};
 
+use super::menu::{ActionMenu, MenuItem};
+use super::shell::notify;
 use super::{ErrorBanner, Spinner};
 use crate::Route;
+use crate::gesture::{MenuAt, Press, Target, use_press};
 use crate::icons::{Ico, Icon};
 use crate::store::{self, SESSION};
 
@@ -126,7 +129,7 @@ fn group_tags(tags: &[PostTag]) -> Vec<(Group, Vec<PostTag>)> {
 pub fn TagGroups(details: Vec<PostTag>, names: Vec<String>) -> Element {
     if details.is_empty() {
         return rsx! {
-            div { class: "chips",
+            div { class: "chips", "data-press": "tag",
                 for tag in names {
                     Link { key: "{tag}", class: "chip", to: Route::Gallery { q: tag.clone() }, "{tag}" }
                 }
@@ -143,7 +146,7 @@ pub fn TagGroups(details: Vec<PostTag>, names: Vec<String>) -> Element {
                     if headed {
                         h3 { "{group.label()}" }
                     }
-                    div { class: "chips",
+                    div { class: "chips", "data-press": "tag",
                         for tag in tags {
                             Link {
                                 key: "{tag.name}",
@@ -154,6 +157,149 @@ pub fn TagGroups(details: Vec<PostTag>, names: Vec<String>) -> Element {
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/// The words of a search, a quoted phrase (`text:"two words"`) staying one.
+fn words(q: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut start = None;
+    let mut quoted = false;
+    for (i, c) in q.char_indices() {
+        if c == '"' {
+            quoted = !quoted;
+        }
+        if c.is_whitespace() && !quoted {
+            if let Some(from) = start.take() {
+                out.extend(q.get(from..i));
+            }
+        } else if start.is_none() {
+            start = Some(i);
+        }
+    }
+    if let Some(from) = start {
+        out.extend(q.get(from..));
+    }
+    out
+}
+
+/// `q` with `name` left out, whether it was wanted or excluded, and then
+/// `word` at the end.
+fn with_word(q: &str, name: &str, word: &str) -> String {
+    let excluded = format!("-{name}");
+    let mut kept: Vec<&str> = words(q)
+        .into_iter()
+        .filter(|w| *w != name && *w != excluded)
+        .collect();
+    kept.push(word);
+    kept.join(" ")
+}
+
+/// The search narrowed to posts that also have `name`.
+fn include(q: &str, name: &str) -> String {
+    with_word(q, name, name)
+}
+
+/// The search without posts that have `name`.
+fn exclude(q: &str, name: &str) -> String {
+    with_word(q, name, &format!("-{name}"))
+}
+
+/// Copies `text` and says so. Where the page may not use the clipboard (plain
+/// http), the old way still works.
+fn copy_name(text: String) {
+    dioxus::core::spawn_forever(async move {
+        let eval = document::eval(
+            r#"
+            const text = await dioxus.recv();
+            try {
+              await navigator.clipboard.writeText(text);
+            } catch {
+              const field = document.createElement("textarea");
+              field.value = text;
+              field.style.position = "fixed";
+              field.style.opacity = "0";
+              document.body.append(field);
+              field.select();
+              const done = document.execCommand("copy");
+              field.remove();
+              if (!done) throw new Error("no clipboard");
+            }
+            return true;
+            "#,
+        );
+        if eval.send(text).is_ok() && eval.await.is_ok() {
+            notify(t!("tag-copied"));
+        }
+    });
+}
+
+/// The menu a held or right-clicked tag opens, on whatever page shows tags.
+/// `q` is the search the page belongs to, which a tag can narrow.
+#[component]
+pub fn TagPress(q: String) -> Element {
+    let mut menu = use_signal(|| None::<(String, MenuAt)>);
+    use_press(
+        "tag",
+        use_callback(move |press: Press| {
+            if let Press::Menu(Target::Tag(name), at) = press {
+                menu.set(Some((name, at)));
+            }
+        }),
+    );
+    let Some((name, at)) = menu() else {
+        return rsx! {};
+    };
+    let nav = navigator();
+    let close = move |_| menu.set(None);
+    let mut go = move |route: Route| {
+        menu.set(None);
+        nav.push(route);
+    };
+    let searching = !q.trim().is_empty();
+    let has = words(&q).contains(&name.as_str());
+    let narrowed = include(&q, &name);
+    let without = exclude(if searching { &q } else { "" }, &name);
+    let copied = name.clone();
+    rsx! {
+        ActionMenu { at, title: name.clone(), onclose: close,
+            MenuItem {
+                icon: Icon::Search,
+                label: t!("tag-menu-search"),
+                onclick: {
+                    let name = name.clone();
+                    move |_| go(Route::Gallery { q: name.clone() })
+                },
+            }
+            if searching && !has {
+                MenuItem {
+                    icon: Icon::Add,
+                    label: t!("tag-menu-add"),
+                    onclick: move |_| go(Route::Gallery { q: narrowed.clone() }),
+                }
+            }
+            MenuItem {
+                icon: Icon::Remove,
+                label: t!("tag-menu-exclude"),
+                onclick: move |_| go(Route::Gallery { q: without.clone() }),
+            }
+            MenuItem {
+                icon: Icon::Label,
+                label: t!("tag-menu-details"),
+                onclick: {
+                    let name = name.clone();
+                    move |_| go(Route::TagPage { name: name.clone() })
+                },
+            }
+            MenuItem {
+                icon: Icon::Copy,
+                label: t!("tag-menu-copy"),
+                onclick: move |_| {
+                    menu.set(None);
+                    copy_name(copied.clone());
+                },
             }
         }
     }
@@ -280,7 +426,7 @@ pub fn Tags() -> Element {
                 }
             }
             if !tags.read().is_empty() {
-                ul { class: "tag-list card",
+                ul { class: "tag-list card", "data-press": "tag",
                     for tag in tags.read().iter() {
                         li { key: "{tag.id}",
                             Link {
@@ -294,6 +440,7 @@ pub fn Tags() -> Element {
                     }
                 }
             }
+            TagPress { q: String::new() }
             if has_more() && error().is_none() {
                 div {
                     class: "sentinel",
@@ -674,6 +821,33 @@ fn RelationCard(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_quoted_phrase_is_one_word() {
+        assert_eq!(
+            words("  blue  text:\"two words\" -red "),
+            ["blue", "text:\"two words\"", "-red"]
+        );
+        assert!(words("").is_empty());
+        // A quote that never closes runs to the end.
+        assert_eq!(words("a \"b c"), ["a", "\"b c"]);
+    }
+
+    #[test]
+    fn a_tag_narrows_or_excludes_the_search() {
+        assert_eq!(include("", "sky"), "sky");
+        assert_eq!(include("blue order:new", "sky"), "blue order:new sky");
+        // Excluded before: now wanted.
+        assert_eq!(include("blue -sky", "sky"), "blue sky");
+        assert_eq!(exclude("blue sky", "sky"), "blue -sky");
+        assert_eq!(exclude("", "sky"), "-sky");
+        // Already excluded: once is enough.
+        assert_eq!(exclude("-sky blue", "sky"), "blue -sky");
+        // Inside a phrase, the word is the phrase's.
+        assert_eq!(exclude("text:\"a sky\"", "sky"), "text:\"a sky\" -sky");
+        // Only the whole word.
+        assert_eq!(include("skyline", "sky"), "skyline sky");
+    }
 
     fn tag(name: &str, category: TagCategory, section: Option<&str>) -> PostTag {
         PostTag {

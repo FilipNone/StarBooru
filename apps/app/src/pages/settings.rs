@@ -14,7 +14,7 @@ use crate::i18n::Lang;
 use crate::icons::{Ico, Icon};
 use crate::oidc::{self, Done};
 use crate::power;
-use crate::store::{self, Effects, Hand, PREFS, SESSION, Saver, Theme};
+use crate::store::{self, Effects, Hand, PREFS, SESSION, Saver, SwipeAction, Theme};
 use crate::system::{self, SYSTEM_HUE};
 use crate::util::{human_size, time_ago};
 
@@ -330,6 +330,8 @@ pub fn Settings() -> Element {
                 }
                 p { class: "muted hint", {t!("settings-flush-hint")} }
             }
+
+            GesturesCard {}
 
             if cache::AVAILABLE {
                 CacheCard {}
@@ -865,6 +867,51 @@ fn SessionRevoke(id: i64, disabled: bool, onrevoke: EventHandler<i64>) -> Elemen
 }
 
 /// Size and limit of the media cache, with a button to empty it.
+/// What swiping a thumbnail aside does, each way. Off until chosen, as a
+/// swipe that does something by surprise can't always be taken back.
+#[component]
+fn GesturesCard() -> Element {
+    let prefs = PREFS.read().clone();
+    let options = || {
+        SwipeAction::ALL
+            .into_iter()
+            .map(|a| Choice::new(a.as_str(), a.label()))
+            .collect::<Vec<_>>()
+    };
+    rsx! {
+        section { class: "card",
+            h2 { class: "card-title", {t!("settings-gestures")} }
+            p { class: "muted hint", {t!("settings-gestures-hint")} }
+            div { class: "field",
+                span { aria_hidden: "true", {t!("settings-swipe-left")} }
+                Select {
+                    aria_label: t!("settings-swipe-left"),
+                    value: prefs.swipe_left.as_str().to_owned(),
+                    options: options(),
+                    onchange: move |v: String| {
+                        if let Some(a) = SwipeAction::parse(&v) {
+                            PREFS.write().swipe_left = a;
+                        }
+                    },
+                }
+            }
+            div { class: "field",
+                span { aria_hidden: "true", {t!("settings-swipe-right")} }
+                Select {
+                    aria_label: t!("settings-swipe-right"),
+                    value: prefs.swipe_right.as_str().to_owned(),
+                    options: options(),
+                    onchange: move |v: String| {
+                        if let Some(a) = SwipeAction::parse(&v) {
+                            PREFS.write().swipe_right = a;
+                        }
+                    },
+                }
+            }
+        }
+    }
+}
+
 #[component]
 fn CacheCard() -> Element {
     let mut used = use_resource(|| async move { cache::size().await });

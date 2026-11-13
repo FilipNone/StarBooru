@@ -119,6 +119,60 @@ impl Effects {
     }
 }
 
+/// What swiping a gallery thumbnail sideways does. Off unless chosen in the
+/// settings, as a sideways swipe is easy to make by mistake.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SwipeAction {
+    Like,
+    Select,
+    Share,
+    Download,
+    Delete,
+    /// Also what an unknown value (from a newer version) reads as. Last, as
+    /// serde wants that one at the end.
+    #[default]
+    #[serde(other)]
+    Off,
+}
+
+impl SwipeAction {
+    pub const ALL: [SwipeAction; 6] = [
+        SwipeAction::Off,
+        SwipeAction::Like,
+        SwipeAction::Select,
+        SwipeAction::Share,
+        SwipeAction::Download,
+        SwipeAction::Delete,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SwipeAction::Off => "off",
+            SwipeAction::Like => "like",
+            SwipeAction::Select => "select",
+            SwipeAction::Share => "share",
+            SwipeAction::Download => "download",
+            SwipeAction::Delete => "delete",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<SwipeAction> {
+        Self::ALL.into_iter().find(|a| a.as_str() == s)
+    }
+
+    pub fn label(self) -> String {
+        match self {
+            SwipeAction::Off => t!("swipe-off"),
+            SwipeAction::Like => t!("swipe-like"),
+            SwipeAction::Select => t!("swipe-select"),
+            SwipeAction::Share => t!("share-button"),
+            SwipeAction::Download => t!("post-download"),
+            SwipeAction::Delete => t!("swipe-delete"),
+        }
+    }
+}
+
 /// The hand the one-handed controls are for: the tablet navigation rail,
 /// the viewer's panel and its tools go on that side.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -256,6 +310,10 @@ pub struct Prefs {
     /// The editor keeps the original post; otherwise it goes to the recycle
     /// bin once the edited copy is saved.
     pub keep_original: bool,
+    /// What swiping a gallery thumbnail to the left does.
+    pub swipe_left: SwipeAction,
+    /// What swiping a gallery thumbnail to the right does.
+    pub swipe_right: SwipeAction,
 }
 
 impl Default for Prefs {
@@ -278,6 +336,8 @@ impl Default for Prefs {
             gallery_columns: None,
             flush_tiles: false,
             keep_original: false,
+            swipe_left: SwipeAction::Off,
+            swipe_right: SwipeAction::Off,
         }
     }
 }
@@ -621,6 +681,31 @@ mod tests {
         // An unknown hand from a newer version falls back rather than failing.
         let prefs: Prefs = serde_json::from_str(r#"{"hand":"both","theme":"light"}"#).unwrap();
         assert_eq!((prefs.hand, prefs.theme), (Hand::Either, Theme::Light));
+    }
+
+    #[test]
+    fn swiping_a_thumbnail_does_nothing_until_chosen() {
+        let prefs: Prefs = serde_json::from_str(r#"{"theme":"dark"}"#).unwrap();
+        assert_eq!(
+            (prefs.swipe_left, prefs.swipe_right),
+            (SwipeAction::Off, SwipeAction::Off)
+        );
+        assert_eq!(Prefs::default().swipe_left, SwipeAction::Off);
+        let prefs: Prefs =
+            serde_json::from_str(r#"{"swipe_left":"delete","swipe_right":"like"}"#).unwrap();
+        assert_eq!(
+            (prefs.swipe_left, prefs.swipe_right),
+            (SwipeAction::Delete, SwipeAction::Like)
+        );
+        // An action from a newer version is off rather than a failed load.
+        let prefs: Prefs = serde_json::from_str(r#"{"swipe_left":"archive"}"#).unwrap();
+        assert_eq!(prefs.swipe_left, SwipeAction::Off);
+        for action in SwipeAction::ALL {
+            assert_eq!(SwipeAction::parse(action.as_str()), Some(action));
+            let json = serde_json::to_string(&action).unwrap();
+            assert_eq!(json, format!("\"{}\"", action.as_str()));
+        }
+        assert_eq!(SwipeAction::parse("nope"), None);
     }
 
     #[test]

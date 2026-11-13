@@ -1066,6 +1066,10 @@ button.thumb { width: 100%; padding: 0; border: 0; font: inherit; color: inherit
   --on-surface: oklch(0.96 0.01 var(--h)); --on-surface-2: oklch(0.86 0.015 var(--h));
 }
 .stage.full.zoomed { border-radius: 0; }
+/* A finger moving down at the top of the page pulls the picture (post.rs,
+   `STAGE`); further down it scrolls. In fullscreen every swipe is the viewer's. */
+html[data-sb-top] .stage:not(.zoomed, .full) { touch-action: pan-down; }
+.stage.full:not(.zoomed) { touch-action: none; }
 html:has(.stage.full) { overflow-y: hidden; }
 .stage.full img, .stage.full video { max-width: 100vw; box-shadow: none; }
 /* No known size: the box fills the display and the media fits inside it. */
@@ -1108,6 +1112,26 @@ html:has(.stage.full) { overflow-y: hidden; }
 .stage.full[data-rest] :is(.stage-prev, .stage-next, .stage-tools, .stage-translate:not(.busy)) { opacity: 0; pointer-events: none; }
 /* translated text over the image: same cell, box and zoom as the image */
 .stage > img, .stage > video, .stage > .panel-layer { grid-area: 1 / 1; }
+/* Swiped (post.rs, `STAGE`): the picture follows the finger, and shrinks as
+   it's pulled down while the rest of the viewer fades. `translate` and `scale`,
+   as the zoom has `transform`. */
+.stage > :is(#stage-img, video, .panel-layer) {
+  translate: var(--swipe-x, 0px) var(--swipe-y, 0px); scale: calc(1 - var(--pull, 0) * 0.25);
+}
+.post-layout[data-swipe="back"] .stage > :is(#stage-img, video, .panel-layer) {
+  transition: translate var(--med) var(--ease), scale var(--med) var(--ease), transform var(--fast) var(--ease);
+}
+.post-layout[data-swipe] :is(.post-bar, .post-main > .banner, .related, .post-layout > .side, .post-glow) {
+  opacity: calc(1 - var(--pull, 0));
+}
+.post-layout[data-swipe="back"] :is(.post-bar, .post-main > .banner, .related, .post-layout > .side, .post-glow) {
+  transition: opacity var(--med) var(--ease);
+}
+.post-layout[data-swipe] .stage:not(.full) :is(.stage-back, .stage-prev:not(:disabled), .stage-next:not(:disabled), .stage-tools, .stage-translate) {
+  opacity: calc(1 - var(--pull, 0) * 2);
+}
+/* The picture handed to the turn (motion.rs) is a copy now. */
+.stage > [data-gone] { visibility: hidden; }
 .panel-layer {
   position: relative; max-width: 100%; max-height: var(--fit-h); pointer-events: none;
   transform-origin: center; transition: transform var(--fast) var(--ease);
@@ -1479,9 +1503,11 @@ kbd { box-shadow: inset 0 -1px 0 var(--outline); white-space: nowrap; }
 @keyframes grow { from { transform: scaleY(0); } }
 @keyframes from-next { from { opacity: 0; transform: translateX(48px); } }
 @keyframes from-prev { from { opacity: 0; transform: translateX(-48px); } }
-/* `translate`, as the copy of a zoomed picture keeps its `transform`. */
-@keyframes to-next { 50% { opacity: 1; } to { opacity: 0; translate: -48px 0; } }
-@keyframes to-prev { 50% { opacity: 1; } to { opacity: 0; translate: 48px 0; } }
+/* `translate`, as the copy of a zoomed picture keeps its `transform`. A swipe
+   that let go of the picture part of the way leaves it there (`--past-x`), and
+   it carries on from that point. */
+@keyframes to-next { 50% { opacity: 1; } to { opacity: 0; translate: calc(var(--past-x, 0px) - 48px) 0; } }
+@keyframes to-prev { 50% { opacity: 1; } to { opacity: 0; translate: calc(var(--past-x, 0px) + 48px) 0; } }
 
 /* The picture flying between a tile and the viewer (motion.rs). Nothing it
    lands on may be moving, so the pages only fade. Rules that last as long as
@@ -1504,6 +1530,65 @@ html.sb-hero-back .page.gallery { animation: fade-in var(--med) var(--ease); }
 .hero-past .page { position: absolute; margin: 0; }
 .hero-past * { animation: none !important; transition: none !important; }
 @keyframes drift { to { transform: translate(4%, -3%) rotate(8deg); } }
+
+/* Held or right-clicked, a tile or a tag opens a menu (gesture.rs, menu.rs). */
+.thumb, [data-press] a { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+[data-press="tag"] a { -webkit-user-drag: none; }
+.thumb[data-pressing] .thumb-media, [data-press] a[data-pressing] { animation: hold 350ms var(--ease) 100ms both; }
+@keyframes hold { to { scale: 0.94; } }
+.press-backdrop { position: fixed; inset: 0; z-index: 60; }
+.press-menu {
+  position: fixed; z-index: 61; display: grid; align-content: start; gap: 2px; padding: 6px; overflow-y: auto; overscroll-behavior: contain;
+  border-radius: var(--radius-l); background: var(--surface); color: var(--on-surface);
+  border: 1px solid oklch(from var(--outline) l c h / 0.4); box-shadow: var(--shadow-2);
+  animation: menu-in var(--med) var(--ease-spring);
+}
+.press-menu-title {
+  padding: 8px 12px 6px; font-size: 13px; font-weight: 600; color: var(--on-surface-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.menu-item {
+  display: grid; grid-template-columns: 20px minmax(0, 1fr); align-items: center; gap: 12px;
+  min-height: 44px; padding: 0 12px; border: 0; border-radius: var(--radius-m); cursor: pointer; text-align: start;
+  background: transparent; color: var(--on-surface); font: inherit; font-size: 14px; font-weight: 600;
+  transition: background-color var(--fast) var(--ease);
+  animation: menu-item-in var(--med) var(--ease) both;
+}
+.menu-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.menu-item:nth-child(3) { animation-delay: 20ms; }
+.menu-item:nth-child(4) { animation-delay: 40ms; }
+.menu-item:nth-child(5) { animation-delay: 60ms; }
+.menu-item:nth-child(6) { animation-delay: 80ms; }
+.menu-item:nth-child(n + 7) { animation-delay: 100ms; }
+.menu-item.danger { color: var(--danger); }
+.menu-item:active { background: var(--primary-container); color: var(--on-primary-container); }
+.menu-item.danger:active { background: var(--danger-container); color: var(--on-danger-container); }
+.menu-item:focus-visible { outline-offset: -2px; }
+@media (hover: hover) {
+  .menu-item:hover { background: var(--glass-line); }
+  .menu-item.danger:hover { background: var(--danger-container); color: var(--on-danger-container); }
+}
+@keyframes menu-in { from { opacity: 0; scale: 0.6; } }
+@keyframes menu-item-in { from { opacity: 0; translate: 0 -6px; } }
+/* Swiping a tile aside uncovers what the swipe does, on the side it opens. */
+.thumb:has(> .swipe-hint) { touch-action: pan-y; }
+.swipe-hint {
+  position: absolute; top: 0; bottom: 0; width: 50%; display: grid; align-items: center; padding: 0 16px;
+  background: var(--primary-container); color: var(--on-primary-container); opacity: 0;
+}
+.swipe-hint[data-side="left"] { right: 0; justify-items: end; }
+.swipe-hint[data-side="right"] { left: 0; justify-items: start; }
+.swipe-hint[data-action="delete"] { background: var(--danger-container); color: var(--on-danger-container); }
+.thumb[data-swiping="left"] .swipe-hint[data-side="left"],
+.thumb[data-swiping="right"] .swipe-hint[data-side="right"],
+.thumb[data-swiping="back"] .swipe-hint { opacity: 1; }
+.swipe-hint .icon { transition: scale var(--fast) var(--ease-spring); }
+.thumb[data-armed] .swipe-hint .icon { scale: 1.3; }
+.thumb[data-swiping] .badge { opacity: 0; }
+.thumb[data-swiping="back"] .thumb-media { transition: translate var(--med) var(--ease); }
+/* Two fingers sideways on a touchpad are the tile's or the picture's, never
+   the browser's Back. */
+html:has(.masonry-box, .stage) { overscroll-behavior-x: none; }
 
 @media (prefers-reduced-motion: reduce) {
   .app *, .app *::before, .app *::after {

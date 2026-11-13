@@ -364,6 +364,8 @@ window.__sbTurn ??= {
   async hold() {
     clearTimeout(this.timer);
     this.timer = setTimeout(() => this.end(), 1200);
+    // Where a swipe let the picture go, so the copy carries on from there.
+    const at = window.__sbStage?.take() ?? null;
     // Nothing new has shown yet: what's held stays.
     if (this.since) return;
     const stage = document.querySelector(".stage");
@@ -373,7 +375,9 @@ window.__sbTurn ??= {
     this.since = performance.now();
     const el = document.getElementById("stage-img");
     if (!el) return;
+    if (at) el.dataset.gone = "";
     const copy = el.cloneNode(false);
+    copy.removeAttribute("data-gone");
     copy.removeAttribute("id");
     copy.removeAttribute("data-dioxus-id");
     copy.removeAttribute("data-turn");
@@ -387,6 +391,10 @@ window.__sbTurn ??= {
     copy.style.height = `${height}px`;
     copy.style.left = `calc(50% - ${width / 2}px)`;
     copy.style.top = `calc(50% - ${height / 2}px)`;
+    if (at) {
+      copy.style.translate = `${at.x}px 0`;
+      copy.style.setProperty("--past-x", `${at.x}px`);
+    }
     stage.prepend(copy);
     this.past = copy;
     // Paintable before the old picture goes.
@@ -438,6 +446,7 @@ window.__sbTurn ??= {
     this.past?.remove();
     this.past = null;
     this.since = 0;
+    for (const gone of document.querySelectorAll(".stage [data-gone]")) gone.removeAttribute("data-gone");
   },
 };
 "##;

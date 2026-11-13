@@ -11,18 +11,22 @@ use starbooru_core::{
     parse_query, with_color, with_exact, with_order,
 };
 
+use super::menu::{ActionMenu, MenuItem};
 use super::post::OPENING;
 use super::share::ShareSheet;
+use super::shell::{notify, notify_undo};
 use super::upload::DropToUpload;
 use super::{Choice, ColorPicker, CorrectionBanner, ErrorBanner, Select, Spinner};
 use crate::Route;
 use crate::activity;
 use crate::cache;
+use crate::download;
+use crate::gesture::{MenuAt, Press, Side, Target, use_press};
 use crate::icons::{Ico, Icon};
 use crate::layout::{self, Place, TILE_GAP};
 use crate::motion;
 use crate::power;
-use crate::store::{self, GalleryView, PREFS, Prefs, Spot};
+use crate::store::{self, GalleryView, PREFS, Prefs, Spot, SwipeAction};
 use crate::util::{escape_attr, format_duration, rating_label, split_tag_edit};
 
 const PAGE_SIZE: u32 = 60;
@@ -748,6 +752,103 @@ pub fn Gallery(q: String) -> Element {
         reload += 1;
     };
 
+    // What swiping a tile does, and the menu of one held or right-clicked.
+    let swipe = use_memo(|| {
+        let prefs = PREFS.read();
+        (prefs.swipe_left, prefs.swipe_right)
+    });
+    let mut menu = use_signal(|| None::<(Rc<Post>, MenuAt)>);
+    let mut sharing = use_signal(|| None::<i64>);
+    let find = move |id: i64| posts.peek().iter().find(|p| p.id == id).cloned();
+    let mut run = move |action: SwipeAction, post: Rc<Post>| {
+        let id = post.id;
+        match action {
+            SwipeAction::Off => {}
+            SwipeAction::Select => {
+                notice.set(None);
+                selecting.set(true);
+                let mut set = selected.write();
+                if !set.remove(&id) && set.len() < MAX_BULK_POSTS {
+                    set.insert(id);
+                }
+            }
+            SwipeAction::Share => sharing.set(Some(id)),
+            SwipeAction::Download => download::start(&post.file_url, &file_name(&post)),
+            SwipeAction::Like => {
+                let Some(client) = store::client() else {
+                    return;
+                };
+                let vote = if post.my_vote > 0 { 0 } else { 1 };
+                spawn(async move {
+                    match client.vote(id, vote).await {
+                        Ok(fresh) => {
+                            if let Some(slot) = posts.write().iter_mut().find(|p| p.id == id) {
+                                *slot = Rc::new(fresh);
+                            }
+                            keep();
+                            notify(if vote > 0 {
+                                t!("press-liked")
+                            } else {
+                                t!("press-unliked")
+                            });
+                        }
+                        Err(e) if e.is_unauthorized() => store::forget_session(),
+                        Err(e) => notify(e.to_string()),
+                    }
+                });
+            }
+            SwipeAction::Delete => {
+                let Some(client) = store::client() else {
+                    return;
+                };
+                spawn(async move {
+                    match client.delete_post(id).await {
+                        Ok(()) => {
+                            forget_post(id);
+                            posts.write().retain(|p| p.id != id);
+                            keep();
+                            notify_undo(t!("press-deleted"), t!("press-undo"), move || {
+                                let Some(client) = store::client() else {
+                                    return;
+                                };
+                                // From the notice, which outlives this page.
+                                dioxus::core::spawn_forever(async move {
+                                    match client.restore_post(id).await {
+                                        Ok(_) => {
+                                            forget_lists();
+                                            if let Ok(mut again) = reload.try_write() {
+                                                *again += 1;
+                                            }
+                                        }
+                                        Err(e) => notify(e.to_string()),
+                                    }
+                                });
+                            });
+                        }
+                        Err(e) if e.is_unauthorized() => store::forget_session(),
+                        Err(e) => notify(e.to_string()),
+                    }
+                });
+            }
+        }
+    };
+    let on_press = use_callback(move |press: Press| match press {
+        Press::Menu(Target::Post(id), at) => {
+            if let Some(post) = find(id) {
+                menu.set(Some((post, at)));
+            }
+        }
+        Press::Swipe(Target::Post(id), side) => {
+            let (left, right) = *swipe.peek();
+            let action = if side == Side::Left { left } else { right };
+            if let Some(post) = find(id) {
+                run(action, post);
+            }
+        }
+        _ => {}
+    });
+    use_press("post", on_press);
+
     // The user's saved searches; `None` until loaded.
     let mut saved = use_signal(|| {
         let owner = store::owner();
@@ -917,6 +1018,7 @@ pub fn Gallery(q: String) -> Element {
                             ontoggle: toggle,
                             place,
                             still: index < settled() || !in_sight(&place),
+                            swipe: swipe(),
                         }
                     }
                 }
@@ -940,6 +1042,21 @@ pub fn Gallery(q: String) -> Element {
             DropToUpload {}
         }
         ToTop { selecting: selecting() }
+        if let Some((post, at)) = menu() {
+            PostMenu {
+                post,
+                at,
+                q: q.clone(),
+                onpick: move |(action, post)| {
+                    menu.set(None);
+                    run(action, post);
+                },
+                onclose: move |()| menu.set(None),
+            }
+        }
+        if let Some(id) = sharing() {
+            ShareSheet { post_ids: vec![id], onclose: move |()| sharing.set(None) }
+        }
     }
 }
 
@@ -1479,6 +1596,73 @@ fn ViewMenu(width: f64, gap: f64) -> Element {
     }
 }
 
+/// What can be done with a post held or right-clicked in the grid.
+#[component]
+fn PostMenu(
+    post: Rc<Post>,
+    at: MenuAt,
+    q: String,
+    onpick: EventHandler<(SwipeAction, Rc<Post>)>,
+    onclose: EventHandler<()>,
+) -> Element {
+    let held = post.clone();
+    let pick = move |action: SwipeAction| {
+        let post = held.clone();
+        move |()| onpick.call((action, post.clone()))
+    };
+    let opened = post.clone();
+    let liked = post.my_vote > 0;
+    rsx! {
+        ActionMenu { at, title: t!("post-alt", id = post.id), onclose,
+            MenuItem {
+                icon: Icon::Fullscreen,
+                label: t!("press-open"),
+                onclick: move |()| {
+                    onclose.call(());
+                    open_post(&opened, q.clone());
+                },
+            }
+            MenuItem {
+                icon: Icon::ThumbUp,
+                label: if liked { t!("press-unlike") } else { t!("swipe-like") },
+                onclick: pick(SwipeAction::Like),
+            }
+            MenuItem { icon: Icon::Check, label: t!("swipe-select"), onclick: pick(SwipeAction::Select) }
+            MenuItem { icon: Icon::Share, label: t!("share-button"), onclick: pick(SwipeAction::Share) }
+            MenuItem { icon: Icon::Download, label: t!("post-download"), onclick: pick(SwipeAction::Download) }
+            MenuItem { icon: Icon::Delete, label: t!("post-delete-title"), danger: true, onclick: pick(SwipeAction::Delete) }
+        }
+    }
+}
+
+/// Opens a post from the grid, the picture flying from its tile.
+pub(super) fn open_post(post: &Post, q: String) {
+    *OPENING.write() = Some(post.clone());
+    let id = post.id;
+    let nav = navigator();
+    spawn(async move {
+        motion::open(id).await;
+        nav.push(Route::PostView { id, q });
+    });
+}
+
+fn swipe_icon(action: SwipeAction) -> Icon {
+    match action {
+        SwipeAction::Off => Icon::Close,
+        SwipeAction::Like => Icon::ThumbUp,
+        SwipeAction::Select => Icon::Check,
+        SwipeAction::Share => Icon::Share,
+        SwipeAction::Download => Icon::Download,
+        SwipeAction::Delete => Icon::Delete,
+    }
+}
+
+/// The name a post's file is saved under.
+fn file_name(post: &Post) -> String {
+    let ext = post.mime.rsplit('/').next().unwrap_or("bin");
+    format!("{}.{ext}", post.sha256)
+}
+
 /// A post in the grid. With `selected` set (selection mode), a click
 /// toggles it instead of opening it. Both modes render the same elements, so
 /// turning selection on doesn't load the thumbnails again. `place` is its
@@ -1494,6 +1678,9 @@ pub(super) fn Thumb(
     ontoggle: EventHandler<(usize, bool)>,
     place: Option<Place>,
     #[props(default)] still: bool,
+    /// What swiping it to the left and to the right does, in the gallery.
+    #[props(default)]
+    swipe: (SwipeAction, SwipeAction),
 ) -> Element {
     let still = use_hook(|| still);
     let client = store::client();
@@ -1546,15 +1733,7 @@ pub(super) fn Thumb(
         (None, false) => "thumb",
         (None, true) => "thumb still",
     };
-    let open = move || {
-        *OPENING.write() = Some(Post::clone(&post));
-        let nav = navigator();
-        let q = q.clone();
-        spawn(async move {
-            motion::open(id).await;
-            nav.push(Route::PostView { id, q });
-        });
-    };
+    let open = move || open_post(&post, q.clone());
     let picture = rsx! {
         if let Some(src) = src {
             // The gallery only puts tiles near the screen on the page.
@@ -1571,6 +1750,8 @@ pub(super) fn Thumb(
             aria_label: label,
             role: selected.map(|_| "button"),
             aria_pressed: selected.map(|on| on.to_string()),
+            // Held or right-clicked for its menu, and swiped (gesture.rs).
+            "data-press": "post:{id}",
             onclick: move |e: MouseEvent| {
                 if selected.is_some() {
                     e.prevent_default();
@@ -1587,6 +1768,14 @@ pub(super) fn Thumb(
                     ontoggle.call((index, e.modifiers().shift()));
                 }
             },
+            // Under the picture, which uncovers them as it's swiped aside.
+            for (side, action) in [("left", swipe.0), ("right", swipe.1)] {
+                if action != SwipeAction::Off {
+                    span { class: "swipe-hint", "data-side": side, "data-action": action.as_str(), aria_hidden: "true",
+                        Ico { icon: swipe_icon(action) }
+                    }
+                }
+            }
             if video {
                 // Only a video has a use for the pointer coming and going. These
                 // events don't bubble, so each tile that listens gets a listener

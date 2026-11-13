@@ -12,6 +12,7 @@ mod help;
 mod legal;
 mod library_import;
 mod login;
+mod menu;
 mod people;
 mod post;
 mod search_demo;

@@ -12,6 +12,7 @@ mod brand;
 mod brand_paths;
 mod cache;
 mod download;
+mod gesture;
 mod icons;
 mod layout;
 mod motion;

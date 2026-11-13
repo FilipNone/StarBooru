@@ -14,7 +14,7 @@ use super::gallery::{forget_lists, forget_post, tint};
 use super::people::People;
 use super::share::{ShareSheet, copy_text};
 use super::shell::{notify, notify_undo};
-use super::tags::TagGroups;
+use super::tags::{TagGroups, TagPress};
 use super::{ErrorBanner, Spinner};
 use crate::Route;
 use crate::cache;
@@ -34,7 +34,8 @@ use crate::zoom::{STEP, Zoom, wheel_factor};
 /// The wheel gets past the picture too: rolling down, or up from further down
 /// the page, moves the page, and `stopPropagation` keeps that from the zoom. One
 /// gesture stays one thing to its end, so a trackpad's coasting doesn't turn a
-/// scroll into a zoom when the page gets to the top.
+/// scroll into a zoom when the page gets to the top. Two fingers on a touchpad
+/// can also swipe the picture, as a finger does (`STAGE`).
 const KEY_LISTENER: &str = r#"
 const REST_ON = ['pointermove', 'pointerdown', 'keydown'];
 if (window.__sbKeys) window.removeEventListener('keydown', window.__sbKeys);
@@ -54,12 +55,19 @@ for (const type of REST_ON) window.addEventListener(type, window.__sbWake, { pas
 if (window.__sbWheel) window.removeEventListener('wheel', window.__sbWheel, true);
 let quiet = 0;
 let scrolls = false;
+let swipes = false;
 window.__sbWheel = (e) => {
   const stage = e.target.closest?.('.stage');
   if (!stage) return;
-  if (e.timeStamp > quiet) scrolls = !e.ctrlKey && !stage.matches('.full, .zoomed') && (e.deltaY > 0 || scrollY > 0);
+  if (e.timeStamp > quiet) {
+    swipes = !!window.__sbStage?.rollStarts(e, stage);
+    scrolls = !swipes && !e.ctrlKey && !stage.matches('.full, .zoomed') && (e.deltaY > 0 || scrollY > 0);
+  }
   quiet = e.timeStamp + 300;
-  if (scrolls) e.stopPropagation();
+  if (swipes) {
+    e.stopPropagation();
+    window.__sbStage?.rolls(e, stage);
+  } else if (scrolls) e.stopPropagation();
 };
 window.addEventListener('wheel', window.__sbWheel, { capture: true, passive: true });
 const keys = ['ArrowLeft', 'ArrowRight', 'Escape', 'f', '+', '=', '-', '0', 'e'];
@@ -77,7 +85,231 @@ window.__sbFs = () => { if (!document.fullscreenElement) dioxus.send('fullscreen
 document.addEventListener('fullscreenchange', window.__sbFs);
 "#;
 
+/// The viewer's swipes, by finger, mouse or two fingers on a touchpad, while
+/// the picture isn't zoomed (the zoom's own drag and pinch are the stage's, in
+/// Rust). The picture follows the finger as it goes, then:
+///
+/// - sideways, past `far` or flicked: `swipe-next` or `swipe-prev`. At either
+///   end it gives a little and no more. It stays where it was let go, for the
+///   turn to take it from there (`motion.rs`, `take`).
+/// - down, the same: `swipe-down`, to leave fullscreen or the post. It shrinks
+///   and the rest of the page fades as it comes down. Outside fullscreen only
+///   from the top of the page; further down, the page scrolls.
+/// - a tap on the picture: `tap`, for fullscreen. It waits to be sure it isn't
+///   the first of a double tap, which zooms.
+///
+/// Anything else and it goes back. Where it is lives in `--swipe-x`,
+/// `--swipe-y` and `--pull` on the post's layout, and `data-swipe` says how
+/// it moves: with the finger (`drag`), back (`back`) or away (`gone`).
+///
+/// `html[data-sb-top]` says the page is at its top, where a finger moving down
+/// on the picture is the viewer's and not the page's (`touch-action`).
+const STAGE: &str = r#"
+window.__sbStage?.off();
+window.__sbStage = (() => {
+  const send = (m) => dioxus.send(m);
+  let p = null, roll = null, tapping = 0, back = 0;
+  const host = (stage) => stage.closest('.post-layout') ?? stage;
+  const media = (stage) => stage.querySelector(':scope > #stage-img, :scope > video');
+  const atEnd = (stage, forward) => !!stage.querySelector(forward ? '.stage-next:disabled' : '.stage-prev:disabled');
+  const pullable = (stage) => stage.matches('.full') || scrollY <= 1;
+  const far = (stage) => Math.min(140, stage.clientWidth * 0.22);
+  const deep = (stage) => Math.min(160, stage.clientHeight * 0.18);
+  const top = () => document.documentElement.toggleAttribute('data-sb-top', scrollY <= 1);
+
+  const clear = (h) => {
+    clearTimeout(back);
+    h.removeAttribute('data-swipe');
+    for (const name of ['--swipe-x', '--swipe-y', '--pull']) h.style.removeProperty(name);
+  };
+  const show = (stage, x, y, how) => {
+    const h = host(stage);
+    clearTimeout(back);
+    h.dataset.swipe = how;
+    h.style.setProperty('--swipe-x', `${x.toFixed(1)}px`);
+    h.style.setProperty('--swipe-y', `${y.toFixed(1)}px`);
+    h.style.setProperty('--pull', Math.min(1, Math.max(0, y) / Math.max(1, stage.clientHeight * 0.5)).toFixed(3));
+    if (how === 'back') back = setTimeout(() => clear(h), 400);
+  };
+  const home = (stage) => show(stage, 0, 0, 'back');
+  // Gone the way it was swiped: it stays put for the turn, or goes back if
+  // nothing comes of it.
+  const went = (stage) => {
+    const h = host(stage);
+    h.dataset.swipe = 'gone';
+    clearTimeout(back);
+    back = setTimeout(() => {
+      if (h.isConnected && h.dataset.swipe === 'gone') home(stage);
+    }, 900);
+  };
+  const sideways = (stage, forward) => {
+    send(forward ? 'swipe-next' : 'swipe-prev');
+    went(stage);
+  };
+  const downwards = (stage) => {
+    send('swipe-down');
+    if (stage.matches('.full')) home(stage);
+    else went(stage);
+  };
+  const resist = (stage, dx) => (atEnd(stage, dx < 0) ? dx * 0.25 : dx);
+  const speed = (trail, i) => {
+    const last = trail[trail.length - 1];
+    const first = trail.find((s) => last[0] - s[0] <= 100) ?? last;
+    return last[0] > first[0] ? (last[i] - first[i]) / (last[0] - first[0]) : 0;
+  };
+
+  const down = (e) => {
+    const stage = e.target.closest?.('.stage');
+    if (!stage) return;
+    // A second finger: a pinch, for the zoom.
+    if (p) {
+      if (p.axis) home(p.stage);
+      p = null;
+      return;
+    }
+    if (e.button !== 0 || stage.matches('.zoomed')) return;
+    if (e.target.closest('button, a, input, textarea, select, .panel-block')) return;
+    const m = media(stage);
+    // A video's own controls are along its bottom.
+    if (m?.tagName === 'VIDEO') {
+      const r = m.getBoundingClientRect();
+      if (e.clientY > r.bottom - 64 && e.clientY <= r.bottom) return;
+    }
+    const second = !!tapping;
+    clearTimeout(tapping);
+    tapping = 0;
+    p = {
+      id: e.pointerId, stage, x0: e.clientX, y0: e.clientY, t0: e.timeStamp, axis: null,
+      dx: 0, dy: 0, trail: [[e.timeStamp, e.clientX, e.clientY]],
+      onPicture: m?.tagName === 'IMG' && e.target === m, second,
+    };
+  };
+  const move = (e) => {
+    if (!p || e.pointerId !== p.id) return;
+    const { stage } = p;
+    const dx = e.clientX - p.x0, dy = e.clientY - p.y0;
+    p.trail.push([e.timeStamp, e.clientX, e.clientY]);
+    if (p.trail.length > 8) p.trail.shift();
+    if (!p.axis) {
+      if (Math.hypot(dx, dy) < 10) return;
+      p.axis = stage.matches('.zoomed') ? null
+        : Math.abs(dx) > Math.abs(dy) ? 'x'
+        : dy > 0 && pullable(stage) ? 'y' : null;
+      if (!p.axis) {
+        p = null;
+        return;
+      }
+    }
+    p.dx = dx;
+    p.dy = dy;
+    if (p.axis === 'x') show(stage, resist(stage, dx), 0, 'drag');
+    else show(stage, dx * 0.5, dy > 0 ? dy : dy * 0.2, 'drag');
+  };
+  const up = (e) => {
+    if (!p || e.pointerId !== p.id) return;
+    const q = p;
+    p = null;
+    const { stage } = q;
+    if (!q.axis) {
+      if (q.second || !q.onPicture || e.timeStamp - q.t0 > 400 || stage.matches('.full, .zoomed')) return;
+      tapping = setTimeout(() => {
+        tapping = 0;
+        if (stage.isConnected && !stage.matches('.full, .zoomed')) send('tap');
+      }, 280);
+      return;
+    }
+    if (q.axis === 'x') {
+      const v = speed(q.trail, 1);
+      const forward = q.dx < 0;
+      const flung = Math.abs(v) > 0.5 && Math.sign(v) === Math.sign(q.dx) && Math.abs(q.dx) > 30;
+      if (!atEnd(stage, forward) && (Math.abs(q.dx) >= far(stage) || flung)) sideways(stage, forward);
+      else home(stage);
+    } else {
+      const v = speed(q.trail, 2);
+      if (q.dy >= deep(stage) || (v > 0.5 && q.dy > 40)) downwards(stage);
+      else home(stage);
+    }
+  };
+  const lost = (e) => {
+    if (!p || e.pointerId !== p.id) return;
+    if (p.axis) home(p.stage);
+    p = null;
+  };
+
+  const self = {
+    // The start of a wheel gesture: is it two fingers swiping on a touchpad?
+    // A mouse wheel's notch is bigger, or counted in lines.
+    rollStarts(e, stage) {
+      roll = null;
+      if (e.ctrlKey || e.deltaMode !== 0 || p || stage.matches('.zoomed')) return false;
+      const ax = Math.abs(e.deltaX), ay = Math.abs(e.deltaY);
+      if (Math.max(ax, ay) >= 40 || ax + ay === 0) return false;
+      if (ax > ay) roll = { axis: 'x', d: 0 };
+      else if (e.deltaY < 0 && pullable(stage)) roll = { axis: 'y', d: 0 };
+      return !!roll;
+    },
+    // Moves with the fingers until it's gone far enough, then goes.
+    rolls(e, stage) {
+      const r = roll;
+      if (!r || r.done) return;
+      clearTimeout(r.timer);
+      if (r.axis === 'x') {
+        r.d -= e.deltaX;
+        const forward = r.d < 0;
+        if (Math.abs(r.d) >= far(stage) && !atEnd(stage, forward)) {
+          r.done = true;
+          sideways(stage, forward);
+          return;
+        }
+        show(stage, resist(stage, r.d), 0, 'drag');
+      } else {
+        r.d = Math.max(0, r.d - e.deltaY);
+        if (r.d >= deep(stage)) {
+          r.done = true;
+          downwards(stage);
+          return;
+        }
+        show(stage, 0, r.d, 'drag');
+      }
+      r.timer = setTimeout(() => {
+        if (!r.done) home(stage);
+      }, 160);
+    },
+    // For the turn to the next post: where the picture was let go, with the
+    // stage made ready for the next one.
+    take() {
+      const h = document.querySelector('.post-layout[data-swipe]');
+      if (!h) return null;
+      const read = (name) => parseFloat(h.style.getPropertyValue(name)) || 0;
+      const at = { x: read('--swipe-x'), y: read('--swipe-y') };
+      clear(h);
+      return at.x || at.y ? at : null;
+    },
+    off() {
+      removeEventListener('pointerdown', down, true);
+      removeEventListener('pointermove', move, true);
+      removeEventListener('pointerup', up, true);
+      removeEventListener('pointercancel', lost, true);
+      removeEventListener('scroll', top);
+      clearTimeout(tapping);
+      document.documentElement.removeAttribute('data-sb-top');
+      const h = document.querySelector('.post-layout[data-swipe]');
+      if (h) clear(h);
+    },
+  };
+  addEventListener('pointerdown', down, { capture: true, passive: true });
+  addEventListener('pointermove', move, { capture: true, passive: true });
+  addEventListener('pointerup', up, { capture: true, passive: true });
+  addEventListener('pointercancel', lost, { capture: true, passive: true });
+  addEventListener('scroll', top, { passive: true });
+  top();
+  return self;
+})();
+"#;
+
 const KEY_LISTENER_OFF: &str = r#"
+window.__sbStage?.off();
+window.__sbStage = null;
 if (window.__sbKeys) window.removeEventListener('keydown', window.__sbKeys);
 if (window.__sbFs) document.removeEventListener('fullscreenchange', window.__sbFs);
 for (const type of ['pointermove', 'pointerdown', 'keydown']) if (window.__sbWake) window.removeEventListener(type, window.__sbWake);
@@ -400,12 +632,20 @@ pub fn PostView(id: i64, q: String) -> Element {
     };
 
     use_future(move || async move {
-        let mut keys = document::eval(KEY_LISTENER);
+        let mut keys = document::eval(&format!("{KEY_LISTENER}\n{STAGE}"));
         while let Ok(key) = keys.recv::<String>().await {
-            if editing() || media_editing() {
+            // The media editor covers the stage; the tag editor only the panel,
+            // so swipes still work while tags are being edited.
+            if media_editing() {
                 continue;
             }
             match key.as_str() {
+                "swipe-next" => press(true),
+                "swipe-prev" => press(false),
+                "swipe-down" if full() => set_full(false),
+                "swipe-down" => step_back(),
+                "tap" if !full() && !zoom().is_zoomed() => set_full(true),
+                _ if editing() => {}
                 "ArrowLeft" => press(false),
                 "ArrowRight" => press(true),
                 "f" => set_full(!full()),
@@ -530,6 +770,7 @@ pub fn PostView(id: i64, q: String) -> Element {
     rsx! {
         div { class: if full() { "page post-layout full-open" } else { "page post-layout" },
             PostGlow { thumb: thumb.clone() }
+            TagPress { q: current().1.clone() }
             div { class: "post-main",
                 Stage {
                     id: p.id,
@@ -1242,10 +1483,9 @@ pub fn RatingPicker(value: Rating, onchange: EventHandler<Rating>) -> Element {
     }
 }
 
-/// A pointer on the stage, for dragging, pinching and swiping.
+/// A pointer on the stage, for dragging and pinching.
 #[derive(Clone, Copy)]
 struct Touch {
-    start: ClientPoint,
     last: ClientPoint,
 }
 
@@ -1267,9 +1507,6 @@ fn from_centre(p: ClientPoint, rect: Option<PixelsRect>) -> (f64, f64) {
 fn size_of(rect: Option<PixelsRect>) -> (f64, f64) {
     rect.map_or((0.0, 0.0), |r| (r.width(), r.height()))
 }
-
-/// Swipe distance, in pixels, that turns the page.
-const SWIPE: f64 = 60.0;
 
 /// The URL the viewer shows: the sample when there is one, unless the
 /// original is wanted.
@@ -1738,7 +1975,7 @@ fn Stage(
                     return;
                 }
                 let p = e.client_coordinates();
-                touches.write().insert(e.pointer_id(), Touch { start: p, last: p });
+                touches.write().insert(e.pointer_id(), Touch { last: p });
                 settle();
                 spawn(async move {
                     measure().await;
@@ -1771,15 +2008,9 @@ fn Stage(
                 }
             },
             onpointerup: move |e| {
-                let ended = touches.write().remove(&e.pointer_id());
+                // Swipes that turn the page are the page's (`STAGE`).
+                touches.write().remove(&e.pointer_id());
                 settle();
-                let Some(t) = ended else {
-                    return;
-                };
-                let (dx, dy) = (t.last.x - t.start.x, t.last.y - t.start.y);
-                if touches.peek().is_empty() && !zoom().is_zoomed() && dx.abs() > SWIPE && dx.abs() > dy.abs() * 1.5 {
-                    onstep.call(dx < 0.0);
-                }
             },
             onpointercancel: move |e| {
                 touches.write().remove(&e.pointer_id());
