@@ -14,7 +14,7 @@ use crate::activity::{self, Item, JOBS, QUEUE, Source, Status};
 use crate::icons::{Ico, Icon};
 use crate::motion;
 use crate::store;
-use crate::util::{folder_tag, human_size, media_files, parse_urls};
+use crate::util::{drop_is_urls, drop_urls, folder_tag, human_size, media_files, parse_urls};
 
 /// What the file picker lists. Android opens its gallery for this. Elsewhere it
 /// would hide pictures with no extension and, on the desktop, every type but a
@@ -93,7 +93,11 @@ pub fn Upload() -> Element {
                 ondrop: move |e| {
                     e.prevent_default();
                     dragging.set(false);
-                    add(e.files(), false);
+                    let (files, urls) = dropped(&e);
+                    for url in urls {
+                        activity::add(Source::Url(url), String::new());
+                    }
+                    add(files, false);
                 },
                 Ico { icon: Icon::Upload, size: 40 }
                 strong { {t!("upload-drop")} }
@@ -239,6 +243,20 @@ fn SharedFields(#[props(default)] focus: bool) -> Element {
     }
 }
 
+/// What a drop carries: files, and the addresses of a link or a picture
+/// dragged out of a browser.
+fn dropped(e: &DragEvent) -> (Vec<FileData>, Vec<String>) {
+    let data = e.data_transfer();
+    let get = |kind: &str| data.get_data(kind).unwrap_or_default();
+    let urls = drop_urls(&get("text/uri-list"), &get("text/html"), &get("text/plain"));
+    let files = e.files();
+    if drop_is_urls(files.len(), &urls) {
+        (Vec::new(), urls)
+    } else {
+        (files, Vec::new())
+    }
+}
+
 /// Notices files dragged over the page. It's on the window, as the page doesn't
 /// fill it, and a file dropped outside would make a browser open that file.
 /// Pictures dragged off the page itself don't count.
@@ -272,14 +290,15 @@ window.__sbDrop = {
   },
 };
 "#;
-/// What a drag carrying files looks like. WebKitGTK lists files only by their
-/// addresses, and the stand-in events Dioxus makes on Windows list nothing. The
+/// What a drag worth taking looks like: files, or a link or a picture out of
+/// a browser, which come as an address. WebKitGTK lists files that way too,
+/// and the stand-in events Dioxus makes on Windows list nothing. The
 /// desktop's file paths come from the webview itself on the drop.
 #[cfg(feature = "desktop")]
 const FILE_DRAG: &str =
     r#"!types.length || types.includes("Files") || types.includes("text/uri-list")"#;
 #[cfg(not(feature = "desktop"))]
-const FILE_DRAG: &str = r#"types.includes("Files")"#;
+const FILE_DRAG: &str = r#"types.includes("Files") || types.includes("text/uri-list")"#;
 const WATCH_DROP_OFF: &str = "window.__sbDrop?.stop(); window.__sbDrop = null;";
 
 /// What's wrong with the tags of a batch, if anything: each file gets the shared
@@ -316,7 +335,7 @@ pub fn DropToUpload() -> Element {
         document::eval(WATCH_DROP_OFF);
     });
 
-    let mut take = move |files: Vec<FileData>| {
+    let mut take = move |(files, urls): (Vec<FileData>, Vec<String>)| {
         veil.set(false);
         if *closing.peek() || !store::can_upload() {
             return;
@@ -326,8 +345,17 @@ pub fn DropToUpload() -> Element {
             if skipped > 0 {
                 notify(t!("upload-skipped", count = skipped));
             }
-            if media.is_empty() || *closing.peek() {
+            if (media.is_empty() && urls.is_empty()) || *closing.peek() {
                 return;
+            }
+            for url in urls {
+                let known = QUEUE.peek().iter().any(|i| {
+                    keys.peek().contains(&i.key) && matches!(&i.source, Source::Url(u) if *u == url)
+                });
+                if !known {
+                    let key = activity::add(Source::Url(url), String::new());
+                    keys.write().push(key);
+                }
             }
             for file in media {
                 // The desktop keeps the last drag's paths, and hands them over again
@@ -413,7 +441,7 @@ pub fn DropToUpload() -> Element {
                 ondragover: move |e| e.prevent_default(),
                 ondrop: move |e| {
                     e.prevent_default();
-                    take(e.files());
+                    take(dropped(&e));
                 },
                 div { class: "drop-veil-card",
                     Ico { icon: Icon::Upload, size: 40 }
@@ -433,7 +461,7 @@ pub fn DropToUpload() -> Element {
                 ondragover: move |e| e.prevent_default(),
                 ondrop: move |e| {
                     e.prevent_default();
-                    take(e.files());
+                    take(dropped(&e));
                 },
                 div {
                     class: "card sheet upload-sheet",
@@ -614,10 +642,9 @@ mod tests {
     fn drags_from_the_webviews_count_as_files() {
         assert!(WATCH_DROP.contains("FILE_DRAG"));
         assert!(FILE_DRAG.contains(r#"types.includes("Files")"#));
-        #[cfg(feature = "desktop")]
+        // A link or a picture dragged out of a browser comes as an address.
         assert!(FILE_DRAG.contains("text/uri-list"));
-        // A link dragged in a browser isn't a file.
-        #[cfg(not(feature = "desktop"))]
-        assert!(!FILE_DRAG.contains("text/uri-list"));
+        // What is dragged from this page itself never counts.
+        assert!(WATCH_DROP.contains("return !own && (FILE_DRAG)"));
     }
 }

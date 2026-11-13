@@ -172,6 +172,63 @@ pub fn parse_urls(text: &str) -> Vec<String> {
     out
 }
 
+/// The address of the first picture in a piece of HTML, as a drag out of a
+/// browser carries it.
+fn img_src(html: &str) -> Option<String> {
+    let lower = html.to_ascii_lowercase();
+    let tag = lower.find("<img")?;
+    let end = tag + lower.get(tag..)?.find('>')?;
+    let attrs = html.get(tag..end)?;
+    let at = attrs.to_ascii_lowercase().find("src=")? + 4;
+    let value = attrs.get(at..)?.trim_start();
+    let src = match value.chars().next()? {
+        quote @ ('"' | '\'') => value.get(1..)?.split(quote).next()?,
+        _ => value.split_whitespace().next()?,
+    };
+    let src = src.trim().replace("&amp;", "&");
+    let src = match src.strip_prefix("//") {
+        Some(rest) => format!("https://{rest}"),
+        None => src,
+    };
+    parse_urls(&src).into_iter().next()
+}
+
+/// What to import for a link or a picture dragged out of a browser, from the
+/// forms a drop carries it in. A link to a post on a booru is kept, as the
+/// server finds the original and its tags from it; otherwise a dragged
+/// picture counts before the link around it.
+pub fn drop_urls(uri_list: &str, html: &str, text: &str) -> Vec<String> {
+    let listed: String = uri_list
+        .lines()
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut links = parse_urls(&listed);
+    if links.is_empty() {
+        links = parse_urls(text);
+    }
+    let is_post = |url: &String| starbooru_core::post_link(url, &[]).is_some();
+    match (links.as_slice(), img_src(html)) {
+        ([], Some(picture)) => vec![picture],
+        ([link], Some(picture)) if !is_post(link) => vec![picture],
+        _ => links,
+    }
+}
+
+/// Whether a drop is taken as addresses and not as files. A browser may hand
+/// over a copy of a dragged picture as a file; the address is better when it
+/// leads to the post, with its original and its tags. The desktop app lists
+/// the files of the last drag again when there are none, so there an address
+/// always wins.
+pub fn drop_is_urls(files: usize, urls: &[String]) -> bool {
+    !urls.is_empty()
+        && (files == 0
+            || cfg!(feature = "desktop")
+            || urls
+                .iter()
+                .any(|url| starbooru_core::post_link(url, &[]).is_some()))
+}
+
 /// Splits a bulk tag edit like `cat -dog` into tags to add and to remove.
 /// A tag in both lists is dropped from both, since the result is unclear.
 pub fn split_tag_edit(text: &str) -> (Vec<String>, Vec<String>) {
@@ -439,5 +496,58 @@ mod tests {
             ["https://a.example/1.png", "HTTP://b.example/2"]
         );
         assert!(parse_urls("").is_empty());
+    }
+
+    #[test]
+    fn reads_what_a_browser_drag_carries() {
+        let post = "https://gelbooru.com/index.php?page=post&s=view&id=15250239";
+        let thumb = "https://img3.gelbooru.com/thumbnails/aa/bb/thumbnail_x.jpg";
+        let wrapped =
+            format!(r#"<meta charset="utf-8"><a href="{post}"><img alt="x" src="{thumb}"></a>"#);
+        // A thumbnail in a list of posts: the post it links to.
+        assert_eq!(drop_urls(post, &wrapped, post), [post]);
+        // A picture inside any other link: the picture.
+        let wrapped =
+            format!("<a href='https://blog.example/p/1'><IMG SRC='{thumb}?a=1&amp;b=2' ></a>");
+        assert_eq!(
+            drop_urls("https://blog.example/p/1", &wrapped, ""),
+            [format!("{thumb}?a=1&b=2")]
+        );
+        // A bare picture, as Firefox and Chromium list it.
+        let alone = format!(r#"<img src="{thumb}" width="150">"#);
+        assert_eq!(
+            drop_urls(&format!("# a comment\r\n{thumb}\r\n"), &alone, thumb),
+            [thumb]
+        );
+        assert_eq!(
+            drop_urls("", "<img src=//cdn.example/a.png>", ""),
+            ["https://cdn.example/a.png"]
+        );
+        // A plain link, or just its text.
+        assert_eq!(
+            drop_urls("https://a.example/x.png", "", ""),
+            ["https://a.example/x.png"]
+        );
+        assert_eq!(
+            drop_urls("", "", " https://a.example/x.png "),
+            ["https://a.example/x.png"]
+        );
+        // Nothing to import: files from a file manager, text, a picture on this page.
+        assert!(drop_urls("file:///home/me/a.png", "", "").is_empty());
+        assert!(drop_urls("", "<p>hello</p>", "hello").is_empty());
+        assert!(drop_urls("", r#"<img src="data:image/png;base64,AA">"#, "").is_empty());
+        assert!(drop_urls("", "<img", "").is_empty());
+    }
+
+    #[test]
+    fn an_address_beats_a_file_only_when_it_leads_to_the_post() {
+        let post = ["https://danbooru.donmai.us/posts/1".to_owned()];
+        let other = ["https://blog.example/a.png".to_owned()];
+        assert!(drop_is_urls(0, &other));
+        assert!(drop_is_urls(1, &post));
+        assert!(!drop_is_urls(0, &[]));
+        assert!(!drop_is_urls(2, &[]));
+        // The desktop app's files may be left over from an earlier drag.
+        assert_eq!(drop_is_urls(1, &other), cfg!(feature = "desktop"));
     }
 }
