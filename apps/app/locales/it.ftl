@@ -432,9 +432,10 @@ upload-skipped =
        *[other] Saltati { $count } file che non sono immagini o video.
     }
 upload-urls-only = Inserisci indirizzi che iniziano con http:// o https://.
-upload-drop = Trascina qui immagini o video
+upload-drop = Trascina qui file o link
+upload-files = Scegli i file
+upload-link = Aggiungi un link
 upload-drop-now = Rilascia per caricare
-upload-or-choose = oppure fai clic per scegliere i file
 upload-folder = Scegli una cartella
 upload-folder-tags = Tagga i file con il nome della loro cartella
 upload-urls-placeholder = Incolla il link a un file o a un post di un booru
@@ -459,13 +460,9 @@ upload-file-tags-label = Tag per { $name }
 upload-unreadable = impossibile leggere il file: { $error }
 upload-ready = Il prossimo
 upload-remove = Rimuovi { $name }
-upload-device-hint = I caricamenti continuano mentre usi le altre pagine, ma si fermano se chiudi StarBooru.
-upload-jobs-title = Importazioni sul server
-upload-jobs-hint = Li scarica il tuo server, quindi finiscono anche se chiudi StarBooru.
 upload-done = Importato
 upload-job-running = In importazione
 upload-job-cancel = Annulla
-upload-jobs-clear = Togli i completati
 activity-signed-out = Non hai effettuato l'accesso.
 activity-pending =
     { $count ->
@@ -1100,7 +1097,6 @@ accent-system = Sfondo
 accent-system-hint = Segui i colori che Android prende dallo sfondo
 
 ## Booru browser
-boorus-open = Altri booru
 boorus-search = Cerca nei booru
 boorus-sites = Siti
 boorus-site = Sito

@@ -2137,3 +2137,63 @@ html:has(.editor) { overflow-y: hidden; }
 .booru-post .post-bar .pill { max-width: none; }
 .booru-also { display: flex; flex-wrap: wrap; gap: 4px 12px; }
 .meta a { overflow-wrap: anywhere; }
+
+/* Upload: the gallery's grid, with a tile for each file or address. */
+.page.upload.sending { padding-bottom: 112px; }
+.up-grid { margin-top: 8px; }
+.up-drop {
+  display: grid; place-content: center; justify-items: center; gap: 8px; aspect-ratio: 1; padding: 12px;
+  border: 2px dashed var(--outline); border-radius: var(--tile-radius); text-align: center;
+  color: var(--on-surface-2); background: var(--surface); cursor: pointer; font-size: 14px;
+  transition: border-color var(--med) var(--ease), background-color var(--med) var(--ease),
+    transform var(--med) var(--ease-spring);
+}
+.up-drop:hover, .up-drop.over { border-color: var(--primary); background: var(--primary-container); color: var(--on-primary-container); }
+.up-drop.over { transform: scale(1.03); }
+/* With nothing chosen yet, the drop tile is the page. */
+.up-grid.empty { display: block; }
+.up-grid.empty .up-drop { aspect-ratio: auto; min-height: min(52vh, 420px); border-radius: var(--radius-l); font-size: 16px; }
+/* A folder can bring thousands of tiles: only those near the screen are drawn,
+   and only the first screenful makes an entrance. */
+.up-tile { content-visibility: auto; contain-intrinsic-size: auto 168px; }
+.up-tile:nth-child(n + 40) { animation: none; }
+.up-face { align-content: center; justify-items: center; gap: 6px; padding: 12px; text-align: center; }
+.up-name {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden;
+  max-width: 100%; font-size: 12px; line-height: 1.3; overflow-wrap: anywhere;
+}
+.up-tile.busy .thumb-media, .up-tile.failed .thumb-media { filter: brightness(0.6); }
+/* Marks and buttons sit on pictures of any colour, like the gallery's badge. */
+.up-btn, .up-mark {
+  position: absolute; display: grid; place-items: center; width: 30px; height: 30px; padding: 0;
+  border: 0; border-radius: 999px; background: oklch(0 0 0 / 0.65); color: white;
+}
+.up-btn { cursor: pointer; transition: transform var(--fast) var(--ease-spring), background-color var(--fast) var(--ease); }
+.up-btn:hover { background: oklch(0 0 0 / 0.85); }
+.up-btn:active { transform: scale(0.88); }
+.up-x { top: 6px; right: 6px; }
+.up-tag { left: 6px; bottom: 6px; }
+.up-tag.on { background: var(--primary); color: var(--on-primary); }
+.up-mark { top: 6px; left: 6px; }
+.up-mark.ok { background: var(--primary); color: var(--on-primary); }
+.up-mark.bad { background: var(--danger); color: var(--on-primary); cursor: pointer; }
+.up-tags {
+  position: absolute; left: 42px; right: 6px; bottom: 6px; min-width: 0; height: 30px; padding: 0 12px;
+  border: 1px solid var(--outline); border-radius: 999px;
+  background: var(--surface); color: var(--on-surface); font: inherit; font-size: 13px;
+}
+.up-tags:focus { outline: none; border-color: var(--primary); }
+.up-progress { position: absolute; left: 8px; right: 8px; bottom: 8px; padding: 6px 10px; border-radius: 999px; background: oklch(0 0 0 / 0.65); }
+.up-progress .transfer { gap: 8px; }
+.up-progress .transfer-text { color: white; font-size: 12px; }
+.up-progress .meter { background: oklch(1 0 0 / 0.25); }
+/* The head's buttons keep together at the far side, as the gallery's do. */
+.page.upload .page-head { justify-content: flex-start; gap: 4px; }
+.page.upload .page-title { margin-right: auto; }
+@media (min-width: 761px) {
+  .up-bar .bulk-tags { flex: 3 1 220px; }
+}
+@media (max-width: 760px) {
+  .page.upload.sending { padding-bottom: 190px; }
+  .up-bar { padding: 8px; }
+}

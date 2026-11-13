@@ -432,9 +432,10 @@ upload-skipped =
        *[other] Skipped { $count } files that are not images or videos.
     }
 upload-urls-only = Enter addresses that start with http:// or https://.
-upload-drop = Drop images or videos here
+upload-drop = Drop files or links
+upload-files = Choose files
+upload-link = Add a link
 upload-drop-now = Drop to upload
-upload-or-choose = or click to choose files
 upload-folder = Choose a folder
 upload-folder-tags = Tag files with their folder name
 upload-urls-placeholder = Paste a link to a file or a booru post
@@ -459,13 +460,9 @@ upload-file-tags-label = Tags for { $name }
 upload-unreadable = cannot read file: { $error }
 upload-ready = Up next
 upload-remove = Remove { $name }
-upload-device-hint = Uploads keep going while you use other pages, but stop if you close StarBooru.
-upload-jobs-title = Importing on the server
-upload-jobs-hint = Your server downloads these itself, so they finish even if you close StarBooru.
 upload-done = Imported
 upload-job-running = Importing
 upload-job-cancel = Cancel
-upload-jobs-clear = Clear finished
 activity-signed-out = You're signed out.
 activity-pending =
     { $count ->
@@ -1092,7 +1089,6 @@ accent-system = Wallpaper
 accent-system-hint = Follow the colours Android takes from your wallpaper
 
 ## Booru browser
-boorus-open = Other boorus
 boorus-search = Search boorus
 boorus-sites = Sites
 boorus-site = Site

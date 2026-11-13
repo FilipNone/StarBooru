@@ -22,7 +22,7 @@ unic-langid = "0.9"
 sys-locale = "0.3"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-web-sys = { version = "0.3", features = ["Window", "Storage", "Location", "Blob", "File"] }
+web-sys = { version = "0.3", features = ["Window", "Storage", "Location", "Blob", "File", "Url"] }
 sys-locale = { version = "0.3", features = ["js"] }
 # The start of a chosen file, without reading the rest.
 js-sys = "0.3"

@@ -8,13 +8,15 @@ use starbooru_core::tag::TagError;
 use starbooru_core::{ImportJob, JobState, Rating, parse_tag_list};
 
 use super::post::RatingPicker;
-use super::{TransferBar, notify};
+use super::{Choice, Select, TransferBar, notify};
 use crate::Route;
 use crate::activity::{self, Item, JOBS, QUEUE, Source, Status};
 use crate::icons::{Ico, Icon};
 use crate::motion;
 use crate::store;
-use crate::util::{drop_is_urls, drop_urls, folder_tag, human_size, media_files, parse_urls};
+use crate::util::{
+    drop_is_urls, drop_urls, folder_tag, human_size, media_files, parse_urls, rating_label,
+};
 
 /// What the file picker lists. Android opens its gallery for this. Elsewhere it
 /// would hide pictures with no extension and, on the desktop, every type but a
@@ -29,13 +31,17 @@ const PICKER_ACCEPT: Option<&str> = if cfg!(target_os = "android") {
 static SHARED_TAGS: GlobalSignal<String> = Signal::global(String::new);
 static RATING: GlobalSignal<Rating> = Signal::global(Rating::default);
 
+/// How many tiles show a picture of their own file. A folder of thousands
+/// would otherwise decode every picture in it at once.
+const MAX_PREVIEWS: usize = 120;
+
 #[component]
 pub fn Upload() -> Element {
     let mut dragging = use_signal(|| false);
-    let folder_tags = use_signal(|| true);
+    let mut folder_tags = use_signal(|| true);
+    let mut linking = use_signal(|| false);
     let mut url_text = use_signal(String::new);
     let mut notice = use_signal(|| None::<String>);
-    let mut job_error = use_signal(|| None::<String>);
     // Hide URL import when the server has it off (shown while unknown).
     let url_import =
         use_resource(|| async move { store::server_info().await.is_none_or(|i| i.url_import) });
@@ -74,46 +80,26 @@ pub fn Upload() -> Element {
         .iter()
         .filter(|i| i.status == Status::Draft)
         .count();
-    let uploading = QUEUE
-        .read()
-        .iter()
-        .any(|i| matches!(i.status, Status::Ready(..) | Status::Uploading));
-    let any_finished = JOBS.read().iter().any(|j| !j.state.is_active());
+    let clearable = QUEUE.read().iter().any(|i| i.status != Status::Uploading)
+        || JOBS.read().iter().any(|j| !j.state.is_active());
     let show_url = url_import.read().unwrap_or(true);
+    let empty = QUEUE.read().is_empty() && JOBS.read().is_empty();
     rsx! {
-        div { class: "page narrow",
-            h1 { class: "page-title", {t!("nav-upload")} }
-            label {
-                class: if dragging() { "dropzone over" } else { "dropzone" },
-                ondragover: move |e| {
-                    e.prevent_default();
-                    dragging.set(true);
-                },
-                ondragleave: move |_| dragging.set(false),
-                ondrop: move |e| {
-                    e.prevent_default();
-                    dragging.set(false);
-                    let (files, urls) = dropped(&e);
-                    for url in urls {
-                        activity::add(Source::Url(url), String::new());
+        div { class: if drafts > 0 { "page upload sending" } else { "page upload" },
+            div { class: "page-head",
+                h1 { class: "page-title", {t!("nav-upload")} }
+                label { class: "icon-btn", title: t!("upload-files"), aria_label: t!("upload-files"),
+                    Ico { icon: Icon::Add }
+                    input {
+                        r#type: "file",
+                        multiple: true,
+                        accept: PICKER_ACCEPT,
+                        class: "visually-hidden",
+                        onchange: move |e| add(e.files(), false),
                     }
-                    add(files, false);
-                },
-                Ico { icon: Icon::Upload, size: 40 }
-                strong { {t!("upload-drop")} }
-                span { class: "muted", {t!("upload-or-choose")} }
-                input {
-                    r#type: "file",
-                    multiple: true,
-                    accept: PICKER_ACCEPT,
-                    class: "visually-hidden",
-                    onchange: move |e| add(e.files(), false),
                 }
-            }
-            div { class: "import-row",
-                label { class: "btn tonal",
+                label { class: "icon-btn", title: t!("upload-folder"), aria_label: t!("upload-folder"),
                     Ico { icon: Icon::Folder }
-                    {t!("upload-folder")}
                     input {
                         r#type: "file",
                         directory: true,
@@ -122,25 +108,45 @@ pub fn Upload() -> Element {
                         onchange: move |e| add(e.files(), true),
                     }
                 }
-                label { class: "check",
-                    input {
-                        r#type: "checkbox",
-                        checked: folder_tags(),
-                        onchange: move |e| {
-                            let mut folder_tags = folder_tags;
-                            folder_tags.set(e.checked());
-                        },
-                    }
-                    span { {t!("upload-folder-tags")} }
+                button {
+                    r#type: "button",
+                    class: if folder_tags() { "icon-btn on" } else { "icon-btn" },
+                    title: t!("upload-folder-tags"),
+                    aria_label: t!("upload-folder-tags"),
+                    aria_pressed: folder_tags(),
+                    onclick: move |_| folder_tags.toggle(),
+                    Ico { icon: Icon::Label }
                 }
                 if show_url {
-                    Link { class: "btn tonal", to: Route::Boorus { q: String::new(), s: String::new() },
-                        Ico { icon: Icon::Explore }
-                        {t!("boorus-open")}
+                    button {
+                        r#type: "button",
+                        class: if linking() { "icon-btn on" } else { "icon-btn" },
+                        title: t!("upload-link"),
+                        aria_label: t!("upload-link"),
+                        aria_expanded: linking(),
+                        onclick: move |_| linking.toggle(),
+                        Ico { icon: Icon::Link }
+                    }
+                }
+                if clearable {
+                    button {
+                        r#type: "button",
+                        class: "icon-btn",
+                        title: t!("upload-clear"),
+                        aria_label: t!("upload-clear"),
+                        onclick: move |_| {
+                            activity::clear();
+                            spawn(async move {
+                                if let Err(message) = activity::clear_jobs().await {
+                                    notice.set(Some(message));
+                                }
+                            });
+                        },
+                        Ico { icon: Icon::Delete }
                     }
                 }
             }
-            if show_url {
+            if linking() && show_url {
                 form {
                     class: "inline-add url-add",
                     onsubmit: move |e| {
@@ -152,11 +158,12 @@ pub fn Upload() -> Element {
                         placeholder: t!("upload-urls-placeholder"),
                         aria_label: t!("upload-urls-label"),
                         spellcheck: "false",
+                        autofocus: true,
                         value: "{url_text}",
                         oninput: move |e| url_text.set(e.value()),
                     }
                     button { class: "btn tonal", r#type: "submit", disabled: url_text().trim().is_empty(),
-                        Ico { icon: Icon::Link }
+                        Ico { icon: Icon::Add }
                         {t!("add")}
                     }
                 }
@@ -164,57 +171,73 @@ pub fn Upload() -> Element {
             if let Some(message) = notice() {
                 div { class: "banner info", role: "status", "{message}" }
             }
-            div { class: "card",
-                SharedFields {}
-                div { class: "row-end",
-                    button {
-                        class: "btn text",
-                        disabled: QUEUE.read().iter().all(|i| i.status == Status::Uploading),
-                        onclick: move |_| activity::clear(),
-                        {t!("upload-clear")}
+            div { class: if empty { "grid up-grid empty" } else { "grid up-grid" },
+                label {
+                    class: if dragging() { "up-drop over" } else { "up-drop" },
+                    title: t!("upload-files"),
+                    ondragover: move |e| {
+                        e.prevent_default();
+                        dragging.set(true);
+                    },
+                    ondragleave: move |_| dragging.set(false),
+                    ondrop: move |e| {
+                        e.prevent_default();
+                        dragging.set(false);
+                        let (files, urls) = dropped(&e);
+                        for url in urls {
+                            activity::add(Source::Url(url), String::new());
+                        }
+                        add(files, false);
+                    },
+                    Ico { icon: Icon::Upload, size: 40 }
+                    span { {t!("upload-drop")} }
+                    input {
+                        r#type: "file",
+                        multiple: true,
+                        accept: PICKER_ACCEPT,
+                        class: "visually-hidden",
+                        onchange: move |e| add(e.files(), false),
                     }
-                    button {
-                        class: "btn",
-                        disabled: drafts == 0,
-                        onclick: move |_| activity::start(&SHARED_TAGS.peek(), *RATING.peek()),
+                }
+                for (index, item) in QUEUE.read().iter().enumerate() {
+                    FileTile { key: "{item.key}", item: item.clone(), preview: index < MAX_PREVIEWS }
+                }
+                for (index, job) in JOBS.read().iter().enumerate() {
+                    JobTile { key: "job-{job.id}", job: job.clone(), preview: index < MAX_PREVIEWS }
+                }
+            }
+            if drafts > 0 {
+                form {
+                    class: "bulk-bar glass up-bar",
+                    aria_label: t!("nav-upload"),
+                    onsubmit: move |e| {
+                        e.prevent_default();
+                        activity::start(&SHARED_TAGS.peek(), *RATING.peek());
+                    },
+                    input {
+                        class: "bulk-tags",
+                        r#type: "text",
+                        placeholder: t!("upload-shared-tags"),
+                        aria_label: t!("upload-shared-tags"),
+                        autocapitalize: "none",
+                        spellcheck: false,
+                        value: "{SHARED_TAGS}",
+                        oninput: move |e| *SHARED_TAGS.write() = e.value(),
+                    }
+                    Select {
+                        class: "bulk-rating",
+                        aria_label: t!("rating"),
+                        value: RATING.read().as_str().to_string(),
+                        options: Rating::ALL.into_iter().map(|r| Choice::new(r.as_str(), rating_label(r))).collect::<Vec<_>>(),
+                        onchange: move |v: String| {
+                            if let Some(rating) = Rating::parse(&v) {
+                                *RATING.write() = rating;
+                            }
+                        },
+                    }
+                    button { class: "btn", r#type: "submit",
                         Ico { icon: Icon::Upload }
                         {t!("upload-start", count = drafts)}
-                    }
-                }
-            }
-            if uploading {
-                p { class: "muted upload-hint", {t!("upload-device-hint")} }
-            }
-            ul { class: "queue",
-                for item in QUEUE.read().iter() {
-                    QueueRow { key: "{item.key}", item: item.clone() }
-                }
-            }
-            if !JOBS.read().is_empty() {
-                section { class: "upload-jobs",
-                    div { class: "section-head",
-                        Ico { icon: Icon::Download }
-                        h2 { {t!("upload-jobs-title")} }
-                        if any_finished {
-                            button {
-                                class: "btn text",
-                                onclick: move |_| {
-                                    spawn(async move {
-                                        job_error.set(activity::clear_jobs().await.err());
-                                    });
-                                },
-                                {t!("upload-jobs-clear")}
-                            }
-                        }
-                    }
-                    p { class: "muted upload-hint", {t!("upload-jobs-hint")} }
-                    if let Some(message) = job_error() {
-                        div { class: "banner error", role: "alert", "{message}" }
-                    }
-                    ul { class: "queue",
-                        for job in JOBS.read().iter() {
-                            JobRow { key: "{job.id}", job: job.clone(), onerror: move |m| job_error.set(Some(m)) }
-                        }
                     }
                 }
             }
@@ -559,56 +582,242 @@ fn QueueRow(item: Item) -> Element {
     }
 }
 
-/// One address the server is importing, or has.
+/// An address for showing a chosen file before it is uploaded. Only the web
+/// app has one: a webview isn't given the file itself.
+#[cfg(target_arch = "wasm32")]
+fn object_url(file: &FileData) -> Option<String> {
+    let file = file.inner().downcast_ref::<web_sys::File>()?;
+    web_sys::Url::create_object_url_with_blob(file).ok()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn object_url(_file: &FileData) -> Option<String> {
+    None
+}
+
+/// Lets the browser forget a file it was shown by `object_url`.
+fn release_url(url: &str) {
+    #[cfg(target_arch = "wasm32")]
+    let _ = web_sys::Url::revoke_object_url(url);
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = url;
+}
+
+/// Whether an address ends like a picture's, so it can stand as its own
+/// preview. A link to a page can't.
+fn is_picture_url(url: &str) -> bool {
+    let path = url.split(['?', '#']).next().unwrap_or_default();
+    let ext = path
+        .rsplit('.')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    matches!(
+        ext.as_str(),
+        "jpg" | "jpeg" | "png" | "gif" | "webp" | "avif" | "bmp"
+    )
+}
+
+/// The site an address is on, as a tile's caption: `gelbooru.com`.
+fn host_of(url: &str) -> String {
+    let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
+    let host = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    host.trim_start_matches("www.").to_owned()
+}
+
+/// What a tile shows of its file: the picture when there is one to show, or
+/// an icon with a few words.
 #[component]
-fn JobRow(job: ImportJob, onerror: EventHandler<String>) -> Element {
-    let id = job.id;
-    let name = job.source.clone().unwrap_or_else(|| job.url.clone());
-    let tags = job.tags.join(" ");
-    let when = job
-        .created_at
-        .with_timezone(&chrono::Local)
-        .format("%H:%M")
-        .to_string();
+fn TileFace(src: Option<String>, icon: Icon, caption: String) -> Element {
+    // A file the browser can't draw (a video, an odd format) falls back.
+    let mut broken = use_signal(|| false);
     rsx! {
-        li { class: "queue-item",
-            div { class: "queue-main",
-                div { class: "queue-name",
-                    strong { title: "{job.url}", "{name}" }
-                    span { class: "muted", "{when}" }
+        div { class: "thumb-media",
+            if let Some(src) = src.filter(|_| !broken()) {
+                img {
+                    src,
+                    alt: "",
+                    loading: "lazy",
+                    decoding: "async",
+                    "referrerpolicy": "no-referrer",
+                    onerror: move |_| broken.set(true),
                 }
-                match (job.state, job.post_id) {
-                    (JobState::Queued, _) => rsx! { span { class: "pill", {t!("upload-queued")} } },
-                    (JobState::Running, _) => rsx! { span { class: "pill busy", {t!("upload-job-running")} } },
-                    (JobState::Done, Some(post)) => rsx! {
-                        Link { class: "pill ok", to: Route::PostView { id: post, q: String::new() }, {t!("post-number", id = post.to_string())} }
-                    },
-                    (JobState::Done, None) => rsx! { span { class: "pill ok", {t!("upload-done")} } },
-                    (JobState::Duplicate, _) => rsx! { span { class: "pill", {t!("boorus-known")} } },
-                    (JobState::Failed, _) => rsx! { span { class: "pill bad", {t!("upload-failed")} } },
+            } else {
+                div { class: "thumb-placeholder up-face",
+                    Ico { icon, size: 32 }
+                    span { class: "up-name", "{caption}" }
                 }
-                if job.state == JobState::Queued {
-                    button {
-                        class: "btn text small",
-                        onclick: move |_| {
-                            spawn(async move {
-                                if let Err(m) = activity::cancel(id).await {
-                                    onerror.call(m);
-                                }
-                            });
+            }
+        }
+    }
+}
+
+/// One file or address waiting to go, on its way, or done.
+#[component]
+fn FileTile(item: Item, preview: bool) -> Element {
+    let key = item.key;
+    let name = item.name();
+    let source = item.source.clone();
+    // Made once, and given back when the tile goes.
+    let shown = use_hook(|| match (&source, preview) {
+        (Source::File(file), true) => object_url(file).map(|url| (url, true)),
+        (Source::Url(url), true) if is_picture_url(url) => Some((url.clone(), false)),
+        _ => None,
+    });
+    let held = shown.clone();
+    use_drop(move || {
+        if let Some((url, true)) = &held {
+            release_url(url);
+        }
+    });
+    let mut tagging = use_signal(|| false);
+    let (icon, caption) = match &item.source {
+        Source::File(file) => (
+            Icon::Gallery,
+            format!("{name} · {}", human_size(file.size() as i64)),
+        ),
+        Source::Url(url) => (Icon::Link, host_of(url)),
+    };
+    let face = rsx! { TileFace { src: shown.map(|(url, _)| url), icon, caption } };
+    if let Status::Done(id) = item.status {
+        return rsx! {
+            Link { class: "thumb up-tile done", title: "{name}", to: Route::PostView { id, q: String::new() },
+                {face}
+                span { class: "up-mark ok", aria_label: t!("upload-done"), Ico { icon: Icon::Check, size: 18 } }
+            }
+        };
+    }
+    let removable = matches!(item.status, Status::Draft | Status::Ready(..));
+    let tagged = !item.tags.trim().is_empty();
+    rsx! {
+        div {
+            class: match &item.status {
+                Status::Failed(_) => "thumb up-tile failed",
+                Status::Uploading => "thumb up-tile busy",
+                _ => "thumb up-tile",
+            },
+            title: "{name}",
+            {face}
+            if removable {
+                button {
+                    r#type: "button",
+                    class: "up-btn up-x",
+                    aria_label: t!("upload-remove", name = name.clone()),
+                    title: t!("upload-remove", name = name.clone()),
+                    onclick: move |_| activity::remove(key),
+                    Ico { icon: Icon::Close, size: 18 }
+                }
+            }
+            if item.status == Status::Draft {
+                button {
+                    r#type: "button",
+                    class: if tagged || tagging() { "up-btn up-tag on" } else { "up-btn up-tag" },
+                    aria_label: t!("upload-file-tags-label", name = name.clone()),
+                    title: if tagged { item.tags.clone() } else { t!("upload-file-tags-placeholder") },
+                    aria_expanded: tagging(),
+                    onclick: move |_| tagging.toggle(),
+                    Ico { icon: Icon::Label, size: 18 }
+                }
+                if tagging() {
+                    input {
+                        class: "up-tags",
+                        placeholder: t!("upload-file-tags-placeholder"),
+                        aria_label: t!("upload-file-tags-label", name = name.clone()),
+                        spellcheck: "false",
+                        autocapitalize: "none",
+                        autofocus: true,
+                        value: "{item.tags}",
+                        oninput: move |e| activity::set_tags(key, e.value()),
+                        onkeydown: move |e: KeyboardEvent| {
+                            if matches!(e.key(), Key::Enter | Key::Escape) {
+                                e.prevent_default();
+                                tagging.set(false);
+                            }
                         },
-                        {t!("upload-job-cancel")}
                     }
                 }
             }
-            if job.state == JobState::Running {
-                TransferBar { progress: job.progress }
+            if item.status == Status::Uploading {
+                div { class: "up-progress",
+                    TransferBar { progress: item.progress.filter(|_| matches!(item.source, Source::File(_))) }
+                }
             }
-            if let Some(msg) = job.error.as_ref().filter(|_| job.state != JobState::Done) {
-                p { class: if job.state == JobState::Failed { "queue-error" } else { "queue-note" }, "{msg}" }
+            if let Status::Failed(message) = &item.status {
+                FailMark { message: message.clone() }
             }
-            if !tags.is_empty() {
-                span { class: "queue-tags muted", Ico { icon: Icon::Label, size: 18 } "{tags}" }
+        }
+    }
+}
+
+/// The mark on a tile that failed. Its reason shows on hover, and in a notice
+/// when pressed, as a finger has no hover.
+#[component]
+fn FailMark(message: String) -> Element {
+    let said = message.clone();
+    rsx! {
+        button {
+            r#type: "button",
+            class: "up-mark bad",
+            title: "{message}",
+            aria_label: "{message}",
+            onclick: move |_| notify(said.clone()),
+            Ico { icon: Icon::Close, size: 18 }
+        }
+    }
+}
+
+/// One address the server is importing, or has.
+#[component]
+fn JobTile(job: ImportJob, preview: bool) -> Element {
+    let id = job.id;
+    let name = job.source.clone().unwrap_or_else(|| job.url.clone());
+    let src = (preview && is_picture_url(&job.url)).then(|| job.url.clone());
+    let face = rsx! { TileFace { src, icon: Icon::Link, caption: host_of(&name) } };
+    if let (JobState::Done, Some(post)) = (job.state, job.post_id) {
+        return rsx! {
+            Link { class: "thumb up-tile done", title: "{name}", to: Route::PostView { id: post, q: String::new() },
+                {face}
+                span { class: "up-mark ok", aria_label: t!("upload-done"), Ico { icon: Icon::Check, size: 18 } }
+            }
+        };
+    }
+    let note = job.error.clone().unwrap_or_default();
+    rsx! {
+        div {
+            class: match job.state {
+                JobState::Failed => "thumb up-tile failed",
+                JobState::Running => "thumb up-tile busy",
+                _ => "thumb up-tile",
+            },
+            title: if note.is_empty() { name.clone() } else { format!("{name}\n{note}") },
+            {face}
+            match job.state {
+                JobState::Queued => rsx! {
+                    button {
+                        r#type: "button",
+                        class: "up-btn up-x",
+                        aria_label: t!("upload-job-cancel"),
+                        title: t!("upload-job-cancel"),
+                        onclick: move |_| {
+                            spawn(async move {
+                                if let Err(message) = activity::cancel(id).await {
+                                    notify(message);
+                                }
+                            });
+                        },
+                        Ico { icon: Icon::Close, size: 18 }
+                    }
+                },
+                JobState::Running => rsx! {
+                    div { class: "up-progress", TransferBar { progress: job.progress } }
+                },
+                JobState::Done => rsx! {
+                    span { class: "up-mark ok", aria_label: t!("upload-done"), Ico { icon: Icon::Check, size: 18 } }
+                },
+                JobState::Duplicate => rsx! {
+                    span { class: "up-mark", title: "{note}", aria_label: t!("boorus-known"), Ico { icon: Icon::History, size: 18 } }
+                },
+                JobState::Failed => rsx! { FailMark { message: note.clone() } },
             }
         }
     }
@@ -624,6 +833,34 @@ mod tests {
         // them far below the screen.
         let css = include_str!("../../assets/main.css");
         assert!(css.contains(".queue-item:nth-child(n + 30) { animation: none; }"));
+    }
+
+    #[test]
+    fn a_long_list_of_tiles_draws_only_what_is_near() {
+        let css = include_str!("../../assets/main.css");
+        assert!(css.contains(".up-tile { content-visibility: auto;"));
+        assert!(css.contains(".up-tile:nth-child(n + 40) { animation: none; }"));
+        assert!(MAX_PREVIEWS <= 200);
+    }
+
+    #[test]
+    fn only_a_pictures_address_stands_as_its_own_preview() {
+        assert!(is_picture_url("https://cdn.example/a/b.JPG?x=1"));
+        assert!(is_picture_url("https://cdn.example/a.webp#top"));
+        for other in [
+            "https://gelbooru.com/index.php?page=post&s=view&id=7",
+            "https://cdn.example/a.mp4",
+            "https://cdn.example/folder.png/",
+            "",
+        ] {
+            assert!(!is_picture_url(other), "{other}");
+        }
+        assert_eq!(
+            host_of("https://www.gelbooru.com/index.php?page=post"),
+            "gelbooru.com"
+        );
+        assert_eq!(host_of("http://127.0.0.1:8192/a.png"), "127.0.0.1:8192");
+        assert_eq!(host_of("not an address"), "not an address");
     }
 
     #[test]
