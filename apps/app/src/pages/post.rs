@@ -286,7 +286,8 @@ pub fn PostView(id: i64, q: String) -> Element {
     let neighbors = use_resource(move || async move {
         let (id, q) = current();
         let client = store::client()?;
-        Some((id, client.neighbors(id, &q).await.ok()))
+        let seed = super::gallery::seed(&q);
+        Some((id, client.neighbors(id, &q, seed).await.ok()))
     });
     let links = move || {
         (*neighbors.read())

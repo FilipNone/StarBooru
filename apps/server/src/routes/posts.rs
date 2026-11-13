@@ -355,6 +355,38 @@ fn sort_column(key: SortKey) -> Option<&'static str> {
     }
 }
 
+/// What a search sorts by before the id, as SQL. A seeded shuffle needs its
+/// seed bound, so it isn't a plain string.
+#[derive(Clone, Copy)]
+enum SortExpr {
+    Sql(&'static str),
+    /// `order:random` with a seed: the same shuffle for the same seed, so
+    /// pages don't overlap and the viewer can step through it.
+    Shuffle(i64),
+}
+
+impl SortExpr {
+    fn push(self, qb: &mut QueryBuilder<Postgres>) {
+        match self {
+            Self::Sql(sql) => {
+                qb.push(sql);
+            }
+            Self::Shuffle(seed) => {
+                qb.push("hashint8extended(p.id, ").push_bind(seed).push(")");
+            }
+        }
+    }
+}
+
+/// The sort expression for a search, if it sorts by more than the id.
+/// `order:random` without a seed has none: it is sorted by `random()`.
+fn sort_expr(key: SortKey, seed: Option<i64>) -> Option<SortExpr> {
+    match key {
+        SortKey::Random => seed.map(SortExpr::Shuffle),
+        _ => sort_column(key).map(SortExpr::Sql),
+    }
+}
+
 /// A size term's column, in the term's unit. These match the indexes of
 /// migrations 0002 and 0024.
 fn size_column(field: SizeField) -> &'static str {
@@ -479,9 +511,11 @@ pub struct SearchParams {
     q: String,
     page: Option<u32>,
     limit: Option<u32>,
+    /// Shuffles `order:random` the same way every time this is given.
+    seed: Option<i64>,
 }
 
-/// `GET /posts?q=&page=&limit=`. Query language: `starbooru_core::query`.
+/// `GET /posts?q=&page=&limit=&seed=`. Query language: `starbooru_core::query`.
 pub async fn search(
     State(state): State<AppState>,
     user: AuthUser,
@@ -507,7 +541,7 @@ pub async fn search(
 
     let mut qb = select_page(user.id);
     push_filters(&mut qb, &query, &tags);
-    if query.order.key == SortKey::Random {
+    if query.order.key == SortKey::Random && params.seed.is_none() {
         qb.push(" ORDER BY random()");
     } else {
         let dir = if query.order.descending {
@@ -516,8 +550,9 @@ pub async fn search(
             " ASC"
         };
         qb.push(" ORDER BY ");
-        if let Some(column) = sort_column(query.order.key) {
-            qb.push(column).push(dir);
+        if let Some(column) = sort_expr(query.order.key, params.seed) {
+            column.push(&mut qb);
+            qb.push(dir);
             if matches!(query.order.key, SortKey::Pixels | SortKey::LongSide) {
                 qb.push(" NULLS LAST");
             }
@@ -548,26 +583,27 @@ pub async fn search(
 pub struct NeighborParams {
     #[serde(default)]
     q: String,
+    /// The seed the search was shuffled with, for `order:random`.
+    seed: Option<i64>,
 }
 
 /// The sort expression used to step from one post to the next. Unlike
-/// `sort_column` it is never NULL, so row comparisons work: posts without
+/// `sort_expr` it is never NULL, so row comparisons work: posts without
 /// dimensions sort last either way, as in `search`.
-fn step_column(key: SortKey, descending: bool) -> Option<&'static str> {
-    match (key, descending) {
-        (SortKey::Pixels, true) => Some("COALESCE(p.width::bigint * p.height, -1)"),
-        (SortKey::Pixels, false) => {
-            Some("COALESCE(p.width::bigint * p.height, 9223372036854775807)")
-        }
-        (SortKey::LongSide, true) => Some("COALESCE(GREATEST(p.width, p.height), -1)"),
-        (SortKey::LongSide, false) => Some("COALESCE(GREATEST(p.width, p.height), 2147483647)"),
-        _ => sort_column(key),
-    }
+fn step_column(key: SortKey, descending: bool, seed: Option<i64>) -> Option<SortExpr> {
+    let sql = match (key, descending) {
+        (SortKey::Pixels, true) => "COALESCE(p.width::bigint * p.height, -1)",
+        (SortKey::Pixels, false) => "COALESCE(p.width::bigint * p.height, 9223372036854775807)",
+        (SortKey::LongSide, true) => "COALESCE(GREATEST(p.width, p.height), -1)",
+        (SortKey::LongSide, false) => "COALESCE(GREATEST(p.width, p.height), 2147483647)",
+        _ => return sort_expr(key, seed),
+    };
+    Some(SortExpr::Sql(sql))
 }
 
-/// `GET /posts/{id}/neighbors?q=`: the posts just before and after `id` in
-/// the results of search `q`, for previous/next in the viewer. A random
-/// order has no neighbours.
+/// `GET /posts/{id}/neighbors?q=&seed=`: the posts just before and after
+/// `id` in the results of search `q`, for previous/next in the viewer.
+/// `order:random` has neighbours only with the seed its search was given.
 pub async fn neighbors(
     State(state): State<AppState>,
     _user: AuthUser,
@@ -579,14 +615,14 @@ pub async fn neighbors(
         prev: None,
         next: None,
     };
-    if query.order.key == SortKey::Random {
+    if query.order.key == SortKey::Random && params.seed.is_none() {
         return Ok(Json(none));
     }
     let (query, _) = correct_typos(&state, query).await?;
     let Some(tags) = tag_filter(&state, &query).await? else {
         return Ok(Json(none));
     };
-    let column = step_column(query.order.key, query.order.descending);
+    let column = step_column(query.order.key, query.order.descending, params.seed);
 
     let step = |forward: bool| {
         // Forward follows the gallery order; backward reverses it.
@@ -601,19 +637,15 @@ pub async fn neighbors(
         qb.push(" AND p.id <> ").push_bind(id).push(" AND ");
         match column {
             Some(c) => {
-                qb.push("(")
-                    .push(c)
-                    .push(", p.id)")
-                    .push(op)
-                    .push("(SELECT ")
-                    .push(c)
-                    .push(", p.id FROM posts p WHERE p.id = ")
+                qb.push("(");
+                c.push(&mut qb);
+                qb.push(", p.id)").push(op).push("(SELECT ");
+                c.push(&mut qb);
+                qb.push(", p.id FROM posts p WHERE p.id = ")
                     .push_bind(id)
-                    .push(") ORDER BY ")
-                    .push(c)
-                    .push(dir)
-                    .push(", p.id")
-                    .push(dir);
+                    .push(") ORDER BY ");
+                c.push(&mut qb);
+                qb.push(dir).push(", p.id").push(dir);
             }
             None => {
                 qb.push("p.id")
@@ -2737,6 +2769,25 @@ mod tests {
         let mut random = order_of(&app, &t, "order:random").await;
         random.sort_unstable();
         assert_eq!(random.len(), 3);
+        // A seed shuffles the same way each time, and pages carry on from
+        // each other.
+        let seeded = order_of(&app, &t, "order:random&seed=42").await;
+        assert_eq!(order_of(&app, &t, "order:random&seed=42").await, seeded);
+        let mut paged = Vec::new();
+        for page in 1..=3 {
+            let q = format!("order:random&seed=42&limit=1&page={page}");
+            paged.extend(order_of(&app, &t, &q).await);
+        }
+        assert_eq!(paged, seeded);
+        let mut sorted = seeded.clone();
+        sorted.sort_unstable();
+        assert_eq!(sorted, random);
+        // Another seed, another order.
+        let mut orders = std::collections::HashSet::new();
+        for seed in 0..8 {
+            orders.insert(order_of(&app, &t, &format!("order:random&seed={seed}")).await);
+        }
+        assert!(orders.len() > 1);
         let r = app.get("/api/v1/posts?q=order:sideways", &t).await;
         assert_eq!(r.status, axum::http::StatusCode::BAD_REQUEST);
         app.finish().await;
@@ -2778,6 +2829,8 @@ mod tests {
             "order:updated_asc",
             "a",
             "a+-c+order:size",
+            "order:random&seed=42",
+            "a+order:random&seed=-7",
         ] {
             let expected = order_of(&app, &t, q).await;
             assert!(!expected.is_empty(), "{q}");

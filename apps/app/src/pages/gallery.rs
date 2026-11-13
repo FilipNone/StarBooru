@@ -143,6 +143,8 @@ struct List {
     has_more: bool,
     corrected: Vec<TagCorrection>,
     loaded_at: DateTime<Utc>,
+    /// What `order:random` was shuffled with, so the list stays as it was.
+    seed: Option<i64>,
 }
 
 static LISTS: GlobalSignal<Vec<List>> = Signal::global(Vec::new);
@@ -192,6 +194,49 @@ const MAX_RESTORE: usize = 100_000;
 /// `order:random` comes out different each time, so it has no spot to go back to.
 fn is_random(q: &str) -> bool {
     parse_query(q).is_ok_and(|p| p.order.key == SortKey::Random)
+}
+
+/// The seed each `order:random` search was last shuffled with. The viewer
+/// sends the same one, so previous and next follow the order the gallery shows.
+static SEEDS: GlobalSignal<Vec<(String, i64)>> = Signal::global(Vec::new);
+const MAX_SEEDS: usize = 16;
+
+/// The seed to shuffle search `q` with, picking one the first time. `None`
+/// unless `q` is `order:random`.
+pub(super) fn seed(q: &str) -> Option<i64> {
+    if !is_random(q) {
+        return None;
+    }
+    let known = SEEDS.peek().iter().find(|(k, _)| k == q).map(|(_, s)| *s);
+    Some(known.unwrap_or_else(|| reseed(q)))
+}
+
+/// A new shuffle for search `q`.
+fn reseed(q: &str) -> i64 {
+    let seed = new_seed();
+    remember_seed(q, seed);
+    seed
+}
+
+fn remember_seed(q: &str, seed: i64) {
+    let mut seeds = SEEDS.write();
+    seeds.retain(|(k, _)| k != q);
+    seeds.insert(0, (q.to_owned(), seed));
+    seeds.truncate(MAX_SEEDS);
+}
+
+/// A seed that differs from the last one. The clock is enough: it only has to
+/// shuffle differently, not be hard to guess. Mixed (splitmix64) so seeds a
+/// moment apart don't come out alike.
+fn new_seed() -> i64 {
+    static COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let count = COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let nanos = Utc::now().timestamp_nanos_opt().unwrap_or_default();
+    let mut x = u64::from_ne_bytes(nanos.to_ne_bytes()) ^ count.rotate_left(32);
+    x = x.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    x = (x ^ (x >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    x = (x ^ (x >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    i64::from_ne_bytes((x ^ (x >> 31)).to_ne_bytes())
 }
 
 /// The first page as it is now, followed by the rest of what was loaded. `None`
@@ -413,6 +458,7 @@ pub fn Gallery(q: String) -> Element {
             has_more: *has_more.peek(),
             corrected: corrected.peek().clone(),
             loaded_at: *loaded_at.peek(),
+            seed: seed(&query.peek()),
         });
     };
 
@@ -428,7 +474,7 @@ pub fn Gallery(q: String) -> Element {
         let q = query.peek().clone();
         loading.set(true);
         spawn(async move {
-            let result = client.search_posts(&q, page, PAGE_SIZE).await;
+            let result = client.search_posts(&q, seed(&q), page, PAGE_SIZE).await;
             if *generation.peek() != generation_at_start {
                 return;
             }
@@ -476,7 +522,7 @@ pub fn Gallery(q: String) -> Element {
             while more && found.len() < wanted {
                 let at = (page - 1) / RESTORE_PAGES + 1;
                 let result = client
-                    .search_posts(&spot.q, at, PAGE_SIZE * RESTORE_PAGES)
+                    .search_posts(&spot.q, seed(&spot.q), at, PAGE_SIZE * RESTORE_PAGES)
                     .await;
                 if *generation.peek() != generation_at_start {
                     return;
@@ -524,7 +570,7 @@ pub fn Gallery(q: String) -> Element {
         };
         let generation_at_start = *generation.peek();
         spawn(async move {
-            let Ok(found) = client.search_posts(&q, 1, PAGE_SIZE).await else {
+            let Ok(found) = client.search_posts(&q, None, 1, PAGE_SIZE).await else {
                 return;
             };
             if *generation.peek() != generation_at_start {
@@ -555,6 +601,9 @@ pub fn Gallery(q: String) -> Element {
         loading.set(false);
         error.set(None);
         if let Some(list) = cached_list(&q) {
+            if let Some(seed) = list.seed {
+                remember_seed(&q, seed);
+            }
             settled.set(list.posts.len());
             near.set(near_spot(&list.posts, store::spot(&q).as_ref()));
             posts.set(list.posts);
@@ -572,6 +621,10 @@ pub fn Gallery(q: String) -> Element {
         next_page.set(1);
         has_more.set(true);
         loaded_at.set(Utc::now());
+        // A search run again is shuffled again.
+        if is_random(&q) {
+            reseed(&q);
+        }
         match store::spot(&q).filter(|s| s.y >= 1.0 && s.count > 0 && !is_random(&q)) {
             Some(spot) => restore(spot),
             None => load_more(),
@@ -1777,6 +1830,15 @@ mod tests {
         assert!(!is_random("cat"));
         assert!(!is_random("order:new"));
         assert!(!is_random("order:nonsense"));
+    }
+
+    #[test]
+    fn only_a_random_order_is_shuffled() {
+        // Other orders never get a seed, so the server sorts them as asked.
+        assert_eq!(seed("cat"), None);
+        assert_eq!(seed("order:score"), None);
+        let seeds: HashSet<i64> = (0..100).map(|_| new_seed()).collect();
+        assert_eq!(seeds.len(), 100);
     }
 
     #[test]

@@ -69,7 +69,7 @@ pub fn Explore(q: String) -> Element {
         let query = shuffle_query.clone();
         shuffling.set(true);
         spawn(async move {
-            if let Ok(page) = client.search_posts(&query, 1, RANDOM_COUNT).await {
+            if let Ok(page) = client.search_posts(&query, None, 1, RANDOM_COUNT).await {
                 shuffled.set(Some(page.posts));
             }
             shuffling.set(false);

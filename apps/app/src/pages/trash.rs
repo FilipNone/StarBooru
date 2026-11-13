@@ -33,7 +33,9 @@ pub fn Trash() -> Element {
         let page = *next_page.peek();
         loading.set(true);
         spawn(async move {
-            let result = client.search_posts("status:deleted", page, PAGE_SIZE).await;
+            let result = client
+                .search_posts("status:deleted", None, page, PAGE_SIZE)
+                .await;
             loading.set(false);
             match result {
                 Ok(found) => {

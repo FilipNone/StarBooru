@@ -525,12 +525,23 @@ impl Client {
         Self::send_empty(self.request(Method::DELETE, &path)?).await
     }
 
-    pub async fn search_posts(&self, query: &str, page: u32, limit: u32) -> Result<PostPage> {
-        let req = self.request(Method::GET, "/posts")?.query(&[
+    /// One page of the results of search `query`. A `seed` shuffles
+    /// `order:random` the same way on every page; other orders ignore it.
+    pub async fn search_posts(
+        &self,
+        query: &str,
+        seed: Option<i64>,
+        page: u32,
+        limit: u32,
+    ) -> Result<PostPage> {
+        let mut req = self.request(Method::GET, "/posts")?.query(&[
             ("q", query.to_owned()),
             ("page", page.to_string()),
             ("limit", limit.to_string()),
         ]);
+        if let Some(seed) = seed {
+            req = req.query(&[("seed", seed)]);
+        }
         Self::send(req).await
     }
 
@@ -538,11 +549,15 @@ impl Client {
         Self::send(self.request(Method::GET, &format!("/posts/{id}"))?).await
     }
 
-    /// The posts before and after `id` in the results of search `query`.
-    pub async fn neighbors(&self, id: i64, query: &str) -> Result<Neighbors> {
-        let req = self
+    /// The posts before and after `id` in the results of search `query`,
+    /// shuffled with `seed` for `order:random`.
+    pub async fn neighbors(&self, id: i64, query: &str, seed: Option<i64>) -> Result<Neighbors> {
+        let mut req = self
             .request(Method::GET, &format!("/posts/{id}/neighbors"))?
             .query(&[("q", query)]);
+        if let Some(seed) = seed {
+            req = req.query(&[("seed", seed)]);
+        }
         Self::send(req).await
     }
 
