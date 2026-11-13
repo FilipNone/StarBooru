@@ -5,12 +5,16 @@
 
 use chrono::{TimeDelta, Utc};
 use starbooru_core::tag::MAX_TAGS_PER_POST;
-use starbooru_core::{ImportRequest, PostRef, RemotePost, post_link};
+use starbooru_core::{
+    BooruApi, ImportRequest, PostRef, RemotePost, TagCategory, post_link, split_category,
+};
 use url::Url;
 
 use super::accounts::Accounts;
 use super::pace::{self, BUSY_WAIT_SECS, Pace};
-use super::{base_url, html, parse, post_url};
+use super::{
+    Account, TAG_KINDS_PER_CALL, base_url, html, parse, parse_tag_kinds, post_url, tag_kinds_url,
+};
 use crate::error::{AppError, AppResult};
 use crate::fetch::{FetchError, Fetcher, Watch};
 
@@ -58,9 +62,105 @@ pub async fn find(
         }
         return Ok(Lookup::Refused(Some(answer.status)));
     }
-    Ok(parse(link.api, &base, &answer.body)
-        .and_then(|(posts, _)| posts.into_iter().next())
-        .map_or(Lookup::Unknown, |post| Lookup::Found(Box::new(post))))
+    let Some(mut post) =
+        parse(link.api, &base, &answer.body).and_then(|(posts, _)| posts.into_iter().next())
+    else {
+        return Ok(Lookup::Unknown);
+    };
+    if link.api == BooruApi::Gelbooru && post.groups.is_empty() {
+        sort_tags(pace, fetcher, &base, account, &mut post).await?;
+    }
+    Ok(Lookup::Found(Box::new(post)))
+}
+
+/// The most requests made to sort one post's tags: three hundred tags' worth.
+const MAX_KIND_CALLS: usize = 3;
+
+/// What kind each of `names` is on a Gelbooru, for the ones that aren't
+/// general. Its posts list their tags without saying which is the artist or
+/// a character; its tag list says, a hundred names a request, and only with
+/// an account. A fork that doesn't answer gives nothing; only a busy site is
+/// an error.
+async fn tag_kinds(
+    pace: &Pace,
+    fetcher: &Fetcher,
+    base: &Url,
+    account: Account<'_>,
+    names: &[String],
+) -> AppResult<Vec<(TagCategory, String)>> {
+    let mut kinds = Vec::new();
+    if account.is_none() {
+        return Ok(kinds);
+    }
+    for names in names.chunks(TAG_KINDS_PER_CALL).take(MAX_KIND_CALLS) {
+        let Some(url) = tag_kinds_url(base, names, account) else {
+            break;
+        };
+        match pace::ask(pace, fetcher, BooruApi::Gelbooru, &url).await {
+            Ok(answer) if answer.is_success() => kinds.extend(parse_tag_kinds(&answer.body)),
+            Err(busy @ AppError::TooManyRequests { .. }) => return Err(busy),
+            _ => break,
+        }
+    }
+    Ok(kinds)
+}
+
+/// Files a Gelbooru post's tags under their categories.
+async fn sort_tags(
+    pace: &Pace,
+    fetcher: &Fetcher,
+    base: &Url,
+    account: Account<'_>,
+    post: &mut RemotePost,
+) -> AppResult<()> {
+    for (category, name) in tag_kinds(pace, fetcher, base, account, &post.tags).await? {
+        if post.tags.contains(&name) {
+            post.groups.put(category, &name);
+        }
+    }
+    Ok(())
+}
+
+/// Gives the tags of an import from a Gelbooru search their category
+/// prefixes. A search there says nothing of categories, so a result picked
+/// from one comes with plain tags; with the user's account the site is asked
+/// before the import. Tags that already carry a prefix are the user's own
+/// and stay as they are.
+async fn sort_import_tags(
+    pace: &Pace,
+    fetcher: &Fetcher,
+    accounts: &Accounts,
+    req: &mut ImportRequest,
+) -> AppResult<()> {
+    let Some(link) = req
+        .source
+        .as_deref()
+        .and_then(|source| post_link(source, &accounts.sites()))
+        .filter(|link| link.api == BooruApi::Gelbooru)
+    else {
+        return Ok(());
+    };
+    let (Some(base), account @ Some(_)) = (base_url(&link.base), accounts.of(&link.base)) else {
+        return Ok(());
+    };
+    let plain: Vec<String> = req
+        .tags
+        .iter()
+        .filter(|tag| split_category(tag).0.is_none())
+        .cloned()
+        .collect();
+    let kinds = tag_kinds(pace, fetcher, &base, account, &plain).await?;
+    for tag in &mut req.tags {
+        let prefix = match kinds.iter().find(|(_, name)| name == tag) {
+            Some((TagCategory::Artist, _)) => "artist:",
+            Some((TagCategory::Copyright, _)) => "copyright:",
+            Some((TagCategory::Character, _)) => "character:",
+            Some((TagCategory::Meta, _)) => "meta:",
+            _ => continue,
+        };
+        *tag = format!("{prefix}{tag}");
+    }
+    Ok(())
 }
 
 /// One post in full, from a link to it: from the site's API, or failing that
@@ -168,6 +268,8 @@ pub async fn fetch(
             Lookup::Unknown => {}
             Lookup::Refused(status) => refused = Some(status),
         }
+    } else {
+        sort_import_tags(pace, fetcher, accounts, &mut req).await?;
     }
     // The page a file belongs to, which some sites want named.
     let from = req.source.clone();
@@ -176,7 +278,7 @@ pub async fn fetch(
         return Ok((bytes, req));
     }
 
-    // A page, not a file: take the picture it names.
+    // The address was a page: take the picture it names.
     let page = Url::parse(req.url.trim())
         .ok()
         .and_then(|address| html::read(&address, &bytes))
@@ -292,6 +394,12 @@ mod tests {
                 // Locked, it opens for user 42 with the key `k`.
                 if locked && !(is("user_id", "42") && is("api_key", "k")) {
                     return StatusCode::UNAUTHORIZED.into_response();
+                }
+                if is("s", "tag") {
+                    return axum::Json(serde_json::json!({"tag": [
+                        {"id": 1, "name": "some_one", "count": 3, "type": 1},
+                        {"id": 2, "name": "sea", "count": 9, "type": 0}]}))
+                    .into_response();
                 }
                 if !is("id", "7") {
                     return axum::Json(serde_json::json!({"@attributes": {"count": 0}}))
@@ -461,11 +569,36 @@ mod tests {
             panic!("the account didn't open the API");
         };
         assert_eq!(post.rating, Rating::Questionable);
+        // With an account the site also says which tag is the artist.
+        assert_eq!(post.groups.artist, ["some_one"]);
+        assert_eq!(post.import_tags(), ["artist:some_one", "sea"]);
         // The key went to the site and nowhere else.
         assert!(!post.file_url.contains("api_key") && !post.page_url.contains("api_key"));
         let none = Accounts::default();
         let found = find(&pace, &fetcher, &none, &page).await.unwrap();
         assert!(matches!(found, Lookup::Refused(Some(401))));
+
+        // A result picked from a search comes with plain tags: with the
+        // account they get their categories, and the user's own stay first.
+        let picked = ImportRequest {
+            url: format!("{site}/images/a.png"),
+            tags: vec!["mine".into(), "character:sea".into(), "some_one".into()],
+            rating: Rating::Safe,
+            source: Some(page.clone()),
+        };
+        let (_, got) = fetch(&fetcher, &pace, &mine, picked.clone(), 1 << 20, UNWATCHED)
+            .await
+            .unwrap();
+        assert_eq!(got.tags, ["mine", "character:sea", "artist:some_one"]);
+        assert_eq!(
+            (got.rating, got.source.as_deref()),
+            (Rating::Safe, Some(page.as_str()))
+        );
+        // Without one, or from a site of another kind, nothing is asked.
+        let (_, got) = fetch(&fetcher, &pace, &none, picked.clone(), 1 << 20, UNWATCHED)
+            .await
+            .unwrap();
+        assert_eq!(got.tags, picked.tags);
     }
 
     #[tokio::test]

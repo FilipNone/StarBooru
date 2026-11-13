@@ -52,6 +52,8 @@ fn listing(api: BooruApi) -> (&'static str, Vec<(&'static str, String)>) {
     }
 }
 
+/// `path` on the site with its query. The account, when there is one, goes
+/// in the query under the names that API gives it.
 fn with_query(
     base: &Url,
     api: BooruApi,
@@ -178,6 +180,46 @@ pub fn tags_url(api: BooruApi, base: &Url, term: &str) -> Option<Url> {
         ),
     };
     with_query(base, api, path, pairs, None)
+}
+
+/// Names Gelbooru's tag list takes in one request.
+pub const TAG_KINDS_PER_CALL: usize = 100;
+
+/// Where Gelbooru says what kind each of `names` is. Its posts list their
+/// tags without saying which is the artist or a character; this does, and
+/// like the rest of its API it wants the account.
+pub fn tag_kinds_url(base: &Url, names: &[String], account: Account<'_>) -> Option<Url> {
+    let pairs = vec![
+        ("page", "dapi".to_owned()),
+        ("s", "tag".to_owned()),
+        ("q", "index".to_owned()),
+        ("json", "1".to_owned()),
+        ("limit", TAG_KINDS_PER_CALL.to_string()),
+        ("names", names.join(" ")),
+    ];
+    with_query(base, BooruApi::Gelbooru, "index.php", pairs, account)
+}
+
+/// The kind of each tag in Gelbooru's answer, for the ones that aren't
+/// general. Nothing when the answer isn't that list (its forks send XML).
+pub fn parse_tag_kinds(body: &[u8]) -> Vec<(TagCategory, String)> {
+    let Ok(value) = serde_json::from_slice::<Value>(body) else {
+        return Vec::new();
+    };
+    let list = match &value {
+        Value::Array(list) => list.as_slice(),
+        other => other
+            .get("tag")
+            .and_then(Value::as_array)
+            .map_or(&[][..], Vec::as_slice),
+    };
+    list.iter()
+        .filter_map(|tag| {
+            let name = tag.get("name")?.as_str()?;
+            let category = tag_category(BooruApi::Gelbooru, tag.get("type"));
+            (category != TagCategory::General).then(|| (category, name.to_owned()))
+        })
+        .collect()
 }
 
 /// A category as these sites number or name it. e621 counts its own way.
@@ -309,6 +351,8 @@ struct Fields {
     size: Option<u64>,
 }
 
+/// One post of an answer in StarBooru's terms. `None` when the site shows
+/// no file for it (hidden or deleted posts) or its id can't be read.
 fn post(api: BooruApi, base: &Url, p: &Value) -> Option<RemotePost> {
     let id = id(p.get("id")?)?;
     let text = |key: &str| p.get(key).and_then(Value::as_str);
@@ -522,17 +566,20 @@ fn date_value(v: &Value) -> Option<DateTime<Utc>> {
     }
 }
 
+/// A number, which these sites send as a number or as text.
 fn id(v: &Value) -> Option<u64> {
     v.as_u64()
         .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
 }
 
+/// A width or a height; 0 when it is missing or makes no sense.
 fn number(v: Option<&Value>) -> u32 {
     v.and_then(id)
         .and_then(|n| u32::try_from(n).ok())
         .unwrap_or(0)
 }
 
+/// The tags in a space-separated string.
 fn words(s: Option<&str>) -> Vec<&str> {
     s.map(|s| s.split_whitespace().collect())
         .unwrap_or_default()
@@ -715,6 +762,39 @@ mod tests {
         );
         let many: Vec<_> = (0..50).map(|i| json!({"value": format!("t{i}")})).collect();
         assert_eq!(read(BooruApi::Danbooru, json!(many)).len(), 10);
+    }
+
+    #[test]
+    fn asks_gelbooru_what_kind_its_tags_are() {
+        let names = vec![
+            "some_one".to_owned(),
+            "hatsune_miku".to_owned(),
+            ":3".to_owned(),
+        ];
+        let url = tag_kinds_url(&base("https://g.org/"), &names, Some(("42", "k"))).unwrap();
+        assert_eq!(
+            url.as_str(),
+            "https://g.org/index.php?page=dapi&s=tag&q=index&json=1&limit=100&names=some_one+hatsune_miku+%3A3&user_id=42&api_key=k"
+        );
+        // As Gelbooru answers (November 2026).
+        let body = json!({"@attributes": {"limit": 100, "offset": 0, "count": 5}, "tag": [
+            {"id": 1, "name": "highres", "count": 9, "type": 5, "ambiguous": 0},
+            {"id": 2, "name": "hatsune_miku", "count": 9, "type": 4, "ambiguous": 0},
+            {"id": 3, "name": "vocaloid", "count": 9, "type": 3, "ambiguous": 0},
+            {"id": 4, "name": "some_one", "count": 9, "type": 1, "ambiguous": 0},
+            {"id": 5, "name": "landscape", "count": 9, "type": 0, "ambiguous": 0}]});
+        assert_eq!(
+            parse_tag_kinds(body.to_string().as_bytes()),
+            [
+                (TagCategory::Meta, "highres".to_owned()),
+                (TagCategory::Character, "hatsune_miku".to_owned()),
+                (TagCategory::Copyright, "vocaloid".to_owned()),
+                (TagCategory::Artist, "some_one".to_owned()),
+            ]
+        );
+        // A fork's XML, or nothing found.
+        assert!(parse_tag_kinds(b"<?xml version=\"1.0\"?><tags type=\"array\"></tags>").is_empty());
+        assert!(parse_tag_kinds(br#"{"@attributes":{"count":0}}"#).is_empty());
     }
 
     #[test]

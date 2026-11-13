@@ -31,9 +31,18 @@ struct Host {
     files: bool,
 }
 
-/// Sites whose file servers only answer their own pages: a picture from one
-/// shows in a page of ours only when the server fetches it, naming the site.
-const GUARDED: [(&str, &str); 1] = [("gelbooru.com", "https://gelbooru.com/")];
+/// Sites whose pictures a page of ours can't show by itself. Gelbooru's file
+/// servers answer only requests that come from its own pages. Danbooru's and
+/// e621's mark their files (`Cross-Origin-Resource-Policy`) so that a browser
+/// shows them on those sites alone. The server fetches these, naming the
+/// site. Checked in a browser in November 2026; Safebooru, yande.re and
+/// Konachan show their pictures anywhere.
+const GUARDED: [(&str, &str); 4] = [
+    ("gelbooru.com", "https://gelbooru.com/"),
+    ("donmai.us", "https://danbooru.donmai.us/"),
+    ("e621.net", "https://e621.net/"),
+    ("e926.net", "https://e926.net/"),
+];
 
 /// The page a file wants to be asked from (as a `Referer`), when its site
 /// refuses any other.
@@ -45,6 +54,7 @@ pub fn guarded_by(raw: &str) -> Option<&'static str> {
         .map(|(_, referer)| *referer)
 }
 
+/// A site with post pages.
 const fn site(name: &'static str, api: BooruApi, base: &'static str) -> Host {
     Host {
         name,
@@ -54,6 +64,7 @@ const fn site(name: &'static str, api: BooruApi, base: &'static str) -> Host {
     }
 }
 
+/// A server that only hands out a site's files.
 const fn files(name: &'static str, api: BooruApi, base: &'static str) -> Host {
     Host {
         name,
@@ -97,6 +108,8 @@ struct Parts<'a> {
     query: &'a str,
 }
 
+/// An http(s) address taken apart. `None` for any other kind, and for one
+/// that carries credentials.
 fn parts(raw: &str) -> Option<Parts<'_>> {
     let raw = raw.trim();
     let (scheme, rest) = raw.split_once("://")?;
@@ -126,6 +139,7 @@ fn parts(raw: &str) -> Option<Parts<'_>> {
     })
 }
 
+/// Whether `host` is `name` or a subdomain of it.
 fn under(host: &str, name: &str) -> bool {
     host == name
         || host
@@ -156,6 +170,7 @@ fn leading_id(segment: &str) -> Option<u64> {
     number.parse().ok().filter(|id| *id > 0)
 }
 
+/// Thirty-two hex digits, as an MD5 is written.
 fn is_md5(text: &str) -> bool {
     text.len() == 32 && text.bytes().all(|b| b.is_ascii_hexdigit())
 }
@@ -402,7 +417,20 @@ mod tests {
             guarded_by("https://video-cdn3.gelbooru.com/a.mp4"),
             Some("https://gelbooru.com/")
         );
-        assert_eq!(guarded_by("https://cdn.donmai.us/original/a.jpg"), None);
+        assert_eq!(
+            guarded_by("https://cdn.donmai.us/360x360/b2/c3/a.jpg"),
+            Some("https://danbooru.donmai.us/")
+        );
+        assert_eq!(
+            guarded_by("https://static1.e926.net/data/preview/16/0a/a.jpg"),
+            Some("https://e926.net/")
+        );
+        assert_eq!(
+            guarded_by("https://static1.e621.net/data/a.png"),
+            Some("https://e621.net/")
+        );
+        assert_eq!(guarded_by("https://files.yande.re/image/a/b.jpg"), None);
+        assert_eq!(guarded_by("https://safebooru.org/images/1/a.jpg"), None);
         assert_eq!(guarded_by("https://notgelbooru.com/a.jpg"), None);
         assert_eq!(guarded_by("/api/v1/remote/media?u=x"), None);
     }

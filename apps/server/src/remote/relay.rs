@@ -1,5 +1,6 @@
-//! Pictures from sites that only hand their files to their own pages
-//! (`starbooru_core::guarded_by`). A page of ours can't show those, so the
+//! Pictures from sites that keep their files to their own pages
+//! (`starbooru_core::guarded_by`): Gelbooru by the page a request comes from,
+//! Danbooru by telling browsers so. A page of ours can't show those, so the
 //! server fetches them, naming the site, behind an address it signed itself:
 //! only what it put in a search answer can be asked for, so this is no open
 //! door to the web. Like `/media`, the address stands in for a sign-in, as an
@@ -28,6 +29,8 @@ const MAX_BYTES: usize = 48 * 1024 * 1024;
 /// The time between two fetches from one file server.
 const INTERVAL: TimeDelta = TimeDelta::milliseconds(60);
 
+/// Signs the addresses of relayed pictures and checks them when they come
+/// back.
 pub struct Relay {
     key: Vec<u8>,
 }
@@ -39,6 +42,7 @@ impl Relay {
         Self { key }
     }
 
+    /// The signature over an address and the time it is good until.
     fn mac(&self, target: &str, exp: i64) -> Option<Hmac<Sha256>> {
         let mut mac = Hmac::<Sha256>::new_from_slice(&self.key).ok()?;
         mac.update(format!("{exp}:{target}").as_bytes());
@@ -59,6 +63,8 @@ impl Relay {
         format!("/api/v1/remote/media?{}", query.finish())
     }
 
+    /// Whether this server signed `target` to be fetched until `exp`. An
+    /// expiry further off than it would ever sign is refused too.
     pub fn verify(&self, target: &str, exp: i64, sig: &str, now: i64) -> bool {
         if exp < now || exp > now.saturating_add(3 * BUCKET_SECS) {
             return false;
@@ -83,6 +89,7 @@ impl Relay {
     }
 }
 
+/// The query of a relayed address.
 #[derive(Deserialize)]
 pub struct Signed {
     u: String,
@@ -187,9 +194,9 @@ mod tests {
         assert!(relayed(guarded.sample_url.as_deref().unwrap()));
         assert_eq!(guarded.file_url, "https://img4.gelbooru.com/images/a.png");
         let mut open = post(
-            "https://cdn.donmai.us/360x360/a.jpg",
+            "https://assets.yande.re/data/preview/a.jpg",
             None,
-            "https://cdn.donmai.us/original/a.jpg",
+            "https://files.yande.re/image/a/b.png",
         );
         let before = open.clone();
         relay.guard(&mut open, 0);
