@@ -269,9 +269,19 @@ pub fn precompress(dir: &Path) -> std::io::Result<Precompressed> {
     let mut done = Precompressed::default();
     let mut folders = vec![dir.to_path_buf()];
     while let Some(folder) = folders.pop() {
-        for entry in std::fs::read_dir(&folder)? {
-            let path = entry?.path();
-            let meta = std::fs::metadata(&path)?;
+        // Listed first and in order, so a run doesn't depend on how the file
+        // system hands out names.
+        let mut paths = std::fs::read_dir(&folder)?
+            .map(|entry| entry.map(|e| e.path()))
+            .collect::<std::io::Result<Vec<_>>>()?;
+        paths.sort();
+        for path in paths {
+            let meta = match std::fs::metadata(&path) {
+                Ok(meta) => meta,
+                // A copy from an earlier run, removed since the folder was listed.
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(e) => return Err(e),
+            };
             if meta.is_dir() {
                 folders.push(path);
                 continue;
@@ -549,6 +559,8 @@ mod tests {
 
     #[test]
     fn a_copy_that_saves_nothing_is_not_kept() {
+        // Regression: the stale copy is listed after its file. Once the file's
+        // turn had removed it, its own turn failed the whole run as not found.
         let dir = tempfile::tempdir().unwrap();
         // Random bytes don't compress.
         let mut noise = vec![0u8; 4096];
