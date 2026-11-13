@@ -22,6 +22,7 @@ mod oidc;
 mod pace;
 mod pages;
 mod power;
+mod route;
 mod store;
 mod system;
 mod util;
@@ -29,11 +30,7 @@ mod zoom;
 
 use dioxus::prelude::*;
 
-use crate::oidc::OidcReturn;
-use crate::pages::{
-    Admin, Boorus, Duplicates, Explore, Gallery, Help, NotFound, PostView, Privacy, Settings,
-    SharedPage, Shell, TagPage, Tags, Terms, Trash, Upload,
-};
+pub use crate::route::Route;
 use crate::store::{PREFS, SESSION};
 
 /// On the web, `dx` writes the link to it into `index.html`, so the page has
@@ -45,47 +42,6 @@ const MAIN_CSS: Asset = asset!(
 const FAVICON: Asset = asset!("/assets/brand/favicon.svg");
 const FAVICON_PNG: Asset = asset!("/assets/brand/favicon-32.png");
 const TOUCH_ICON: Asset = asset!("/assets/brand/apple-touch-icon.png");
-
-#[derive(Routable, Clone, PartialEq, Debug)]
-#[rustfmt::skip]
-pub enum Route {
-    #[layout(Shell)]
-        #[route("/?:q")]
-        Gallery { q: String },
-        #[route("/explore?:q")]
-        Explore { q: String },
-        #[route("/post/:id?:q")]
-        PostView { id: i64, q: String },
-        #[route("/tags")]
-        Tags {},
-        #[route("/tag?:name")]
-        TagPage { name: String },
-        #[route("/upload")]
-        Upload {},
-        #[route("/boorus")]
-        Boorus {},
-        #[route("/settings")]
-        Settings {},
-        #[route("/trash")]
-        Trash {},
-        #[route("/duplicates")]
-        Duplicates {},
-        #[route("/help")]
-        Help {},
-        #[route("/admin")]
-        Admin {},
-    #[end_layout]
-    #[route("/oidc?:oidc_code&:oidc_error")]
-    OidcReturn { oidc_code: String, oidc_error: String },
-    #[route("/s/:token")]
-    SharedPage { token: String },
-    #[route("/privacy")]
-    Privacy {},
-    #[route("/terms")]
-    Terms {},
-    #[route("/:..segments")]
-    NotFound { segments: Vec<String> },
-}
 
 fn main() {
     #[cfg(feature = "desktop")]
