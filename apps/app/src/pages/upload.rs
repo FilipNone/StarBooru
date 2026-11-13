@@ -134,7 +134,7 @@ pub fn Upload() -> Element {
                     span { {t!("upload-folder-tags")} }
                 }
                 if show_url {
-                    Link { class: "btn tonal", to: Route::Boorus {},
+                    Link { class: "btn tonal", to: Route::Boorus { q: String::new(), s: String::new() },
                         Ico { icon: Icon::Explore }
                         {t!("boorus-open")}
                     }

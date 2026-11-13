@@ -484,6 +484,12 @@ a.brand:hover .mark-star, a.search-home:hover .mark-star { transform: rotate(90d
 }
 .suggestions li:hover, .suggestions li.active { background: var(--surface-2); }
 .suggestions .count { color: var(--on-surface-2); font-variant-numeric: tabular-nums; font-size: 14px; }
+/* Another site's tags come with their category (shell.rs). */
+.suggestions .tag-name { min-width: 0; overflow-wrap: anywhere; }
+.suggestions .cat-artist { color: var(--cat-artist); }
+.suggestions .cat-character { color: var(--cat-character); }
+.suggestions .cat-copyright { color: var(--cat-copyright); }
+.suggestions .cat-meta { color: var(--cat-meta); }
 
 /* The navigation is a slider: equal cells in a capsule, and one thumb that
    travels between them with the selected item's icon and label inside it. Its
@@ -555,14 +561,16 @@ a.brand:hover .mark-star, a.search-home:hover .mark-star { transform: rotate(90d
 .page.narrow { max-width: 720px; }
 .center-page { display: grid; place-items: center; min-height: 50vh; padding: 16px; }
 
-/* Wide windows: the labelled slider fits beside the search. */
-@media (min-width: 1530px) {
-  .app { --side: 540px; }
+/* Wide windows: the labelled slider fits beside the search. Six items of a
+   hundred pixels each, and from this width the search between the two equal
+   sides is still some four hundred wide. */
+@media (min-width: 1660px) {
+  .app { --side: 608px; }
   .nav-top {
     grid-column: 3; justify-self: end; display: grid; grid-auto-flow: column; grid-auto-columns: 1fr;
     height: var(--bar-h);
   }
-  .nav-top .nav-item { padding: 0 10px; }
+  .nav-top .nav-item { padding: 0 8px; }
 }
 
 /* Phones: the search takes the whole row, with the crown inside it, and the
@@ -588,13 +596,19 @@ a.brand:hover .mark-star, a.search-home:hover .mark-star { transform: rotate(90d
   .content { --pad-x: 8px; padding: calc(var(--bar-end) + 12px) var(--pad-x) calc(96px + env(safe-area-inset-bottom)); }
   .page-title { font-size: 22px; }
 }
+/* The narrowest phones: six labels no longer fit side by side, so the icons
+   stand alone and still say what they are. */
+@media (max-width: 340px) {
+  .nav-bottom .nav-item { min-height: 44px; }
+  .nav-bottom .nav-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+}
 
 /* In between: tablets and laptops have the height to spare less than the width,
    so the slider stands up as a rail at the side, its items centred within reach
    of a thumb. `data-hand` picks the side; `--rail-l`/`--rail-r` keep fixed
    things clear of it. */
 .app { --rail-l: 0px; --rail-r: 0px; }
-@media (min-width: 761px) and (max-width: 1529px) {
+@media (min-width: 761px) and (max-width: 1659px) {
   .app { --rail-w: 76px; --rail-l: calc(var(--rail-w) + 16px); }
   .app[data-hand="right"] { --rail-l: 0px; --rail-r: calc(var(--rail-w) + 16px); }
   .nav-bottom {
@@ -630,8 +644,9 @@ a.brand:hover .mark-star, a.search-home:hover .mark-star { transform: rotate(90d
   .brand { justify-content: center; width: var(--bar-h); padding: 0; }
   .brand .wordmark { display: none; }
 }
-/* A phone on its side: icons alone fit the height, and still say what they are. */
-@media (min-width: 761px) and (max-width: 1529px) and (max-height: 500px) {
+/* A phone on its side, or a window too short for six labelled items under the
+   top bar: icons alone fit the height, and still say what they are. */
+@media (min-width: 761px) and (max-width: 1659px) and (max-height: 560px) {
   .app { --rail-w: 52px; }
   .nav-bottom .nav-item { min-height: calc(var(--rail-w) - 2 * var(--pad)); }
   .nav-bottom .nav-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
@@ -862,8 +877,6 @@ html.sb-to-top .page.gallery { visibility: hidden; }
 
 /* selection mode */
 .masonry-box.selecting { padding-bottom: 112px; }
-.grid.selecting { padding-bottom: 112px; }
-button.thumb { width: 100%; padding: 0; border: 0; font: inherit; color: inherit; cursor: pointer; }
 .thumb.selectable .thumb-media { transition: inset var(--med) var(--ease-spring), border-radius var(--med) var(--ease); overflow: hidden; }
 .thumb.selectable.on { background: var(--primary-container); }
 .thumb.selectable.on .thumb-media { inset: 10px; border-radius: var(--radius-s); }
@@ -904,7 +917,7 @@ button.thumb { width: 100%; padding: 0; border: 0; font: inherit; color: inherit
   .bulk-bar .btn.tonal { flex: none; width: 48px; padding: 0; }
   .bulk-bar .btn[type="submit"] { flex: 2 1 0; }
   .bulk-label { display: none; }
-  .grid.selecting, .masonry-box.selecting { padding-bottom: 180px; }
+  .masonry-box.selecting { padding-bottom: 180px; }
 }
 .sentinel { display: grid; place-items: center; padding: 32px 0; }
 
@@ -2038,18 +2051,89 @@ html:has(.editor) { overflow-y: hidden; }
   .editor-stage { padding: 0; margin: 8px -4px; }
 }
 
-/* ---------- other boorus ---------- */
+/* ---------- booru browser (pages/boorus.rs, pages/booru_post.rs) ---------- */
 
-.boorus-hint { margin: -12px 0 16px; max-width: 72ch; }
-.boorus-fields { display: grid; gap: 0 16px; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); }
-.boorus-account summary { cursor: pointer; font-weight: 600; padding: 4px 0; color: var(--on-surface-2); }
-.boorus-account[open] summary { margin-bottom: 4px; }
-.boorus-account .hint { margin: 0 0 12px; font-size: 14px; }
-.boorus-saved { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.boorus-saved > .icon { color: var(--primary); flex: none; }
-.boorus-saved .btn { margin-left: auto; }
-.boorus-account .check { margin-bottom: 4px; }
-.boorus-search { margin: 16px 0; }
-.boorus .grid { margin-top: 8px; }
-.remote-status { position: absolute; left: 8px; bottom: 8px; max-width: calc(100% - 16px); pointer-events: none; }
-.thumb:disabled { cursor: progress; }
+/* The grid is the gallery's: the same tiles in the same layout, under the same
+   kind of head. */
+.page.boorus { animation: none; }
+.app[data-tiles="flush"] .page.boorus { max-width: none; }
+.boorus .page-head { margin-bottom: 12px; }
+.boorus .page-head .page-title { margin: 0; }
+.boorus .page-head .save-search { margin-left: -8px; }
+.boorus .page-head .page-title.visually-hidden + .save-search { margin-left: -10px; }
+.head-tools { display: flex; align-items: center; gap: 12px; margin-left: auto; }
+.head-tools .select-toggle { margin-left: -4px; }
+.icon-btn.small { width: 36px; height: 36px; }
+/* The sites a search goes to. On a phone they are one row to run a thumb
+   along; the room above and below is for a chip's lift and its focus ring. */
+.booru-sites { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 12px; }
+.booru-sites .chip { flex: none; font-family: inherit; cursor: pointer; }
+.booru-sites .chip.warn { background: var(--warn-container); color: var(--on-warn-container); border-color: currentColor; }
+.booru-sites .chip.warn::after { content: "!"; margin-left: 6px; font-weight: 700; }
+.booru-sites .icon-btn { flex: none; }
+@media (max-width: 760px) {
+  .booru-sites {
+    flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none;
+    margin: -6px calc(var(--pad-x) * -1) 6px; padding: 6px var(--pad-x);
+  }
+  /* The button for the sheet stays at the end of the row as the chips pass under it. */
+  .booru-sites .sites-edit {
+    position: sticky; right: 0; margin-left: auto; background: var(--canvas);
+    box-shadow: -8px 0 8px var(--canvas);
+  }
+  .booru-sites .sites-edit:hover:not(:disabled) { background: var(--surface-3); }
+}
+/* On a tile: the site at the bottom left, and how saving it stands at the top
+   right, across from the tick of a selection. */
+.badge.remote-site {
+  left: 8px; right: auto; max-width: calc(100% - 56px); display: block;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 20px;
+}
+.remote-status { position: absolute; top: 8px; right: 8px; max-width: calc(100% - 16px); }
+.remote-mark {
+  position: absolute; top: 8px; right: 8px; display: grid; place-items: center; width: 28px; height: 28px;
+  border-radius: 999px; background: var(--primary); color: var(--on-primary); box-shadow: var(--shadow-1);
+}
+.remote-mark[role="link"] { cursor: pointer; }
+/* The sheet of sites: a line for each, and under it the two boxes of its account. */
+.sites-sheet { display: grid; gap: 12px; }
+.sites-sheet .banner { margin: 0; }
+.site-list { list-style: none; margin: 0; padding: 0; display: grid; }
+.site-row { display: grid; gap: 8px; padding: 6px 0; border-top: 1px solid oklch(from var(--outline) l c h / 0.5); }
+.site-row:first-child { border-top: 0; }
+.site-line { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 36px; }
+.site-name { flex: 0 1 auto; min-width: 64px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.site-kind { flex: none; font-size: 13px; }
+/* What is left of the line, so the buttons after it stand at its end. */
+.site-login {
+  flex: 1 1 auto; min-width: 48px; display: flex; align-items: center; justify-content: flex-end; gap: 4px;
+  font-size: 14px; color: var(--on-surface-2);
+}
+.site-login > span:not(.pill) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.site-login .pill { max-width: 100%; }
+.site-login > .icon { color: var(--primary); }
+.site-line .btn, .site-line .icon-btn { flex: none; }
+.site-account, .site-add { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+.site-account { padding-bottom: 6px; animation: slide-in var(--med) var(--ease); }
+.site-add { padding-top: 12px; border-top: 1px solid oklch(from var(--outline) l c h / 0.5); }
+.site-account input, .site-add input {
+  width: 100%; min-width: 0; min-height: 40px; padding: 0 14px; border: 1px solid var(--outline); border-radius: 999px;
+  background: var(--surface); color: var(--on-surface); font: inherit; font-size: 14px;
+}
+.site-account input:focus, .site-add input:focus {
+  outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px oklch(from var(--primary) l c h / 0.25);
+}
+.site-add .select { min-width: 0; }
+@media (max-width: 520px) {
+  .site-kind { display: none; }
+  .site-account { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .site-account .btn { grid-column: 1 / -1; }
+  .site-add { grid-template-columns: minmax(0, 1fr) auto; }
+  .site-add input { grid-column: 1 / -1; }
+}
+/* A post on another site: the viewer's stage and panels, without its zoom. */
+.booru-post .stage img { cursor: auto; }
+.booru-post .post-bar { gap: 8px; padding: 8px 10px; }
+.booru-post .post-bar .pill { max-width: none; }
+.booru-also { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.meta a { overflow-wrap: anywhere; }

@@ -10,8 +10,9 @@ use std::rc::Rc;
 use crate::link::Link;
 use chrono::{DateTime, Utc};
 use dioxus::prelude::*;
-use starbooru_core::Tag;
+use starbooru_core::{RemoteTag, RemoteTagQuery, Tag, TagCategory};
 
+use super::boorus;
 use super::login::Login;
 use super::search_demo::{SearchDemo, plays_on};
 use crate::Route;
@@ -156,7 +157,10 @@ fn tab_of(route: &Route) -> Route {
     match route {
         Route::PostView { .. } => Route::Gallery { q: String::new() },
         Route::TagPage { .. } => Route::Tags {},
-        Route::Boorus {} => Route::Upload {},
+        Route::Boorus { .. } | Route::BooruPost { .. } => Route::Boorus {
+            q: String::new(),
+            s: String::new(),
+        },
         Route::Trash {} | Route::Duplicates {} | Route::Help {} | Route::Admin {} => {
             Route::Settings {}
         }
@@ -180,6 +184,8 @@ fn NavSlider(place: &'static str, route: Route) -> Element {
             Icon::Explore,
             t!("nav-explore"),
         ),
+        // Back to the last search there, as the Gallery tab goes to its own.
+        (boorus::last_route(), Icon::Planet, t!("nav-boorus")),
         (Route::Tags {}, Icon::Label, t!("nav-tags")),
         (Route::Upload {}, Icon::Upload, t!("nav-upload")),
         (Route::Settings {}, Icon::Tune, t!("nav-settings-tab")),
@@ -275,7 +281,34 @@ fn NavLink(
 fn route_query(route: &Route, last: &str) -> String {
     match route {
         Route::Gallery { q } | Route::PostView { q, .. } => q.clone(),
+        // The search as it was typed; the address carries it encoded.
+        Route::Boorus { q, .. } | Route::BooruPost { q, .. } => boorus::from_address(q),
         _ => last.to_owned(),
+    }
+}
+
+/// What the search box searches: the collection, or, on the booru browser's
+/// pages, the sites chosen there (as the address names them).
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Scope {
+    Collection,
+    Boorus(String),
+}
+
+fn scope_of(route: &Route) -> Scope {
+    match route {
+        Route::Boorus { s, .. } | Route::BooruPost { s, .. } => Scope::Boorus(s.clone()),
+        _ => Scope::Collection,
+    }
+}
+
+/// Where a search typed in the box goes.
+fn search_route(scope: &Scope, q: &str) -> Route {
+    match scope {
+        Scope::Collection => Route::Gallery {
+            q: q.trim().to_owned(),
+        },
+        Scope::Boorus(s) => boorus::search_route(q.trim(), s),
     }
 }
 
@@ -299,22 +332,34 @@ fn typed_tag(value: &str) -> Option<&str> {
 /// suggestions. A word typed in one go then costs one request, where every
 /// letter used to cost one.
 const TYPING_PAUSE_MS: u32 = 120;
+/// The same for another site's tags, which that site is asked for: longer, as
+/// each site only takes so many requests.
+const REMOTE_PAUSE_MS: u32 = 250;
 /// How many answers are kept, and for how long: tags and their counts change.
 const KEPT_ANSWERS: usize = 48;
 const KEPT_SECONDS: i64 = 60;
 
 /// Recent suggestions by what was typed, so taking a letter back or typing a
 /// word again shows them at once and asks nothing.
-#[derive(Default)]
-struct Suggested {
-    /// Whose they are: another account sees other tags.
+struct Answers<T> {
+    /// Whose they are: another account sees other tags, and so does another
+    /// site.
     owner: String,
     /// The latest last.
-    answers: Vec<(String, DateTime<Utc>, Vec<Tag>)>,
+    answers: Vec<(String, DateTime<Utc>, Vec<T>)>,
 }
 
-impl Suggested {
-    fn get(&self, owner: &str, typed: &str, now: DateTime<Utc>) -> Option<Vec<Tag>> {
+impl<T> Default for Answers<T> {
+    fn default() -> Self {
+        Self {
+            owner: String::new(),
+            answers: Vec::new(),
+        }
+    }
+}
+
+impl<T: Clone> Answers<T> {
+    fn get(&self, owner: &str, typed: &str, now: DateTime<Utc>) -> Option<Vec<T>> {
         self.answers
             .iter()
             .find(|(was, at, _)| {
@@ -323,7 +368,7 @@ impl Suggested {
             .map(|(.., tags)| tags.clone())
     }
 
-    fn put(&mut self, owner: &str, typed: String, tags: Vec<Tag>, now: DateTime<Utc>) {
+    fn put(&mut self, owner: &str, typed: String, tags: Vec<T>, now: DateTime<Utc>) {
         if self.owner != owner {
             self.owner = owner.to_owned();
             self.answers.clear();
@@ -335,48 +380,139 @@ impl Suggested {
     }
 }
 
+/// The collection's own tags.
+type Suggested = Answers<Tag>;
+
 thread_local! {
     static SUGGESTED: std::cell::RefCell<Suggested> = std::cell::RefCell::default();
+    static REMOTE_SUGGESTED: std::cell::RefCell<Answers<RemoteTag>> = std::cell::RefCell::default();
+}
+
+/// A tag offered under the search box, the collection's or another site's.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Hint {
+    name: String,
+    /// The class that colours it by category; none for the collection's.
+    class: &'static str,
+    /// How many posts carry it, when that is known.
+    count: Option<String>,
+}
+
+impl From<Tag> for Hint {
+    fn from(tag: Tag) -> Self {
+        Self {
+            name: tag.name,
+            class: "",
+            count: Some(tag.post_count.to_string()),
+        }
+    }
+}
+
+impl From<RemoteTag> for Hint {
+    fn from(tag: RemoteTag) -> Self {
+        Self {
+            name: tag.name,
+            class: match tag.category {
+                TagCategory::General => "",
+                TagCategory::Artist => "cat-artist",
+                TagCategory::Character => "cat-character",
+                TagCategory::Copyright => "cat-copyright",
+                TagCategory::Meta => "cat-meta",
+            },
+            count: tag.count.map(short_count),
+        }
+    }
+}
+
+fn hints<T: Into<Hint>>(tags: Vec<T>) -> Vec<Hint> {
+    tags.into_iter().map(Into::into).collect()
+}
+
+/// A count in few characters: the big sites have tags on millions of posts.
+/// `1234` → `1.2k`, `4217021` → `4.2M`.
+fn short_count(n: u64) -> String {
+    let short = |unit: u64, letter: &str| {
+        let (whole, tenth) = (n / unit, (n % unit).saturating_mul(10) / unit);
+        if whole >= 100 {
+            format!("{whole}{letter}")
+        } else {
+            format!("{whole}.{tenth}{letter}")
+        }
+    };
+    match n {
+        ..1_000 => n.to_string(),
+        1_000..1_000_000 => short(1_000, "k"),
+        _ => short(1_000_000, "M"),
+    }
 }
 
 /// Tag search with autocomplete on the word being typed.
 #[component]
 fn SearchBox(route: Route) -> Element {
     let mut text = use_signal(|| route_query(&route, &store::last_search()));
+    let mut scope = use_signal(|| scope_of(&route));
     let mut focused = use_signal(|| false);
     // The highlighted suggestion, moved with the arrow keys.
     let mut active = use_signal(|| None::<usize>);
     // Every navigation resets the box, so a half-typed query doesn't linger.
-    use_effect(use_reactive!(
-        |route| text.set(route_query(&route, &store::last_search()))
-    ));
+    use_effect(use_reactive!(|route| {
+        text.set(route_query(&route, &store::last_search()));
+        let now = scope_of(&route);
+        if *scope.peek() != now {
+            scope.set(now);
+        }
+    }));
 
     let suggestions = use_resource(move || async move {
         let value = text();
+        let scope = scope();
         let Some(typed) = typed_tag(&value).map(str::to_owned) else {
-            return Vec::<Tag>::new();
+            return Vec::<Hint>::new();
         };
         let owner = store::owner();
-        if let Some(known) = SUGGESTED.with_borrow(|s| s.get(&owner, &typed, Utc::now())) {
-            return known;
+        let Scope::Boorus(sites) = scope else {
+            if let Some(known) = SUGGESTED.with_borrow(|s| s.get(&owner, &typed, Utc::now())) {
+                return hints(known);
+            }
+            // The next letter restarts this, which drops it here before it asks.
+            sleep_ms(TYPING_PAUSE_MS).await;
+            let Some(client) = store::client() else {
+                return Vec::new();
+            };
+            let Ok(tags) = client.tags(&typed, 8).await else {
+                return Vec::new();
+            };
+            SUGGESTED.with_borrow_mut(|s| s.put(&owner, typed, tags.clone(), Utc::now()));
+            return hints(tags);
+        };
+        // The booru browser: the first of its sites says how its tags go on.
+        let Some(site) = boorus::completing_site(&sites) else {
+            return Vec::new();
+        };
+        let whose = format!("{owner}|{}|{}", site.api.as_str(), site.base);
+        if let Some(known) = REMOTE_SUGGESTED.with_borrow(|s| s.get(&whose, &typed, Utc::now())) {
+            return hints(known);
         }
-        // The next letter restarts this, which drops it here before it asks.
-        sleep_ms(TYPING_PAUSE_MS).await;
+        sleep_ms(REMOTE_PAUSE_MS).await;
         let Some(client) = store::client() else {
             return Vec::new();
         };
-        let Ok(tags) = client.tags(&typed, 8).await else {
+        let query = RemoteTagQuery {
+            api: site.api,
+            base: site.base,
+            term: typed.clone(),
+        };
+        let Ok(tags) = client.remote_tags(&query).await else {
             return Vec::new();
         };
-        SUGGESTED.with_borrow_mut(|s| s.put(&owner, typed, tags.clone(), Utc::now()));
-        tags
+        REMOTE_SUGGESTED.with_borrow_mut(|s| s.put(&whose, typed, tags.clone(), Utc::now()));
+        hints(tags)
     });
 
     let mut search = move |q: String| {
         focused.set(false);
-        navigator().push(Route::Gallery {
-            q: q.trim().to_owned(),
-        });
+        let to = search_route(&scope.peek(), &q);
+        navigator().push(to);
     };
 
     let mut complete = move |tag: String| {
@@ -398,6 +534,12 @@ fn SearchBox(route: Route) -> Element {
     let count = list.len();
     let names: Vec<String> = list.iter().map(|t| t.name.clone()).collect();
     let selected = active().filter(|i| *i < count);
+    let remote = matches!(*scope.read(), Scope::Boorus(_));
+    let label = if remote {
+        t!("boorus-search")
+    } else {
+        t!("search-label")
+    };
     rsx! {
         form {
             class: "search glass float",
@@ -414,8 +556,8 @@ fn SearchBox(route: Route) -> Element {
             div { class: "search-field",
             input {
                 r#type: "search",
-                placeholder: t!("search-placeholder"),
-                aria_label: t!("search-label"),
+                placeholder: if remote { t!("boorus-search") } else { t!("search-placeholder") },
+                aria_label: label,
                 autocomplete: "off",
                 spellcheck: "false",
                 value: "{text}",
@@ -471,7 +613,7 @@ fn SearchBox(route: Route) -> Element {
                 ul { class: "suggestions", role: "listbox", id: "search-suggestions",
                     for (i, tag) in list.into_iter().enumerate() {
                         li {
-                            key: "{tag.id}",
+                            key: "{tag.name}",
                             id: "suggestion-{i}",
                             role: "option",
                             class: if selected == Some(i) { "active" } else { "" },
@@ -482,8 +624,10 @@ fn SearchBox(route: Route) -> Element {
                                 e.prevent_default();
                                 complete(tag.name.clone());
                             },
-                            span { class: "tag-name", "{tag.name}" }
-                            span { class: "count", "{tag.post_count}" }
+                            span { class: "tag-name {tag.class}", "{tag.name}" }
+                            if let Some(count) = &tag.count {
+                                span { class: "count", "{count}" }
+                            }
                         }
                     }
                 }
@@ -495,11 +639,13 @@ fn SearchBox(route: Route) -> Element {
 #[cfg(test)]
 mod tests {
     use super::{
-        KEPT_ANSWERS, KEPT_SECONDS, Suggested, route_query, split_word, tab_of, typed_tag,
+        Answers, Hint, KEPT_ANSWERS, KEPT_SECONDS, REMOTE_PAUSE_MS, Scope, Suggested,
+        TYPING_PAUSE_MS, hints, route_query, scope_of, search_route, short_count, split_word,
+        tab_of, typed_tag,
     };
     use crate::Route;
     use chrono::{Duration, Utc};
-    use starbooru_core::Tag;
+    use starbooru_core::{RemoteTag, Tag, TagCategory};
     use std::mem::discriminant;
 
     fn tag(name: &str) -> Tag {
@@ -598,7 +744,146 @@ mod tests {
             discriminant(&Route::Gallery { q: String::new() })
         );
         assert_eq!(tab_of(&Route::TagPage { name: "a".into() }), Route::Tags {});
-        assert_eq!(tab_of(&Route::Boorus {}), Route::Upload {});
+        // The booru browser is a tab of its own, and its posts are under it.
+        let boorus = discriminant(&Route::Boorus {
+            q: String::new(),
+            s: String::new(),
+        });
+        let search = Route::Boorus {
+            q: "blue_sky".into(),
+            s: "danbooru".into(),
+        };
+        let post = Route::BooruPost {
+            u: "https://d.org/posts/1".into(),
+            q: "blue_sky".into(),
+            s: "danbooru".into(),
+        };
+        assert_eq!(discriminant(&tab_of(&search)), boorus);
+        assert_eq!(discriminant(&tab_of(&post)), boorus);
+        assert_ne!(boorus, discriminant(&Route::Upload {}));
+    }
+
+    #[test]
+    fn the_box_searches_the_boorus_on_their_pages() {
+        let search = Route::Boorus {
+            q: "blue_sky".into(),
+            s: "danbooru,gelbooru".into(),
+        };
+        let post = Route::BooruPost {
+            u: "https://d.org/posts/1".into(),
+            q: "blue_sky".into(),
+            s: "e926".into(),
+        };
+        // The box shows the browser's own search here.
+        assert_eq!(route_query(&search, "dog"), "blue_sky");
+        assert_eq!(route_query(&post, "dog"), "blue_sky");
+        assert_eq!(scope_of(&search), Scope::Boorus("danbooru,gelbooru".into()));
+        assert_eq!(scope_of(&post), Scope::Boorus("e926".into()));
+        // A new search goes to the same sites.
+        assert_eq!(
+            search_route(&scope_of(&search), " night_sky "),
+            Route::Boorus {
+                q: "night_sky".into(),
+                s: "danbooru,gelbooru".into()
+            }
+        );
+        // Everywhere else it is the gallery's, as before.
+        for other in [
+            Route::Gallery { q: "cat".into() },
+            Route::Settings {},
+            Route::Upload {},
+        ] {
+            assert_eq!(scope_of(&other), Scope::Collection);
+        }
+        assert_eq!(
+            search_route(&Scope::Collection, " cat "),
+            Route::Gallery { q: "cat".into() }
+        );
+        // A tag with a sign the router would misread goes into the address
+        // in a form it leaves alone, and the box shows it as typed.
+        let odd = search_route(&scope_of(&search), "panty_&_stocking");
+        assert_eq!(
+            odd,
+            Route::Boorus {
+                q: "panty_~26_stocking".into(),
+                s: "danbooru,gelbooru".into()
+            }
+        );
+        assert_eq!(route_query(&odd, ""), "panty_&_stocking");
+    }
+
+    #[test]
+    fn another_sites_tags_show_their_category_and_a_short_count() {
+        let remote = |name: &str, category, count| RemoteTag {
+            name: name.into(),
+            category,
+            count,
+        };
+        let list = hints(vec![
+            remote("blush", TagCategory::General, Some(4_217_021)),
+            remote("blue_archive", TagCategory::Copyright, Some(9)),
+            remote("someone", TagCategory::Artist, None),
+        ]);
+        let shown: Vec<(&str, &str, Option<&str>)> = list
+            .iter()
+            .map(|h| (h.name.as_str(), h.class, h.count.as_deref()))
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                ("blush", "", Some("4.2M")),
+                ("blue_archive", "cat-copyright", Some("9")),
+                ("someone", "cat-artist", None),
+            ]
+        );
+        // The collection's own are as they were: no colour, the count as it is.
+        assert_eq!(
+            Hint::from(tag("blue_sky")),
+            Hint {
+                name: "blue_sky".into(),
+                class: "",
+                count: Some("3".into())
+            }
+        );
+        for (n, short) in [
+            (0, "0"),
+            (999, "999"),
+            (1_000, "1.0k"),
+            (1_234, "1.2k"),
+            (99_949, "99.9k"),
+            (123_456, "123k"),
+            (999_999, "999k"),
+            (1_000_000, "1.0M"),
+            (4_217_021, "4.2M"),
+            (u64::MAX, "18446744073709M"),
+        ] {
+            assert_eq!(short_count(n), short, "{n}");
+        }
+        // The colours are in the stylesheet, for the list under the box.
+        let css = include_str!("../../assets/main.css");
+        for class in ["cat-artist", "cat-character", "cat-copyright", "cat-meta"] {
+            assert!(css.contains(&format!(
+                ".suggestions .{class} {{ color: var(--{class}); }}"
+            )));
+        }
+    }
+
+    #[test]
+    fn another_sites_answers_are_kept_apart_and_asked_for_less_often() {
+        let now = Utc::now();
+        let mut kept: Answers<RemoteTag> = Answers::default();
+        let blush = RemoteTag {
+            name: "blush".into(),
+            category: TagCategory::General,
+            count: Some(1),
+        };
+        kept.put("a|1|danbooru|https://d.org", "blu".into(), vec![blush], now);
+        let found = kept.get("a|1|danbooru|https://d.org", "blu", now);
+        assert_eq!(found.map(|tags| tags.len()), Some(1));
+        // Another site has other tags.
+        assert!(kept.get("a|1|gelbooru|https://g.org", "blu", now).is_none());
+        assert!(REMOTE_PAUSE_MS > TYPING_PAUSE_MS);
+        assert_eq!(REMOTE_PAUSE_MS, 250);
     }
 
     #[test]

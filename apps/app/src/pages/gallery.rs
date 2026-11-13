@@ -33,11 +33,11 @@ use crate::util::{escape_attr, format_duration, rating_label, split_tag_edit};
 const PAGE_SIZE: u32 = 60;
 
 /// Width of the gallery's grid in pixels, kept so coming back to the page
-/// lays it out right away.
-static GRID_WIDTH: GlobalSignal<f64> = Signal::global(|| 0.0);
+/// lays it out right away. The booru browser's grid is as wide.
+pub(super) static GRID_WIDTH: GlobalSignal<f64> = Signal::global(|| 0.0);
 
 /// Reports the grid's width now and whenever it changes.
-const WATCH_WIDTH: &str = r#"
+pub(super) const WATCH_WIDTH: &str = r#"
 const box = document.querySelector(".masonry-box");
 if (box) {
   const seen = new ResizeObserver(() => {
@@ -51,17 +51,17 @@ if (box) {
 
 /// The grid's measurements as they are now.
 #[derive(Clone, Copy, PartialEq)]
-struct Grid {
-    view: GalleryView,
-    columns: u32,
-    gap: f64,
-    width: f64,
+pub(super) struct Grid {
+    pub view: GalleryView,
+    pub columns: u32,
+    pub gap: f64,
+    pub width: f64,
     /// A tile's width in pixels.
-    tile: f64,
+    pub tile: f64,
 }
 
 impl Grid {
-    fn new(prefs: &Prefs, width: f64) -> Self {
+    pub(super) fn new(prefs: &Prefs, width: f64) -> Self {
         let gap = if prefs.flush_tiles { 0.0 } else { TILE_GAP };
         let view = prefs.gallery_view;
         let columns = layout::columns(width, gap, view, prefs.gallery_columns);
@@ -80,10 +80,20 @@ impl Grid {
     }
 
     fn place(self, list: &[Rc<Post>]) -> layout::Layout {
+        self.lay(list.iter().map(|p| (p.width, p.height)))
+    }
+
+    /// Lays out pictures of these sizes, in order. One without a size gets a
+    /// square tile.
+    pub(super) fn lay(
+        self,
+        sizes: impl IntoIterator<Item = (Option<i32>, Option<i32>)>,
+    ) -> layout::Layout {
         layout::place(
             self.view,
-            list.iter()
-                .map(|p| layout::tile_ratio(self.view, p.width, p.height)),
+            sizes
+                .into_iter()
+                .map(|(width, height)| layout::tile_ratio(self.view, width, height)),
             self.columns,
         )
     }
@@ -105,13 +115,13 @@ fn tile_box(list: &[Rc<Post>], id: i64) -> Option<(f64, f64)> {
 
 /// How far around the top of the screen tiles go on the page, until the page
 /// has reported how tall the screen is (`WATCH_NEAR`).
-const FIRST_NEAR: (f64, f64) = (1500.0, 3000.0);
+pub(super) const FIRST_NEAR: (f64, f64) = (1500.0, 3000.0);
 
 /// The part of the grid the screen can be showing, given the part the page last
 /// said to keep (`WATCH_NEAR`). That part reaches a screen and a half above the
 /// screen and as far below it, and the page says so again before the screen has
 /// moved a quarter of its height either way.
-fn may_be_on_screen((from, to): (f64, f64)) -> (f64, f64) {
+pub(super) fn may_be_on_screen((from, to): (f64, f64)) -> (f64, f64) {
     let screen = (to - from) / 4.0;
     (from + screen * 1.25, to - screen * 1.25)
 }
@@ -278,7 +288,7 @@ struct Seen {
 /// there is one, as it stays on the screen when the layout changes. While the
 /// page moves, `html` carries `sb-scrolling`, which holds back the light of
 /// the tile under the pointer (`main.css`).
-const WATCH_SCROLL: &str = r#"
+pub(super) const WATCH_SCROLL: &str = r#"
 window.__sbSpot?.stop();
 const root = document.documentElement;
 let timer = 0, last = 0, moving = false;
@@ -330,7 +340,7 @@ window.__sbSpot = {
   },
 };
 "#;
-const WATCH_SCROLL_OFF: &str = "window.__sbSpot?.stop(); window.__sbSpot = null;";
+pub(super) const WATCH_SCROLL_OFF: &str = "window.__sbSpot?.stop(); window.__sbSpot = null;";
 
 /// Reports which part of the grid to keep on the page, in pixels from its top:
 /// the screen and a screen and a half either way, so pictures are there before
@@ -340,7 +350,7 @@ const WATCH_SCROLL_OFF: &str = "window.__sbSpot?.stop(); window.__sbSpot = null;
 /// frames to each. Browsers go on downloading a picture taken off the page,
 /// which after a fast scroll keeps the ones on the screen waiting behind
 /// hundreds of others, so it cancels those.
-const WATCH_NEAR: &str = r#"
+pub(super) const WATCH_NEAR: &str = r#"
 window.__sbNear?.stop();
 let held = null;
 let frame = 0;
@@ -383,7 +393,7 @@ window.__sbNear = {
 };
 check(true);
 "#;
-const WATCH_NEAR_OFF: &str = "window.__sbNear?.stop(); window.__sbNear = null;";
+pub(super) const WATCH_NEAR_OFF: &str = "window.__sbNear?.stop(); window.__sbNear = null;";
 
 /// Puts a remembered tile back where it was on the screen, or failing that,
 /// the scroll position. The list may land a frame after this. It works from the
@@ -1065,7 +1075,7 @@ pub fn Gallery(q: String) -> Element {
 }
 
 /// Says whether the page is more than a screen down, each time that changes.
-const WATCH_FAR: &str = r#"
+pub(super) const WATCH_FAR: &str = r#"
 window.__sbFar?.stop();
 let frame = 0, far = null;
 const check = () => {
@@ -1090,7 +1100,7 @@ window.__sbFar = {
 };
 check();
 "#;
-const WATCH_FAR_OFF: &str = "window.__sbFar?.stop(); window.__sbFar = null;";
+pub(super) const WATCH_FAR_OFF: &str = "window.__sbFar?.stop(); window.__sbFar = null;";
 
 /// The arrow back to the top, once the page is a screen down. A component of
 /// its own, so the gallery isn't drawn again each time it comes or goes. It
@@ -1487,8 +1497,9 @@ fn ColorMenu(q: String) -> Element {
 
 /// How the gallery's tiles look: shape and number of columns. The limits
 /// follow the grid's width, so the slider only offers sizes that work here.
+/// The booru browser has the same menu, for the same tiles.
 #[component]
-fn ViewMenu(width: f64, gap: f64) -> Element {
+pub(super) fn ViewMenu(width: f64, gap: f64) -> Element {
     let mut open = use_signal(|| false);
     let (view, chosen) = {
         let prefs = PREFS.read();

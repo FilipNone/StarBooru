@@ -16,6 +16,8 @@ bytes = "1"
 chrono = { workspace = true, features = ["wasmbind"] }
 dioxus = { version = "0.7", features = ["router"] }
 fluent-bundle = "0.16"
+# One search goes to several boorus at once.
+futures-util = "0.3"
 unic-langid = "0.9"
 sys-locale = "0.3"
 
@@ -40,7 +42,6 @@ robius-android-env = "0.2"
 
 [dev-dependencies]
 fluent-syntax = "0.12"
-futures-util = "0.3"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt", "net", "io-util", "time"] }

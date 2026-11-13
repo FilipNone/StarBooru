@@ -2,6 +2,7 @@ mod admin;
 mod admin_ai;
 mod admin_backups;
 mod api_keys;
+mod booru_post;
 mod boorus;
 mod color_picker;
 mod duplicates;
@@ -29,6 +30,7 @@ use crate::link::Link;
 use dioxus::prelude::*;
 
 pub use admin::Admin;
+pub use booru_post::BooruPost;
 pub use boorus::Boorus;
 pub use color_picker::ColorPicker;
 pub use duplicates::Duplicates;

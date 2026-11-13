@@ -111,6 +111,7 @@ mod tests {
     fn no_link_listens_for_its_mounting() {
         // Every file that writes a `Link` uses this one, which has no `onmounted`.
         let sources = [
+            ("pages/booru_post.rs", include_str!("pages/booru_post.rs")),
             ("pages/boorus.rs", include_str!("pages/boorus.rs")),
             ("pages/duplicates.rs", include_str!("pages/duplicates.rs")),
             ("pages/explore.rs", include_str!("pages/explore.rs")),

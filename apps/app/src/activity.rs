@@ -1,6 +1,6 @@
 //! Work that outlives a page: the file upload queue and the server's import
-//! jobs. Both live at the app's root, so leaving the Upload or Other boorus
-//! page doesn't stop them. Files are read on this device, so uploads stop if
+//! jobs. Both live at the app's root, so leaving the Upload page or the booru
+//! browser doesn't stop them. Files are read on this device, so uploads stop if
 //! the app closes; imports run on the server and finish regardless.
 
 use std::collections::{HashMap, HashSet};
@@ -422,13 +422,15 @@ fn summary(done: usize, duplicate: usize, failed: usize, uploads: bool) -> Strin
     parts.join(" · ")
 }
 
-/// The latest job for each source page, for marking search results.
+/// The latest job for each post page, for marking search results: by its
+/// source, or by its address when the page itself was what it imported (a
+/// post whose site showed no file).
 pub fn jobs_by_source(jobs: &[ImportJob]) -> HashMap<String, ImportJob> {
     let mut map: HashMap<String, ImportJob> = HashMap::new();
     for job in jobs {
-        let Some(source) = &job.source else { continue };
-        if map.get(source).is_none_or(|j| j.id < job.id) {
-            map.insert(source.clone(), job.clone());
+        let page = job.source.as_ref().unwrap_or(&job.url);
+        if map.get(page).is_none_or(|j| j.id < job.id) {
+            map.insert(page.clone(), job.clone());
         }
     }
     map
@@ -523,7 +525,9 @@ mod tests {
             job(8, JobState::Queued, None),
         ];
         let map = jobs_by_source(&jobs);
-        assert_eq!(map.len(), 2);
+        assert_eq!(map.len(), 3);
         assert_eq!(map.get("https://b.org/p/1").map(|j| j.id), Some(9));
+        // A post imported by its page has no other source.
+        assert_eq!(map.get("https://example.org/8.png").map(|j| j.id), Some(8));
     }
 }

@@ -9,8 +9,8 @@ use dioxus::prelude::*;
 
 use crate::oidc::OidcReturn;
 use crate::pages::{
-    Admin, Boorus, Duplicates, Explore, Gallery, Help, NotFound, PostView, Privacy, Settings,
-    SharedPage, Shell, TagPage, Tags, Terms, Trash, Upload,
+    Admin, BooruPost, Boorus, Duplicates, Explore, Gallery, Help, NotFound, PostView, Privacy,
+    Settings, SharedPage, Shell, TagPage, Tags, Terms, Trash, Upload,
 };
 
 #[derive(Routable, Clone, PartialEq, Debug)]
@@ -29,8 +29,13 @@ pub enum Route {
         TagPage { name: String },
         #[route("/upload")]
         Upload {},
-        #[route("/boorus")]
-        Boorus {},
+        // `s` is the sites searched and `u` a post's page on its site. They and
+        // `q` are written by `boorus::to_address`, as the router leaves `&` and
+        // `%` in a value as they are.
+        #[route("/boorus?:q&:s")]
+        Boorus { q: String, s: String },
+        #[route("/boorus/post?:u&:q&:s")]
+        BooruPost { u: String, q: String, s: String },
         #[route("/settings")]
         Settings {},
         #[route("/trash")]

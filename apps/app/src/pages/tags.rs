@@ -24,7 +24,7 @@ const CATEGORIES: [TagCategory; 5] = [
     TagCategory::Meta,
 ];
 
-fn category_label(category: TagCategory) -> String {
+pub(super) fn category_label(category: TagCategory) -> String {
     match category {
         TagCategory::General => t!("category-general"),
         TagCategory::Artist => t!("category-artist"),

@@ -34,6 +34,7 @@ pub enum Icon {
     Logout,
     Orientation,
     Palette,
+    Planet,
     Play,
     RatioCustom,
     RatioFree,
@@ -154,6 +155,11 @@ impl Icon {
             Icon::Palette => Shape::Fill(
                 "M12 2c5.523 0 10 4.477 10 10q-.002.975-.18 1.9c-.386 2.003-2.398 2.85-4.083 2.57l-1.739-.29a1.29 1.29 0 0 0-1.124.36l-.089.089c-.34.34-.423.858-.209 1.287c.423.846.428 1.812.055 2.604a2.53 2.53 0 0 1-2.222 1.472q-.204.009-.409.008C6.477 22 2 17.523 2 12S6.477 2 12 2m-4.5 9a1.5 1.5 0 1 0 0 3a1.5 1.5 0 0 0 0-3m2-4a1.5 1.5 0 1 0 0 3a1.5 1.5 0 0 0 0-3m5 0a1.5 1.5 0 1 0 0 3a1.5 1.5 0 0 0 0-3",
             ),
+            // Drawn for StarBooru: a planet, and the near half of its ring
+            // across it, which the even-odd rule cuts out of the planet.
+            Icon::Planet => Shape::EvenOdd(
+                "M5.5 12a6.5 6.5 0 1 0 13 0a6.5 6.5 0 1 0 -13 0zM1.77 16.56A11.2 5.2 -24 0 0 22.23 7.44L20.04 8.42A8.8 2.6 -24 0 1 3.96 15.58z",
+            ),
             Icon::Play => Shape::EvenOdd(
                 "M5.669 4.76a1.47 1.47 0 0 1 2.04-1.177c1.062.453 3.442 1.532 6.462 3.276c3.021 1.744 5.146 3.266 6.069 3.958c.788.59.79 1.763.001 2.355c-.914.687-3.013 2.191-6.07 3.956c-3.06 1.766-5.412 2.832-6.464 3.28a1.467 1.467 0 0 1-2.038-1.177c-.138-1.141-.396-3.734-.396-7.236c0-3.5.257-6.092.396-7.235",
             ),
@@ -268,7 +274,7 @@ pub fn Ico(icon: Icon, #[props(default = 24)] size: u32) -> Element {
 mod tests {
     use super::*;
 
-    const ALL: [Icon; 53] = [
+    const ALL: [Icon; 54] = [
         Icon::Add,
         Icon::ArrowBack,
         Icon::ArrowUp,
@@ -299,6 +305,7 @@ mod tests {
         Icon::Logout,
         Icon::Orientation,
         Icon::Palette,
+        Icon::Planet,
         Icon::Play,
         Icon::RatioCustom,
         Icon::RatioFree,
@@ -376,6 +383,28 @@ mod tests {
                 "dot {i} at {x},{y} is drawn twice"
             );
         }
+    }
+
+    #[test]
+    fn the_planets_ring_reaches_past_it_on_both_sides() {
+        // The planet is a circle drawn from its left side, and the ring starts
+        // at its own left tip and runs to its right one.
+        let d = path_data(Icon::Planet);
+        let (planet, ring) = d.split_once('z').unwrap();
+        let numbers = |text: &str| -> Vec<f32> {
+            text.split(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-'))
+                .filter_map(|n| n.parse().ok())
+                .collect()
+        };
+        let planet = numbers(planet);
+        let (left, radius) = (planet[0], planet[2]);
+        let right = left + 2.0 * radius;
+        let ring = numbers(ring.split_once('L').unwrap().0);
+        let (tip_left, tip_right) = (ring[0], ring[ring.len() - 2]);
+        assert!(tip_left < left - 2.0 && tip_right > right + 2.0);
+        assert!(tip_left > 0.0 && tip_right < 24.0, "inside the grid");
+        // It tilts: the right tip is the higher one.
+        assert!(ring[ring.len() - 1] < ring[1]);
     }
 
     #[test]

@@ -262,9 +262,9 @@ impl GalleryView {
     }
 }
 
-/// Another booru the user searched from StarBooru. `login` and `api_key` are
-/// only read: an older version kept the account here, and the Other boorus
-/// page moves it to the server, which keeps the key encrypted.
+/// A booru the user added to the browser by its address. `login` and
+/// `api_key` are only read: an older version kept the account here, and the
+/// browser moves it to the server, which keeps the key encrypted.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SavedBooru {
@@ -301,8 +301,14 @@ pub struct Prefs {
     /// Automatic effects found this device too slow for the full ones. Kept,
     /// so the next start doesn't stutter until it finds out again.
     pub effects_reduced: bool,
-    /// Other boorus searched, the latest first.
+    /// The boorus the user added by their address, in the order of their
+    /// chips: the latest last.
     pub boorus: Vec<SavedBooru>,
+    /// The sites the booru browser searched last, as their keys
+    /// (`pages/boorus.rs`). Empty until one is chosen.
+    pub booru_sites: Vec<String>,
+    /// Whether the browser leaves out a file another site already showed.
+    pub booru_dedupe: bool,
     pub gallery_view: GalleryView,
     /// Columns in the gallery; `None` aims for a set tile width.
     pub gallery_columns: Option<u8>,
@@ -333,6 +339,8 @@ impl Default for Prefs {
             effects: Effects::Auto,
             effects_reduced: false,
             boorus: Vec::new(),
+            booru_sites: Vec::new(),
+            booru_dedupe: true,
             gallery_view: GalleryView::default(),
             gallery_columns: None,
             flush_tiles: false,
@@ -682,6 +690,26 @@ mod tests {
         // An unknown hand from a newer version falls back rather than failing.
         let prefs: Prefs = serde_json::from_str(r#"{"hand":"both","theme":"light"}"#).unwrap();
         assert_eq!((prefs.hand, prefs.theme), (Hand::Either, Theme::Light));
+    }
+
+    #[test]
+    fn the_booru_browser_starts_from_prefs_without_its_fields() {
+        // Written before the browser: a site with the account it then kept.
+        let prefs: Prefs = serde_json::from_str(
+            r#"{"theme":"dark","boorus":[{"api":"e621","base":"https://e926.net","login":"me","api_key":"k"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(prefs.boorus.len(), 1);
+        assert!(prefs.booru_sites.is_empty());
+        assert!(prefs.booru_dedupe, "duplicates are hidden unless asked for");
+        let prefs: Prefs = serde_json::from_str(
+            r#"{"booru_sites":["danbooru","danbooru|http://nas:8000"],"booru_dedupe":false}"#,
+        )
+        .unwrap();
+        assert_eq!(prefs.booru_sites, ["danbooru", "danbooru|http://nas:8000"]);
+        assert!(!prefs.booru_dedupe);
+        let again: Prefs = serde_json::from_str(&serde_json::to_string(&prefs).unwrap()).unwrap();
+        assert_eq!(again, prefs);
     }
 
     #[test]
