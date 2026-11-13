@@ -23,8 +23,8 @@ use starbooru_core::{
     TagDetail, TagOrder, TagUpdate, Usage, User, UserUpdate, VoteRequest,
 };
 use starbooru_core::{
-    AiAdminStatus, AiGeneralUpdate, AiStatus, AiTestResult, AiTool, AiToolUpdate, PanelTranslation,
-    TagSuggestions, TranslateRequest, Translation,
+    AiAdminStatus, AiGeneralUpdate, AiStatus, AiTestResult, AiTool, AiToolUpdate, BooruAccount,
+    PanelTranslation, SaveBooruAccount, TagSuggestions, TranslateRequest, Translation,
 };
 use std::time::Duration;
 use thiserror::Error;
@@ -673,6 +673,21 @@ impl Client {
     /// a result with [`Client::import_url`].
     pub async fn remote_search(&self, search: &RemoteSearch) -> Result<RemotePage> {
         self.json(Method::POST, "/remote/search", search).await
+    }
+
+    /// The accounts on other boorus saved on the server, without their keys.
+    pub async fn booru_accounts(&self) -> Result<Vec<BooruAccount>> {
+        Self::send(self.request(Method::GET, "/remote/accounts")?).await
+    }
+
+    /// Saves the account for a site on the server, which keeps its key
+    /// encrypted and uses it for that site from then on.
+    pub async fn save_booru_account(&self, account: &SaveBooruAccount) -> Result<BooruAccount> {
+        self.json(Method::PUT, "/remote/accounts", account).await
+    }
+
+    pub async fn delete_booru_account(&self, id: i64) -> Result<()> {
+        Self::send_empty(self.request(Method::DELETE, &format!("/remote/accounts/{id}"))?).await
     }
 
     /// Reads a site's first page to see that it answers and how much it has.

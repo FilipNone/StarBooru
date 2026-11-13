@@ -6231,6 +6231,7 @@ dependencies = [
  "rand 0.10.3",
  "rayon",
  "reqwest 0.13.5",
+ "ring",
  "rustls",
  "serde",
  "serde_json",

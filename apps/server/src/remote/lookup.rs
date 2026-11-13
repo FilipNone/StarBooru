@@ -8,6 +8,7 @@ use starbooru_core::tag::MAX_TAGS_PER_POST;
 use starbooru_core::{ImportRequest, RemotePost, post_link};
 use url::Url;
 
+use super::accounts::Accounts;
 use super::pace::{self, BUSY_WAIT_SECS, Pace};
 use super::{base_url, html, parse, post_url};
 use crate::error::{AppError, AppResult};
@@ -23,20 +24,27 @@ pub enum Lookup {
     Refused(Option<u16>),
 }
 
-/// Asks the site an address belongs to which post it is, in its turn. A site
-/// that says it is busy is an error that says when to come back.
-pub async fn find(pace: &Pace, fetcher: &Fetcher, raw: &str) -> AppResult<Lookup> {
-    let Some(link) = post_link(raw, &[]) else {
+/// Asks the site an address belongs to which post it is, in its turn, with
+/// the user's account there when they saved one. A site that says it is busy
+/// is an error that says when to come back.
+pub async fn find(
+    pace: &Pace,
+    fetcher: &Fetcher,
+    accounts: &Accounts,
+    raw: &str,
+) -> AppResult<Lookup> {
+    let Some(link) = post_link(raw, &accounts.sites()) else {
         return Ok(Lookup::Unknown);
     };
+    let account = accounts.of(&link.base);
     let url = base_url(&link.base)
-        .and_then(|base| Some((post_url(link.api, &base, &link.post, None)?, base)));
+        .and_then(|base| Some((post_url(link.api, &base, &link.post, account)?, base)));
     let Some((url, base)) = url else {
         return Ok(Lookup::Unknown);
     };
     let host = pace::site_key(&url);
     // No use asking again what it refused a moment ago.
-    if pace.locked(&host, Utc::now()) {
+    if account.is_none() && pace.locked(&host, Utc::now()) {
         return Ok(Lookup::Refused(Some(401)));
     }
     let answer = match pace::ask(pace, fetcher, link.api, &url).await {
@@ -45,7 +53,7 @@ pub async fn find(pace: &Pace, fetcher: &Fetcher, raw: &str) -> AppResult<Lookup
         Err(_) => return Ok(Lookup::Refused(None)),
     };
     if !answer.is_success() {
-        if matches!(answer.status, 401 | 403) {
+        if matches!(answer.status, 401 | 403) && account.is_none() {
             pace.lock(&host, Utc::now());
         }
         return Ok(Lookup::Refused(Some(answer.status)));
@@ -98,6 +106,7 @@ pub fn wants_lookup(req: &ImportRequest) -> bool {
 pub async fn fetch(
     fetcher: &Fetcher,
     pace: &Pace,
+    accounts: &Accounts,
     req: ImportRequest,
     max_bytes: usize,
     watch: Watch<'_>,
@@ -105,7 +114,7 @@ pub async fn fetch(
     let mut req = req;
     let mut refused = None;
     if wants_lookup(&req) {
-        match find(pace, fetcher, &req.url).await? {
+        match find(pace, fetcher, accounts, &req.url).await? {
             Lookup::Found(post) => req = filled(&req, *post),
             Lookup::Unknown => {}
             Lookup::Refused(status) => refused = Some(status),
@@ -231,7 +240,8 @@ mod tests {
         ) -> Response {
             let is = |key: &str, value: &str| q.get(key).map(String::as_str) == Some(value);
             if is("page", "dapi") {
-                if locked {
+                // Locked, it opens for user 42 with the key `k`.
+                if locked && !(is("user_id", "42") && is("api_key", "k")) {
                     return StatusCode::UNAUTHORIZED.into_response();
                 }
                 if !is("id", "7") {
@@ -274,9 +284,10 @@ mod tests {
     async fn a_post_page_becomes_its_file_with_tags_and_rating() {
         let fetcher = Fetcher::new(crate::fetch::Reach::Any).unwrap();
         let pace = Pace::default();
+        let none = Accounts::default();
         let site = fake_booru(false).await;
         let page = format!("{site}/index.php?page=post&s=view&id=7");
-        let (bytes, got) = fetch(&fetcher, &pace, req(&page, None), 1 << 20, UNWATCHED)
+        let (bytes, got) = fetch(&fetcher, &pace, &none, req(&page, None), 1 << 20, UNWATCHED)
             .await
             .unwrap();
         assert_eq!(bytes, crate::testing::png(16, 12, 3));
@@ -293,11 +304,19 @@ mod tests {
         // are not supported".
         let fetcher = Fetcher::new(crate::fetch::Reach::Any).unwrap();
         let pace = Pace::default();
+        let none = Accounts::default();
         let site = fake_booru(true).await;
         let page = format!("{site}/index.php?page=post&s=view&id=7");
-        let (bytes, got) = fetch(&fetcher, &pace, req(&page, Some(&page)), 1 << 20, UNWATCHED)
-            .await
-            .unwrap();
+        let (bytes, got) = fetch(
+            &fetcher,
+            &pace,
+            &none,
+            req(&page, Some(&page)),
+            1 << 20,
+            UNWATCHED,
+        )
+        .await
+        .unwrap();
         assert_eq!(bytes, crate::testing::png(16, 12, 3));
         assert_eq!(got.url, format!("{site}/images/a.png"));
         assert_eq!(got.tags, ["mine", "sky", "artist:some_one", "sea"]);
@@ -306,18 +325,32 @@ mod tests {
 
         // A page with no picture says so, and says why when the site refused.
         let empty = format!("{site}/index.php?page=post&s=view&id=8");
-        let error = fetch(&fetcher, &pace, req(&empty, None), 1 << 20, UNWATCHED)
-            .await
-            .unwrap_err();
+        let error = fetch(
+            &fetcher,
+            &pace,
+            &none,
+            req(&empty, None),
+            1 << 20,
+            UNWATCHED,
+        )
+        .await
+        .unwrap_err();
         assert!(
             matches!(&error, AppError::BadRequest(m) if m.contains("account")),
             "{error}"
         );
         let open = fake_booru(false).await;
         let empty = format!("{open}/index.php?page=post&s=view&id=8");
-        let error = fetch(&fetcher, &pace, req(&empty, None), 1 << 20, UNWATCHED)
-            .await
-            .unwrap_err();
+        let error = fetch(
+            &fetcher,
+            &pace,
+            &none,
+            req(&empty, None),
+            1 << 20,
+            UNWATCHED,
+        )
+        .await
+        .unwrap_err();
         assert!(matches!(error, AppError::Unsupported(_)), "{error}");
     }
 
@@ -325,9 +358,10 @@ mod tests {
     async fn a_file_or_a_search_result_is_downloaded_as_it_is() {
         let fetcher = Fetcher::new(crate::fetch::Reach::Any).unwrap();
         let pace = Pace::default();
+        let none = Accounts::default();
         let site = fake_booru(false).await;
         let file = format!("{site}/images/a.png");
-        let (_, got) = fetch(&fetcher, &pace, req(&file, None), 1 << 20, UNWATCHED)
+        let (_, got) = fetch(&fetcher, &pace, &none, req(&file, None), 1 << 20, UNWATCHED)
             .await
             .unwrap();
         assert_eq!(
@@ -340,15 +374,49 @@ mod tests {
         let locked = fake_booru(true).await;
         let file = format!("{locked}/images/a.png");
         let page = format!("{locked}/index.php?page=post&s=view&id=7");
-        let (_, got) = fetch(&fetcher, &pace, req(&file, Some(&page)), 1 << 20, UNWATCHED)
-            .await
-            .unwrap();
+        let (_, got) = fetch(
+            &fetcher,
+            &pace,
+            &none,
+            req(&file, Some(&page)),
+            1 << 20,
+            UNWATCHED,
+        )
+        .await
+        .unwrap();
         assert_eq!(got.source.as_deref(), Some(page.as_str()));
         assert_eq!(got.rating, Rating::Explicit);
-        let error = fetch(&fetcher, &pace, req(&file, None), 8, UNWATCHED)
+        let error = fetch(&fetcher, &pace, &none, req(&file, None), 8, UNWATCHED)
             .await
             .unwrap_err();
         assert!(matches!(error, AppError::PayloadTooLarge), "{error}");
+    }
+
+    #[tokio::test]
+    async fn a_saved_account_opens_the_sites_api() {
+        use super::super::accounts::Account;
+        let fetcher = Fetcher::new(crate::fetch::Reach::Any).unwrap();
+        let pace = Pace::default();
+        let site = fake_booru(true).await;
+        let page = format!("{site}/index.php?page=post&s=view&id=7");
+        let mine = Accounts(vec![Account {
+            api: starbooru_core::BooruApi::Gelbooru,
+            base: site.clone(),
+            login: "42".into(),
+            key: "k".into(),
+        }]);
+        // Refused a moment ago without an account: with one, it is asked again.
+        pace.lock(&pace::site_key(&Url::parse(&site).unwrap()), Utc::now());
+        let found = find(&pace, &fetcher, &mine, &page).await.unwrap();
+        let Lookup::Found(post) = found else {
+            panic!("the account didn't open the API");
+        };
+        assert_eq!(post.rating, Rating::Questionable);
+        // The key went to the site and nowhere else.
+        assert!(!post.file_url.contains("api_key") && !post.page_url.contains("api_key"));
+        let none = Accounts::default();
+        let found = find(&pace, &fetcher, &none, &page).await.unwrap();
+        assert!(matches!(found, Lookup::Refused(Some(401))));
     }
 
     #[tokio::test]
@@ -371,9 +439,10 @@ mod tests {
         tokio::spawn(async move { axum::serve(listener, app).await });
         let fetcher = Fetcher::new(crate::fetch::Reach::Any).unwrap();
         let pace = Pace::default();
+        let none = Accounts::default();
         let page = format!("{site}/index.php?page=post&s=view&id=7");
         for _ in 0..3 {
-            let found = find(&pace, &fetcher, &page).await.unwrap();
+            let found = find(&pace, &fetcher, &none, &page).await.unwrap();
             assert!(matches!(found, Lookup::Refused(Some(401))));
         }
         assert_eq!(asked.load(Ordering::SeqCst), 1);
@@ -391,11 +460,13 @@ mod tests {
         tokio::spawn(async move { axum::serve(listener, app).await });
         let fetcher = Fetcher::new(crate::fetch::Reach::Any).unwrap();
         let pace = Pace::default();
+        let none = Accounts::default();
         let busy =
             |e: AppError| matches!(e, AppError::TooManyRequests { retry_after } if retry_after > 0);
         let error = fetch(
             &fetcher,
             &pace,
+            &none,
             req(&format!("{site}/a.png"), None),
             1 << 20,
             UNWATCHED,
@@ -407,6 +478,7 @@ mod tests {
         let error = fetch(
             &fetcher,
             &pace,
+            &none,
             req(&format!("{site}/b.png"), None),
             1 << 20,
             UNWATCHED,
@@ -420,6 +492,7 @@ mod tests {
             fetch(
                 &fetcher,
                 &other,
+                &none,
                 req(&format!("{site}/b.png"), None),
                 1 << 20,
                 UNWATCHED

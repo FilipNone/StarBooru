@@ -73,7 +73,7 @@ Admins can change the name, open registration, the recycle-bin days and the back
 | Variable | Default | Meaning |
 |---|---|---|
 | `DATABASE_URL` | required | PostgreSQL URL (the compose file builds it from `POSTGRES_PASSWORD`). The migrations add the `pg_trgm` extension. That needs PostgreSQL 13 or newer, where the database's owner can add it, or a superuser on anything older. The bundled container is fine. |
-| `STARBOORU_SECRET` | required | At least 32 characters; signs media URLs. Changing it invalidates existing media links, which clients refresh on reload. |
+| `STARBOORU_SECRET` | required | At least 32 characters; signs media URLs and encrypts the keys of saved accounts on other boorus. Changing it invalidates existing media links, which clients refresh on reload, and makes those saved accounts unusable until they are entered again. Keep it with your backups: a restored database needs the same one to open them. |
 | `STARBOORU_NAME` | `StarBooru` | Instance name shown at sign-in |
 | `STARBOORU_ALLOW_REGISTRATION` | `false` | Allow sign-ups after the first (admin) account |
 | `STARBOORU_MAX_UPLOAD_MB` | `512` | Largest upload, 1 to 16384 |

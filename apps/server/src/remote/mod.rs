@@ -3,6 +3,7 @@
 //! import needs (hidden files, odd ids) is skipped, not an error. Nothing here
 //! does any I/O; `lookup` and `routes::remote` do the asking.
 
+pub mod accounts;
 pub mod html;
 pub mod lookup;
 pub mod pace;

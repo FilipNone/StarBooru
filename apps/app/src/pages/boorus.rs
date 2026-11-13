@@ -8,7 +8,8 @@ use crate::link::Link;
 use dioxus::prelude::*;
 use starbooru_core::tag::{MAX_TAGS_PER_POST, TagError};
 use starbooru_core::{
-    BooruApi, ImportJob, ImportRequest, JobState, RemotePost, RemoteSearch, SITES, parse_tag_list,
+    BooruAccount, BooruApi, ImportJob, ImportRequest, JobState, RemotePost, RemoteSearch, SITES,
+    SaveBooruAccount, parse_tag_list,
 };
 
 use super::{Choice, ErrorBanner, Select, Spinner};
@@ -56,13 +57,43 @@ fn last_site(saved: &[SavedBooru]) -> (BooruApi, String) {
         .unwrap_or((BooruApi::Danbooru, String::new()))
 }
 
-/// The saved account for `base`, as (login, key).
+/// The account an older version kept on this device for `base`, as (login,
+/// key). New ones are saved on the server.
 fn account_for(saved: &[SavedBooru], base: &str) -> (String, String) {
     saved
         .iter()
         .find(|s| s.base == base)
         .map(|s| (s.login.clone(), s.api_key.clone()))
         .unwrap_or_default()
+}
+
+/// An address as the server keeps it, to find its saved account.
+fn tidy(base: &str) -> String {
+    base.trim().trim_end_matches('/').to_owned()
+}
+
+/// The accounts an older version kept on this device, to move to the server.
+fn kept_on_device(saved: &[SavedBooru]) -> Vec<SaveBooruAccount> {
+    saved
+        .iter()
+        .filter(|s| !s.login.trim().is_empty() && !s.api_key.trim().is_empty())
+        .filter_map(|s| {
+            Some(SaveBooruAccount {
+                api: api_of(&s.api)?,
+                base: s.base.clone(),
+                login: s.login.clone(),
+                api_key: s.api_key.clone(),
+            })
+        })
+        .collect()
+}
+
+/// Takes the account for `base` off this device.
+fn forget_on_device(saved: &mut [SavedBooru], base: &str) {
+    for site in saved.iter_mut().filter(|s| tidy(&s.base) == tidy(base)) {
+        site.login.clear();
+        site.api_key.clear();
+    }
 }
 
 /// Puts `site` first, replacing the entry for the same address.
@@ -115,6 +146,29 @@ pub fn Boorus() -> Element {
     let mut status = use_signal(HashMap::<u64, Status>::new);
     let mut extra = use_signal(String::new);
     let mut importing = use_signal(|| false);
+    // Accounts saved on the server, and whether a new one is to be.
+    let mut accounts = use_signal(Vec::<BooruAccount>::new);
+    let mut keep = use_signal(|| true);
+    use_hook(move || {
+        let Some(client) = store::client() else {
+            return;
+        };
+        spawn(async move {
+            // What an older version kept here moves to the server, sealed.
+            for account in kept_on_device(&PREFS.peek().boorus) {
+                if client.save_booru_account(&account).await.is_ok() {
+                    forget_on_device(&mut PREFS.write().boorus, &account.base);
+                    if tidy(&base.peek()) == tidy(&account.base) {
+                        login.set(String::new());
+                        api_key.set(String::new());
+                    }
+                }
+            }
+            if let Ok(list) = client.booru_accounts().await {
+                accounts.set(list);
+            }
+        });
+    });
 
     let mut reset = move || {
         posts.write().clear();
@@ -160,15 +214,32 @@ pub fn Boorus() -> Element {
         spawn(async move {
             match client.remote_search(&search).await {
                 Ok(found) => {
+                    // The site is remembered here; its account never is.
                     remember(
                         &mut PREFS.write().boorus,
                         SavedBooru {
                             api: search.api.as_str().to_owned(),
-                            base: search.base.trim().trim_end_matches('/').to_owned(),
-                            login: search.login.unwrap_or_default().trim().to_owned(),
-                            api_key: search.api_key.unwrap_or_default().trim().to_owned(),
+                            base: tidy(&search.base),
+                            ..SavedBooru::default()
                         },
                     );
+                    let typed = SaveBooruAccount {
+                        api: search.api,
+                        base: search.base.clone(),
+                        login: search.login.clone().unwrap_or_default(),
+                        api_key: search.api_key.clone().unwrap_or_default(),
+                    };
+                    // An account that just worked, kept if asked.
+                    if *keep.peek()
+                        && let Ok(typed) = typed.clean()
+                        && let Ok(saved) = client.save_booru_account(&typed).await
+                    {
+                        let mut list = accounts.write();
+                        list.retain(|a| a.id != saved.id);
+                        list.push(saved);
+                        login.set(String::new());
+                        api_key.set(String::new());
+                    }
                     let mut list = posts.write();
                     if next == 1 {
                         list.clear();
@@ -253,6 +324,22 @@ pub fn Boorus() -> Element {
     } else {
         picker_value(api(), &base())
     };
+    let saved_account = accounts
+        .read()
+        .iter()
+        .find(|a| a.base == tidy(&base()))
+        .cloned();
+    let forget = move |id: i64| {
+        let Some(client) = store::client() else {
+            return;
+        };
+        spawn(async move {
+            match client.delete_booru_account(id).await {
+                Ok(()) => accounts.write().retain(|a| a.id != id),
+                Err(e) => error.set(Some(e.to_string())),
+            }
+        });
+    };
     let count = selected.read().len();
     let selecting = count > 0;
     let jobs = activity::jobs_by_source(&JOBS.read());
@@ -328,33 +415,54 @@ pub fn Boorus() -> Element {
                         }
                     }
                 }
-                details { class: "boorus-account", open: !login().is_empty() || !api_key().is_empty(),
+                details { class: "boorus-account", open: !login().is_empty() || !api_key().is_empty() || saved_account.is_some(),
                     summary { {t!("boorus-account")} }
                     p { class: "muted hint", {t!("boorus-account-hint")} }
-                    div { class: "boorus-fields",
-                        label { class: "field",
-                            span {
-                                if api() == BooruApi::Gelbooru { {t!("boorus-user-id")} } else { {t!("boorus-login")} }
-                            }
-                            input {
-                                autocomplete: "off",
-                                spellcheck: "false",
-                                autocapitalize: "none",
-                                value: "{login}",
-                                oninput: move |e| login.set(e.value()),
+                    if let Some(account) = saved_account.clone().filter(|a| a.usable) {
+                        div { class: "boorus-saved",
+                            Ico { icon: Icon::Check, size: 20 }
+                            span { {t!("boorus-account-saved", login = account.login.clone())} }
+                            button { class: "btn text small", r#type: "button", onclick: move |_| forget(account.id),
+                                {t!("boorus-account-forget")}
                             }
                         }
-                        label { class: "field",
-                            span {
-                                if api() == BooruApi::Moebooru { {t!("boorus-password-hash")} } else { {t!("boorus-key")} }
+                    } else {
+                        if saved_account.is_some() {
+                            p { class: "banner warn", role: "status", {t!("boorus-account-unusable")} }
+                        }
+                        div { class: "boorus-fields",
+                            label { class: "field",
+                                span {
+                                    if api() == BooruApi::Gelbooru { {t!("boorus-user-id")} } else { {t!("boorus-login")} }
+                                }
+                                input {
+                                    autocomplete: "off",
+                                    spellcheck: "false",
+                                    autocapitalize: "none",
+                                    value: "{login}",
+                                    oninput: move |e| login.set(e.value()),
+                                }
                             }
+                            label { class: "field",
+                                span {
+                                    if api() == BooruApi::Moebooru { {t!("boorus-password-hash")} } else { {t!("boorus-key")} }
+                                }
+                                input {
+                                    r#type: "password",
+                                    autocomplete: "off",
+                                    spellcheck: "false",
+                                    value: "{api_key}",
+                                    oninput: move |e| api_key.set(e.value()),
+                                }
+                            }
+                        }
+                        label { class: "check",
                             input {
-                                r#type: "password",
-                                autocomplete: "off",
-                                spellcheck: "false",
-                                value: "{api_key}",
-                                oninput: move |e| api_key.set(e.value()),
+                                r#type: "checkbox",
+                                checked: keep(),
+                                onchange: move |e| keep.set(e.checked()),
                             }
+                            span { {t!("boorus-account-keep")} }
                         }
                     }
                 }
@@ -566,6 +674,32 @@ mod tests {
             );
         }
         assert_eq!(list.len(), MAX_SAVED);
+    }
+
+    #[test]
+    fn accounts_kept_on_the_device_move_to_the_server() {
+        let mut list = vec![
+            saved("danbooru", "https://a.org", "a"),
+            SavedBooru {
+                api: "gelbooru".into(),
+                base: "https://b.org".into(),
+                ..SavedBooru::default()
+            },
+            // An API this version doesn't know can't be moved.
+            saved("szurubooru", "https://c.org", "c"),
+        ];
+        let moving = kept_on_device(&list);
+        assert_eq!(moving.len(), 1);
+        assert_eq!(
+            (moving[0].base.as_str(), moving[0].api_key.as_str()),
+            ("https://a.org", "a-key")
+        );
+        forget_on_device(&mut list, "https://a.org/");
+        assert_eq!(account_for(&list, "https://a.org"), Default::default());
+        assert!(kept_on_device(&list).is_empty());
+        // The site itself is still remembered.
+        assert_eq!(list[0].base, "https://a.org");
+        assert_eq!(tidy(" https://a.org// "), "https://a.org");
     }
 
     #[test]

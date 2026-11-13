@@ -151,6 +151,14 @@ pub fn router(state: AppState) -> Router {
         .route("/library-imports/{id}/retry", post(library::retry))
         .route("/library-imports/{id}/failures", get(library::failures))
         .route("/remote/search", post(remote::search))
+        .route(
+            "/remote/accounts",
+            get(remote::accounts).put(remote::save_account),
+        )
+        .route(
+            "/remote/accounts/{id}",
+            axum::routing::delete(remote::delete_account),
+        )
         .route("/posts/bulk", post(posts::bulk))
         .route("/posts/{id}/neighbors", get(posts::neighbors))
         .route("/posts/{id}/related", get(posts::related))

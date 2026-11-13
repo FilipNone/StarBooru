@@ -286,6 +286,58 @@ impl RemotePost {
     }
 }
 
+/// An account on another booru that the user saved on their server
+/// (`GET /remote/accounts`). The key itself is never sent back.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BooruAccount {
+    pub id: i64,
+    pub api: BooruApi,
+    pub base: String,
+    /// The login, or the user ID on Gelbooru.
+    pub login: String,
+    /// Whether its key still opens; not after the server's secret changed.
+    #[serde(default = "yes")]
+    pub usable: bool,
+    pub updated_at: DateTime<Utc>,
+}
+
+fn yes() -> bool {
+    true
+}
+
+/// Most accounts one user saves.
+pub const MAX_BOORU_ACCOUNTS: usize = 50;
+
+/// `PUT /remote/accounts`: saves the account for a site, in place of the one
+/// saved for it before.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SaveBooruAccount {
+    pub api: BooruApi,
+    pub base: String,
+    pub login: String,
+    pub api_key: String,
+}
+
+impl SaveBooruAccount {
+    /// Checks the account and trims it. Both parts are needed: sites take
+    /// neither alone.
+    pub fn clean(mut self) -> Result<SaveBooruAccount, RemoteError> {
+        self.base = clean_base(&self.base)?;
+        self.login = self.login.trim().to_owned();
+        self.api_key = self.api_key.trim().to_owned();
+        let parts = [&self.login, &self.api_key];
+        if parts.iter().any(|part| part.is_empty()) {
+            return Err(RemoteError::NoAccount);
+        }
+        let bad =
+            |part: &&String| part.len() > MAX_REMOTE_FIELD || part.chars().any(char::is_control);
+        if parts.iter().any(bad) {
+            return Err(RemoteError::TooLong);
+        }
+        Ok(self)
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RemotePage {
     pub posts: Vec<RemotePost>,
@@ -307,6 +359,8 @@ pub enum RemoteError {
     TooManyTags { site: &'static str, max: u32 },
     #[error("the search or account details are too long")]
     TooLong,
+    #[error("enter both the login (or user ID) and the key")]
+    NoAccount,
 }
 
 /// A site's address without a trailing slash, when it is http or https and
@@ -483,6 +537,39 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(message.contains("Danbooru takes 2 tags"), "{message}");
+    }
+
+    #[test]
+    fn an_account_needs_both_its_parts() {
+        let account = |login: &str, key: &str| SaveBooruAccount {
+            api: BooruApi::Gelbooru,
+            base: " https://g.org/ ".into(),
+            login: login.into(),
+            api_key: key.into(),
+        };
+        let saved = account(" 42 ", " key ").clean().unwrap();
+        assert_eq!(
+            (
+                saved.base.as_str(),
+                saved.login.as_str(),
+                saved.api_key.as_str()
+            ),
+            ("https://g.org", "42", "key")
+        );
+        assert_eq!(account("", "key").clean(), Err(RemoteError::NoAccount));
+        assert_eq!(account("42", "  ").clean(), Err(RemoteError::NoAccount));
+        assert_eq!(account("42", "a\nb").clean(), Err(RemoteError::TooLong));
+        let long = "k".repeat(MAX_REMOTE_FIELD + 1);
+        assert_eq!(account("42", &long).clean(), Err(RemoteError::TooLong));
+        let mut bad = account("42", "key");
+        bad.base = "g.org".into();
+        assert_eq!(bad.clean(), Err(RemoteError::BadBase));
+        // An older server's answer has no `usable`.
+        let listed: BooruAccount = serde_json::from_str(
+            r#"{"id":1,"api":"e621","base":"https://e926.net","login":"me","updated_at":"2026-01-01T00:00:00Z"}"#,
+        )
+        .unwrap();
+        assert!(listed.usable);
     }
 
     #[test]

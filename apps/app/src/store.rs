@@ -262,8 +262,9 @@ impl GalleryView {
     }
 }
 
-/// Another booru the user searched from StarBooru, with their account
-/// there, if any. The account is kept here like the session token.
+/// Another booru the user searched from StarBooru. `login` and `api_key` are
+/// only read: an older version kept the account here, and the Other boorus
+/// page moves it to the server, which keeps the key encrypted.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SavedBooru {

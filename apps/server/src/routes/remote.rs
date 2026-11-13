@@ -3,26 +3,113 @@
 //! StarBooru's terms. Importing a result is a plain `POST /posts/import`.
 
 use axum::Json;
-use axum::extract::State;
-use chrono::Utc;
-use starbooru_core::remote::REMOTE_PAGE_SIZE;
-use starbooru_core::{RemoteError, RemotePage, RemoteSearch};
+use axum::extract::{Path, State};
+use axum::http::StatusCode;
+use chrono::{DateTime, Utc};
+use starbooru_core::remote::{REMOTE_PAGE_SIZE, clean_base};
+use starbooru_core::{
+    BooruAccount, MAX_BOORU_ACCOUNTS, RemoteError, RemotePage, RemoteSearch, SaveBooruAccount,
+};
 
 use crate::auth::AuthUser;
 use crate::error::{AppError, AppResult};
 use crate::fetch::Answer;
-use crate::remote::{self, pace};
+use crate::remote::{self, accounts, pace};
 use crate::state::AppState;
+
+/// `GET /remote/accounts`: the caller's saved accounts on other boorus,
+/// without their keys.
+pub async fn accounts(
+    State(state): State<AppState>,
+    user: AuthUser,
+) -> AppResult<Json<Vec<BooruAccount>>> {
+    accounts::list(&state, user.id).await.map(Json)
+}
+
+/// `PUT /remote/accounts`: saves the account for a site, sealed, in place of
+/// the one saved for that site before.
+pub async fn save_account(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Json(req): Json<SaveBooruAccount>,
+) -> AppResult<Json<BooruAccount>> {
+    let req = req
+        .clean()
+        .map_err(|e| AppError::BadRequest(e.to_string()))?;
+    let others: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM booru_accounts WHERE user_id = $1 AND base <> $2")
+            .bind(user.id)
+            .bind(&req.base)
+            .fetch_one(&state.db)
+            .await?;
+    if usize::try_from(others).unwrap_or(usize::MAX) >= MAX_BOORU_ACCOUNTS {
+        return Err(AppError::Conflict {
+            code: "too_many_accounts",
+            message: format!("at most {MAX_BOORU_ACCOUNTS} accounts can be saved"),
+        });
+    }
+    let sealed = state.vault.seal(user.id, &req.base, &req.api_key)?;
+    let (id, updated_at): (i64, DateTime<Utc>) = sqlx::query_as(
+        "INSERT INTO booru_accounts (user_id, api, base, login, sealed_key) \
+         VALUES ($1, $2, $3, $4, $5) \
+         ON CONFLICT (user_id, base) DO UPDATE SET api = EXCLUDED.api, login = EXCLUDED.login, \
+             sealed_key = EXCLUDED.sealed_key, updated_at = now() \
+         RETURNING id, updated_at",
+    )
+    .bind(user.id)
+    .bind(req.api.as_str())
+    .bind(&req.base)
+    .bind(&req.login)
+    .bind(sealed)
+    .fetch_one(&state.db)
+    .await?;
+    Ok(Json(BooruAccount {
+        id,
+        api: req.api,
+        base: req.base,
+        login: req.login,
+        usable: true,
+        updated_at,
+    }))
+}
+
+/// `DELETE /remote/accounts/{id}`: forgets a saved account.
+pub async fn delete_account(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<i64>,
+) -> AppResult<StatusCode> {
+    let gone = sqlx::query("DELETE FROM booru_accounts WHERE id = $1 AND user_id = $2")
+        .bind(id)
+        .bind(user.id)
+        .execute(&state.db)
+        .await?;
+    if gone.rows_affected() == 0 {
+        return Err(AppError::NotFound);
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
 
 pub async fn search(
     State(state): State<AppState>,
-    _user: AuthUser,
+    user: AuthUser,
     Json(req): Json<RemoteSearch>,
 ) -> AppResult<Json<RemotePage>> {
     let fetcher = state
         .fetcher
         .as_ref()
         .ok_or_else(|| AppError::BadRequest("URL import is turned off on this server".into()))?;
+    // A search that brings no account of its own uses the one saved for the
+    // site, before the limits are checked: they depend on having one.
+    let mut req = req;
+    let blank = |part: &Option<String>| part.as_deref().is_none_or(|p| p.trim().is_empty());
+    if (blank(&req.login) || blank(&req.api_key))
+        && let Ok(base) = clean_base(&req.base)
+        && let Some((login, key)) = accounts::load(&state, user.id).await?.of(&base)
+    {
+        req.login = Some(login.to_owned());
+        req.api_key = Some(key.to_owned());
+    }
     let req = req
         .clean()
         .map_err(|e| AppError::BadRequest(e.to_string()))?;
@@ -284,6 +371,141 @@ mod tests {
             )
             .await;
         assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+        app.finish().await;
+    }
+
+    #[tokio::test]
+    async fn a_saved_account_is_used_and_never_shown() {
+        let Some(app) = testing::app_with(|c| c.url_import = Some(crate::fetch::Reach::Any)).await
+        else {
+            return;
+        };
+        let t = app.register("admin").await;
+        let other = app.register("other").await;
+        let site = fake_booru().await;
+        let base = format!("{site}/d");
+        let body = json!({"api": "danbooru", "base": base, "tags": "x"});
+        let search = |token: String| {
+            let body = body.clone();
+            let app = &app;
+            async move {
+                app.call(
+                    Method::POST,
+                    "/api/v1/remote/search",
+                    Some(&token),
+                    Some(body),
+                )
+                .await
+            }
+        };
+        // Without an account the fake site gives three posts; with one, forty.
+        assert_eq!(
+            search(t.clone()).await.json()["posts"]
+                .as_array()
+                .map(Vec::len),
+            Some(3)
+        );
+
+        let save = |token: String, login: &str, key: &str| {
+            let account = json!({"api": "danbooru", "base": format!("{base}/"), "login": login, "api_key": key});
+            let app = &app;
+            async move {
+                app.call(
+                    Method::PUT,
+                    "/api/v1/remote/accounts",
+                    Some(&token),
+                    Some(account),
+                )
+                .await
+            }
+        };
+        let r = save(t.clone(), "", "secret").await;
+        assert_eq!(r.status, StatusCode::BAD_REQUEST);
+        let r = save(t.clone(), "me", "wrong").await;
+        assert_eq!(r.status, StatusCode::OK, "{:?}", r.json());
+        // Saved again for the same site: replaced, not added.
+        let r = save(t.clone(), " me ", " secret ").await;
+        let saved = r.json();
+        assert_eq!(saved["base"], json!(base));
+        assert_eq!(
+            (saved["login"].as_str(), saved["usable"].as_bool()),
+            (Some("me"), Some(true))
+        );
+        assert!(!saved.to_string().contains("secret"));
+
+        let list = app.get("/api/v1/remote/accounts", &t).await.json();
+        assert_eq!(list.as_array().map(Vec::len), Some(1));
+        assert_eq!(list[0]["id"], saved["id"]);
+        assert!(!list.to_string().contains("secret"), "{list}");
+        // What the database holds doesn't contain the key either.
+        let sealed: Vec<u8> = sqlx::query_scalar("SELECT sealed_key FROM booru_accounts")
+            .fetch_one(app.db())
+            .await
+            .unwrap();
+        assert!(!sealed.windows(6).any(|w| w == b"secret"));
+
+        // The search needs no key from the app now, and each account has its own.
+        let r = search(t.clone()).await;
+        assert_eq!(r.json()["posts"].as_array().map(Vec::len), Some(40));
+        assert!(!r.json().to_string().contains("secret"));
+        assert_eq!(
+            search(other.clone()).await.json()["posts"]
+                .as_array()
+                .map(Vec::len),
+            Some(3)
+        );
+        assert_eq!(
+            app.get("/api/v1/remote/accounts", &other).await.json(),
+            json!([])
+        );
+
+        // Only its owner forgets it.
+        let path = format!("/api/v1/remote/accounts/{}", saved["id"]);
+        let r = app.call(Method::DELETE, &path, Some(&other), None).await;
+        assert_eq!(r.status, StatusCode::NOT_FOUND);
+        let r = app.call(Method::DELETE, &path, Some(&t), None).await;
+        assert_eq!(r.status, StatusCode::NO_CONTENT);
+        assert_eq!(
+            search(t.clone()).await.json()["posts"]
+                .as_array()
+                .map(Vec::len),
+            Some(3)
+        );
+        let r = app
+            .call(Method::GET, "/api/v1/remote/accounts", None, None)
+            .await;
+        assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+        app.finish().await;
+    }
+
+    #[tokio::test]
+    async fn an_account_sealed_with_another_secret_is_listed_as_unusable() {
+        let Some(app) = testing::app_with(|c| c.url_import = Some(crate::fetch::Reach::Any)).await
+        else {
+            return;
+        };
+        let t = app.register("admin").await;
+        let account =
+            json!({"api": "gelbooru", "base": "https://g.example", "login": "42", "api_key": "k"});
+        app.call(
+            Method::PUT,
+            "/api/v1/remote/accounts",
+            Some(&t),
+            Some(account),
+        )
+        .await;
+        // As after STARBOORU_SECRET changed.
+        let elsewhere =
+            crate::remote::accounts::Vault::new(b"another-secret-another-secret-another");
+        let sealed = elsewhere.seal(1, "https://g.example", "k").unwrap();
+        sqlx::query("UPDATE booru_accounts SET sealed_key = $1")
+            .bind(sealed)
+            .execute(app.db())
+            .await
+            .unwrap();
+        let list = app.get("/api/v1/remote/accounts", &t).await.json();
+        assert_eq!(list[0]["usable"], false);
+        assert_eq!(list[0]["login"], "42");
         app.finish().await;
     }
 
