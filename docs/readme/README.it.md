@@ -56,7 +56,7 @@
 
 ## Funzionalità
 
-- **Carica come preferisci:** trascina i file, scegli intere cartelle o incolla indirizzi web. Il link a un post di un booru, o un'immagine trascinata da un'altra scheda, porta l'originale con i suoi tag. I file vengono riconosciuti dal contenuto, quindi entra anche un'immagine senza estensione.
+- **Carica come preferisci:** trascina i file, incollali dagli appunti con Ctrl+V, scegli intere cartelle o incolla indirizzi web. Il link a un post di un booru, o un'immagine trascinata da un'altra scheda, porta l'originale con i suoi tag. I file vengono riconosciuti dal contenuto, quindi entra anche un'immagine senza estensione.
 - **Porta la tua libreria:** importa da szurubooru, Shimmie2, Danbooru, Stash, Blombooru, Monbooru e LANBooru con tag, rating e fonti.
 - **Sfoglia altri booru:** cerca su Danbooru, Gelbooru, Moebooru ed e621 da dentro StarBooru, anche su più siti insieme, con i suggerimenti di tag di ciascuno. Salva le ricerche a cui torni e i post che vuoi tenere.
 - **Tag con una struttura:** categorie, albero padre e figlio, alias, implicazioni, tag per ogni persona in un'immagine e correzione dei refusi.

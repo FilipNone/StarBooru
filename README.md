@@ -56,7 +56,7 @@
 
 ## Features
 
-- **Upload your way:** drag and drop, whole folders or web addresses. A link to a post on a booru, or a picture dragged out of another tab, brings the original with its tags. Files are recognised by their content, so a picture with no extension still gets in.
+- **Upload your way:** drag and drop, paste from the clipboard, whole folders or web addresses. A link to a post on a booru, or a picture dragged out of another tab, brings the original with its tags. Files are recognised by their content, so a picture with no extension still gets in.
 - **Bring your library:** import from szurubooru, Shimmie2, Danbooru, Stash, Blombooru, Monbooru and LANBooru with tags, ratings and sources.
 - **Browse other boorus:** search Danbooru, Gelbooru, Moebooru and e621 from inside StarBooru, several at once, with each site's tag suggestions. Save the searches you come back to and the posts you want to keep.
 - **Tags with structure:** categories, a parent and child tree, aliases, implications, tags per person in a picture, and typo correction.
