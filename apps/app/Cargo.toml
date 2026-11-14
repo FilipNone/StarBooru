@@ -22,13 +22,15 @@ unic-langid = "0.9"
 sys-locale = "0.3"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-web-sys = { version = "0.3", features = ["Window", "Storage", "Location", "Blob", "File", "Url"] }
+web-sys = { version = "0.3", features = ["Window", "Storage", "Location", "Blob", "File", "FileReader", "Url"] }
 sys-locale = { version = "0.3", features = ["js"] }
 # The start of a chosen file, without reading the rest.
 js-sys = "0.3"
 wasm-bindgen-futures = "0.4"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# Files pasted into a webview come over as base64.
+base64 = "0.22"
 directories = "6"
 # Provider sign-in: the system browser and a loopback listener for its answer.
 # The media cache: files and downloads.

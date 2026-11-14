@@ -433,7 +433,13 @@ upload-skipped =
        *[other] Skipped { $count } files that are not images or videos.
     }
 upload-urls-only = Enter addresses that start with http:// or https://.
-upload-drop = Drop files or links
+upload-drop = Drop or paste files or links
+upload-paste-nothing = There was no file or link to paste.
+upload-paste-too-big =
+    { $count ->
+        [one] 1 pasted file is over 64 MB. Copy it as a file, or choose it with the + button.
+       *[other] { $count } pasted files are over 64 MB. Copy them as files, or choose them with the + button.
+    }
 upload-files = Choose files
 upload-link = Add a link
 upload-drop-now = Drop to upload

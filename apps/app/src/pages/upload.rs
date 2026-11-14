@@ -13,6 +13,7 @@ use crate::Route;
 use crate::activity::{self, Item, JOBS, QUEUE, Source, Status};
 use crate::icons::{Ico, Icon};
 use crate::motion;
+use crate::paste;
 use crate::store;
 use crate::util::{
     drop_is_urls, drop_urls, folder_tag, human_size, media_files, parse_urls, rating_label,
@@ -59,6 +60,35 @@ pub fn Upload() -> Element {
         }
         notice.set((skipped > 0).then(|| t!("upload-skipped", count = skipped)));
     };
+
+    // Ctrl+V: files and pictures on the clipboard, and links. Only here.
+    use_hook(move || {
+        spawn(async move {
+            let mut watch = paste::watch();
+            while let Ok(pasted) = watch.recv::<paste::Pasted>().await {
+                if !store::can_upload() {
+                    continue;
+                }
+                let (files, too_big) = paste::files(&pasted).await;
+                let urls = if url_import.peek().unwrap_or(true) {
+                    parse_urls(&pasted.text)
+                } else {
+                    Vec::new()
+                };
+                let found = !files.is_empty() || !urls.is_empty();
+                for url in urls {
+                    activity::add(Source::Url(url), String::new());
+                }
+                add(files, false).await;
+                if too_big > 0 {
+                    notice.set(Some(t!("upload-paste-too-big", count = too_big)));
+                } else if !found && pasted.files == 0 {
+                    notice.set(Some(t!("upload-paste-nothing")));
+                }
+            }
+        });
+    });
+    use_drop(paste::unwatch);
 
     // Files dragged over the window: the veil grows out of the drop box.
     let mut veil = use_signal(|| None::<BoxRect>);

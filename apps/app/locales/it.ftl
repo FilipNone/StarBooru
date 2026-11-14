@@ -433,7 +433,13 @@ upload-skipped =
        *[other] Saltati { $count } file che non sono immagini o video.
     }
 upload-urls-only = Inserisci indirizzi che iniziano con http:// o https://.
-upload-drop = Trascina qui file o link
+upload-drop = Trascina o incolla qui file o link
+upload-paste-nothing = Non c'era nessun file o link da incollare.
+upload-paste-too-big =
+    { $count ->
+        [one] 1 file incollato supera i 64 MB. Copialo come file, o sceglilo con il pulsante +.
+       *[other] { $count } file incollati superano i 64 MB. Copiali come file, o sceglili con il pulsante +.
+    }
 upload-files = Scegli i file
 upload-link = Aggiungi un link
 upload-drop-now = Rilascia per caricare

@@ -21,6 +21,7 @@ mod motion;
 mod oidc;
 mod pace;
 mod pages;
+mod paste;
 mod power;
 mod route;
 mod store;
