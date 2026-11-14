@@ -1890,6 +1890,10 @@ mod tests {
         let css = include_str!("../../assets/main.css");
         // Wide, the tag box reaches down to the picture's foot.
         assert!(css.contains(".item-tag-field textarea { flex: 1 0 auto; }"));
+        // A box made taller by hand doesn't push the details down: its
+        // column takes both rows, and the second row is the flexible one.
+        assert!(css.contains("grid-template-rows: auto minmax(66px, 1fr);"));
+        assert!(css.contains(".item-fields:has(textarea[data-sized]) {\n    grid-row: 1 / 3;"));
     }
 
     #[test]

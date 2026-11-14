@@ -25,6 +25,8 @@ pub const SCRIPT: &str = r#"
     let frame = 0;
     const size = () => {
       frame = 0;
+      // Lets CSS tell a box sized by hand from one at its own height.
+      if (!("sized" in box.dataset)) box.dataset.sized = "";
       box.style.height = `${Math.max(least, start + y - from)}px`;
     };
     const move = (m) => {
@@ -104,6 +106,7 @@ mod tests {
         assert!(SCRIPT.contains("setPointerCapture"));
         assert!(SCRIPT.contains(r#"removeEventListener("pointercancel", stop)"#));
         assert!(SCRIPT.contains("Math.max(least,"));
+        assert!(SCRIPT.contains(r#"box.dataset.sized = "";"#));
     }
 
     #[test]

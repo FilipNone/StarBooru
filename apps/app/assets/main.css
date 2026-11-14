@@ -1829,7 +1829,7 @@ pre.command {
    offers go below that, beside the details, so nothing moves when they
    come. */
 @media (min-width: 601px) {
-  .item-body { grid-template-rows: auto minmax(66px, auto); }
+  .item-body { grid-template-rows: auto minmax(66px, 1fr); }
   .item-preview { grid-area: 1 / 1; }
   .item-about { grid-area: 2 / 1; }
   .item-fields { grid-area: 1 / 2; display: flex; flex-direction: column; }
@@ -1843,6 +1843,13 @@ pre.command {
   .app[data-hand="left"] .item-preview { grid-area: 1 / 2; }
   .app[data-hand="left"] .item-about { grid-area: 2 / 2; }
   .app[data-hand="left"] .item-fields { grid-area: 1 / 1; }
+  /* A tag box made taller by its grip takes the second row too, so it grows
+     past the details instead of pushing them down from under the picture.
+     The second row is flexible, so the first stays the picture's height. The
+     padding keeps room for the offers under the box. */
+  .app .item-body > .item-fields:has(textarea[data-sized]) {
+    grid-row: 1 / 3; align-self: start; padding-bottom: 78px;
+  }
 }
 .btn.text.bin { color: var(--on-surface-2); }
 .btn.text.bin:hover:not(:disabled), .btn.text.bin:focus-visible { background: var(--danger); color: var(--on-primary); }
