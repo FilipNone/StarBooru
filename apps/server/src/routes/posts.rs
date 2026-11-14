@@ -25,6 +25,7 @@ use crate::error::{AppError, AppResult};
 use crate::similar;
 use crate::state::AppState;
 use crate::storage::{Ingested, Storage, Variant};
+use crate::uploads::PostFields;
 
 const MAX_PAGE: u32 = 10_000;
 const MAX_SOURCE_CHARS: usize = 2048;
@@ -873,6 +874,15 @@ pub async fn rescan_ocr(
     Ok(Json(load_full(&state, user.id, id).await?))
 }
 
+/// `true` or `false`, as a form field.
+fn parse_flag(text: &str) -> Option<bool> {
+    match text.trim() {
+        "true" => Some(true),
+        "false" => Some(false),
+        _ => None,
+    }
+}
+
 fn multipart_error(e: MultipartError) -> AppError {
     if e.status() == StatusCode::PAYLOAD_TOO_LARGE {
         AppError::PayloadTooLarge
@@ -881,7 +891,8 @@ fn multipart_error(e: MultipartError) -> AppError {
     }
 }
 
-/// `POST /posts` (multipart): `file`, optional `tags`, `rating`, `source`.
+/// `POST /posts` (multipart): `file`, optional `tags`, `rating`, `source`,
+/// `autotag`.
 pub async fn upload(
     State(state): State<AppState>,
     user: AuthUser,
@@ -891,6 +902,7 @@ pub async fn upload(
     let mut tags = Vec::new();
     let mut rating = Rating::default();
     let mut source = None;
+    let mut autotag = None;
     while let Some(field) = form.next_field().await.map_err(multipart_error)? {
         match field.name().unwrap_or_default() {
             "file" => file = Some(field.bytes().await.map_err(multipart_error)?),
@@ -901,13 +913,23 @@ pub async fn upload(
                     .ok_or_else(|| AppError::BadRequest(format!("unknown rating `{text}`")))?;
             }
             "source" => source = clean_source(field.text().await.map_err(multipart_error)?)?,
+            "autotag" => {
+                let text = field.text().await.map_err(multipart_error)?;
+                autotag = Some(parse_flag(&text).ok_or_else(|| {
+                    AppError::BadRequest(format!("`autotag` is true or false, not `{text}`"))
+                })?);
+            }
             _ => {} // ignore unknown fields for forward compatibility
         }
     }
     let bytes = file.ok_or_else(|| AppError::BadRequest("missing `file` field".into()))?;
-    create_post(&state, user.id, bytes, rating, source, &tags)
-        .await
-        .map(Json)
+    let fields = PostFields {
+        tags,
+        rating,
+        source,
+        autotag,
+    };
+    create_post(&state, user.id, bytes, &fields).await.map(Json)
 }
 
 /// `POST /posts/import`: downloads a URL and adds it like an upload.
@@ -944,15 +966,13 @@ pub(super) async fn import_one(
         crate::remote::lookup::fetch(fetcher, &state.pace, &accounts, req, limit, &watch).await?;
     let tags = normalize_tags(req.tags.iter().map(String::as_str))?;
     let source = clean_source(req.source.unwrap_or(req.url))?;
-    create_post(
-        state,
-        user_id,
-        Bytes::from(fetched),
-        req.rating,
+    let fields = PostFields {
+        tags,
+        rating: req.rating,
         source,
-        &tags,
-    )
-    .await
+        autotag: req.autotag,
+    };
+    create_post(state, user_id, Bytes::from(fetched), &fields).await
 }
 
 /// Stores `bytes` and inserts the post, refusing exact duplicates.
@@ -960,11 +980,9 @@ pub(super) async fn create_post(
     state: &AppState,
     user_id: i64,
     bytes: Bytes,
-    rating: Rating,
-    source: Option<String>,
-    tags: &[String],
+    fields: &PostFields,
 ) -> AppResult<Post> {
-    match store_post(state, user_id, bytes, rating, source, tags).await? {
+    match store_post(state, user_id, bytes, fields).await? {
         Stored::Added(id) => load(state, user_id, id).await,
         Stored::Exists(id) => Err(duplicate_of(state, id).await?),
     }
@@ -982,9 +1000,7 @@ pub(super) async fn store_post(
     state: &AppState,
     user_id: i64,
     bytes: Bytes,
-    rating: Rating,
-    source: Option<String>,
-    tags: &[String],
+    fields: &PostFields,
 ) -> AppResult<Stored> {
     let file_size = i64::try_from(bytes.len()).map_err(AppError::internal)?;
     // Early, so a file over the limit isn't processed; checked again below.
@@ -992,7 +1008,7 @@ pub(super) async fn store_post(
 
     let worker = state.clone();
     let info = tokio::task::spawn_blocking(move || worker.storage.ingest(&bytes)).await??;
-    record_post(state, user_id, &info, file_size, rating, source, tags).await
+    record_post(state, user_id, &info, file_size, fields).await
 }
 
 /// Inserts the post for a stored file, unless the same file is already here.
@@ -1001,9 +1017,7 @@ pub(super) async fn record_post(
     user_id: i64,
     info: &Ingested,
     file_size: i64,
-    rating: Rating,
-    source: Option<String>,
-    tags: &[String],
+    fields: &PostFields,
 ) -> AppResult<Stored> {
     let existing: Option<i64> = sqlx::query_scalar("SELECT id FROM posts WHERE sha256 = $1")
         .bind(info.sha256.as_slice())
@@ -1013,9 +1027,25 @@ pub(super) async fn record_post(
         return Ok(Stored::Exists(id));
     }
 
-    match insert_post(state, user_id, info, file_size, rating, source, tags).await {
+    let PostFields {
+        tags,
+        rating,
+        source,
+        autotag,
+    } = fields;
+    match insert_post(
+        state,
+        user_id,
+        info,
+        file_size,
+        *rating,
+        source.clone(),
+        tags,
+    )
+    .await
+    {
         Ok(id) => {
-            crate::ai::autotag_later(state, id);
+            crate::ai::autotag_later(state, id, *autotag);
             crate::ocr::spawn_scan(state, id);
             Ok(Stored::Added(id))
         }

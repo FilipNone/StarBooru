@@ -46,6 +46,7 @@ pub enum Icon {
     Share,
     Shield,
     Shuffle,
+    Sparkle,
     Star,
     StarOutline,
     ThumbDown,
@@ -216,6 +217,10 @@ impl Icon {
                 "M21 8q.8 0 1.4.6T23 10v2q0 .175-.038.375t-.112.375l-3 7.05q-.225.5-.75.85T18 21h-8q-.825 0-1.412-.587T8 19V8.825q0-.4.163-.762t.437-.638l5.425-5.4q.375-.35.888-.425t.987.175t.688.7t.087.925L15.55 8zM4 21q-.825 0-1.412-.587T2 19v-9q0-.825.588-1.412T4 8t1.413.588T6 10v9q0 .825-.587 1.413T4 21",
             ),
             Icon::TrendingUp => Shape::Stroke("3", "m3 16l6.5-6.5L14 14l6.5-6.5M17 7h4v4"),
+            // Drawn for StarBooru: a four-pointed star with a small one.
+            Icon::Sparkle => Shape::Fill(
+                "M10 4.5c.4 0 .75.27.86.66l.9 3.08a3.5 3.5 0 0 0 2.4 2.4l3.08.9a.9.9 0 0 1 0 1.72l-3.08.9a3.5 3.5 0 0 0-2.4 2.4l-.9 3.08a.9.9 0 0 1-1.72 0l-.9-3.08a3.5 3.5 0 0 0-2.4-2.4l-3.08-.9a.9.9 0 0 1 0-1.72l3.08-.9a3.5 3.5 0 0 0 2.4-2.4l.9-3.08A.9.9 0 0 1 10 4.5zM18.5 1.75a.6.6 0 0 1 .57.42l.36 1.13a1.5 1.5 0 0 0 .98.98l1.13.36a.6.6 0 0 1 0 1.14l-1.13.36a1.5 1.5 0 0 0-.98.98l-.36 1.13a.6.6 0 0 1-1.14 0l-.36-1.13a1.5 1.5 0 0 0-.98-.98l-1.13-.36a.6.6 0 0 1 0-1.14l1.13-.36a1.5 1.5 0 0 0 .98-.98l.36-1.13a.6.6 0 0 1 .57-.42z",
+            ),
             Icon::Translate => Shape::Stroke(
                 "2.5",
                 "M2.25 5h13.25M8.75 2.25V5M12.4 5c-1 3.6-4.2 8.7-9.15 12.75M5.75 9.25c1.5 2.7 3.6 4.9 6 6.75M13 21.75l4.75-11 4.75 11M15 18.25h5.5",
@@ -268,7 +273,7 @@ pub fn Ico(icon: Icon, #[props(default = 24)] size: u32) -> Element {
 mod tests {
     use super::*;
 
-    const ALL: [Icon; 53] = [
+    const ALL: [Icon; 54] = [
         Icon::Add,
         Icon::ArrowBack,
         Icon::ArrowUp,
@@ -311,6 +316,7 @@ mod tests {
         Icon::Share,
         Icon::Shield,
         Icon::Shuffle,
+        Icon::Sparkle,
         Icon::Star,
         Icon::StarOutline,
         Icon::ThumbDown,

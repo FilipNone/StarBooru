@@ -44,6 +44,7 @@ pub async fn status(State(state): State<AppState>, _user: AuthUser) -> AppResult
         model,
         translation,
         comics,
+        autotag: tagging && setup.autotag,
     }))
 }
 
@@ -375,7 +376,7 @@ mod tests {
         assert_eq!(
             status,
             json!({ "enabled": true, "model": "llava", "tagging": true, "translation": true,
-                "comics": true })
+                "comics": true, "autotag": false })
         );
 
         let path = format!("/api/v1/posts/{id}/suggest-tags");
@@ -539,7 +540,7 @@ mod tests {
         assert_eq!(
             status,
             json!({ "enabled": false, "model": null, "tagging": false, "translation": false,
-                "comics": false })
+                "comics": false, "autotag": false })
         );
         let path = format!("/api/v1/posts/{id}/suggest-tags");
         let r = app.call(Method::POST, &path, Some(&admin), None).await;
@@ -580,18 +581,64 @@ mod tests {
             return;
         };
         let admin = app.register("admin").await;
+        let status = app.get("/api/v1/ai", &admin).await.json();
+        assert_eq!(status["autotag"], true);
+        // The uploader can say no; that post is left alone.
+        let r = app
+            .upload(&admin, &testing::png(9, 8, 15), &[("autotag", "false")])
+            .await;
+        assert_eq!(r.status, StatusCode::OK, "{:?}", r.json());
+        let skipped = r.json()["id"].as_i64().unwrap();
         let id = app.upload_png(&admin, 5, "mine").await;
-        let mut tagged = false;
+        let post = wait_tagged(&app, &admin, id).await;
+        assert!(tag_names(&post).contains("mine"));
+        let post = app
+            .get(&format!("/api/v1/posts/{skipped}"), &admin)
+            .await
+            .json();
+        assert!(!tag_names(&post).contains("brand_new"), "{post}");
+        app.finish().await;
+    }
+
+    /// Waits for the AI to tag a post, and returns it.
+    async fn wait_tagged(app: &testing::TestApp, token: &str, id: i64) -> Value {
         for _ in 0..100 {
-            let post = app.get(&format!("/api/v1/posts/{id}"), &admin).await.json();
+            let post = app.get(&format!("/api/v1/posts/{id}"), token).await.json();
             if tag_names(&post).contains("brand_new") {
-                assert!(tag_names(&post).contains("mine"));
-                tagged = true;
-                break;
+                return post;
             }
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
-        assert!(tagged);
+        panic!("post {id} wasn't tagged");
+    }
+
+    #[tokio::test]
+    async fn an_uploader_can_ask_for_tags_when_the_server_does_not() {
+        let url = provider(ANSWER).await;
+        let Some(app) = testing::app_with(|c| {
+            c.ai.url = url;
+            c.ai.key = "sk-test".into();
+            c.ai.model = "llava".into();
+        })
+        .await
+        else {
+            return;
+        };
+        let admin = app.register("admin").await;
+        let status = app.get("/api/v1/ai", &admin).await.json();
+        assert_eq!(
+            (status["tagging"].clone(), status["autotag"].clone()),
+            (json!(true), json!(false))
+        );
+        let r = app
+            .upload(&admin, &testing::png(9, 8, 16), &[("autotag", "maybe")])
+            .await;
+        assert_eq!(r.status, StatusCode::BAD_REQUEST);
+        let r = app
+            .upload(&admin, &testing::png(9, 8, 17), &[("autotag", "true")])
+            .await;
+        assert_eq!(r.status, StatusCode::OK, "{:?}", r.json());
+        wait_tagged(&app, &admin, r.json()["id"].as_i64().unwrap()).await;
         app.finish().await;
     }
 

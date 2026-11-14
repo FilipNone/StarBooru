@@ -137,6 +137,7 @@ pub(super) fn import_request(post: &RemotePost, extra: &str) -> Result<ImportReq
         tags,
         rating: post.rating,
         source: (!by_page).then(|| post.page_url.clone()),
+        autotag: None,
     })
 }
 

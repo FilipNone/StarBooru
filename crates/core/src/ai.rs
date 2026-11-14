@@ -53,6 +53,9 @@ pub struct AiStatus {
     /// Translation of the text in comics, over the picture.
     #[serde(default)]
     pub comics: bool,
+    /// New uploads are tagged unless the uploader says otherwise.
+    #[serde(default)]
+    pub autotag: bool,
 }
 
 /// How one AI tool is set up. The key itself is never returned.

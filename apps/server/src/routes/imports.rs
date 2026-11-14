@@ -96,7 +96,7 @@ pub async fn create(
             .map_err(|e| AppError::BadRequest(format!("{url}: {e}")))?;
         let tags = normalize_tags(req.tags.iter().map(String::as_str))?;
         let source = clean_source(req.source.unwrap_or_else(|| url.clone()))?;
-        items.push((url, source, tags, req.rating));
+        items.push((url, source, tags, req.rating, req.autotag));
     }
 
     let mut tx = state.db.begin().await?;
@@ -121,10 +121,10 @@ pub async fn create(
         });
     }
     let mut jobs = Vec::with_capacity(items.len());
-    for (url, source, tags, rating) in items {
+    for (url, source, tags, rating, autotag) in items {
         let row: Row = sqlx::query_as(
-            "INSERT INTO import_jobs (user_id, url, source, tags, rating) \
-             VALUES ($1, $2, $3, $4, $5) RETURNING id, url, source, tags, rating, state, \
+            "INSERT INTO import_jobs (user_id, url, source, tags, rating, autotag) \
+             VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, url, source, tags, rating, state, \
              post_id, error, created_at, finished_at",
         )
         .bind(user.id)
@@ -132,6 +132,7 @@ pub async fn create(
         .bind(source)
         .bind(tags)
         .bind(rating.to_db())
+        .bind(autotag)
         .fetch_one(&mut *tx)
         .await?;
         jobs.push(ImportJob::from(row));
@@ -299,6 +300,7 @@ pub(crate) async fn run_next(state: &AppState) -> AppResult<bool> {
         source: Option<String>,
         tags: Vec<String>,
         rating: i16,
+        autotag: Option<bool>,
         attempts: i16,
         active: bool,
     }
@@ -308,7 +310,7 @@ pub(crate) async fn run_next(state: &AppState) -> AppResult<bool> {
                        AND (not_before IS NULL OR not_before <= now()) \
                        ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED) \
          AND u.id = j.user_id \
-         RETURNING j.id, j.user_id, j.url, j.source, j.tags, j.rating, j.attempts, \
+         RETURNING j.id, j.user_id, j.url, j.source, j.tags, j.rating, j.autotag, j.attempts, \
                    u.disabled_at IS NULL AS active",
     )
     .fetch_optional(&state.db)
@@ -322,6 +324,7 @@ pub(crate) async fn run_next(state: &AppState) -> AppResult<bool> {
             tags: job.tags,
             rating: Rating::from_db(job.rating).unwrap_or_default(),
             source: job.source,
+            autotag: job.autotag,
         };
         import_one(state, job.user_id, req, Some(job.id)).await
     } else {

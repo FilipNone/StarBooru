@@ -38,6 +38,8 @@ pub struct FileUpload {
     pub tags: Vec<String>,
     pub rating: Rating,
     pub source: Option<String>,
+    /// Whether AI tags the post. `None` leaves it to the server's setting.
+    pub autotag: Option<bool>,
 }
 
 /// How many chunks to have in flight.
@@ -126,6 +128,7 @@ impl Client {
             tags: upload.tags.clone(),
             rating: upload.rating,
             source: upload.source.clone(),
+            autotag: upload.autotag,
         };
         let started: Result<UploadSession> =
             retrying(|| self.json(Method::POST, "/uploads", &start)).await;
@@ -160,6 +163,7 @@ impl Client {
             tags: upload.tags,
             rating: upload.rating,
             source: upload.source,
+            autotag: upload.autotag,
         })
         .await
     }
@@ -319,6 +323,7 @@ mod tests {
             tags: vec!["cat".into()],
             rating: Rating::default(),
             source: None,
+            autotag: Some(false),
         }
     }
 
@@ -331,6 +336,8 @@ mod tests {
         arrivals: Mutex<HashMap<u32, u32>>,
         flying: AtomicUsize,
         most_flying: AtomicUsize,
+        /// The body of `POST /uploads`.
+        start: Mutex<Option<serde_json::Value>>,
     }
 
     impl Fake {
@@ -409,6 +416,7 @@ mod tests {
         let path = path.trim_start_matches("/api/v1").to_owned();
         fake.log.lock().unwrap().push(format!("{method} {path}"));
         if method == "POST" && path == "/uploads" {
+            *fake.start.lock().unwrap() = serde_json::from_slice(&body).ok();
             let session = UploadSession {
                 id: SESSION_ID.into(),
                 chunk_size: CHUNK,
@@ -472,6 +480,10 @@ mod tests {
             .unwrap();
         assert_eq!(post.id, 7);
         assert_eq!(fake.reassembled(BIG), bytes);
+        // What goes on the post is said up front, the AI tagging choice too.
+        let start = fake.start.lock().unwrap().clone().unwrap();
+        assert_eq!(start["tags"], serde_json::json!(["cat"]));
+        assert_eq!(start["autotag"], false);
         // One report per chunk, each further along, ending at the whole file.
         let sent = sent.into_inner();
         assert_eq!(sent.len() as u32, upload_chunks(BIG, CHUNK));

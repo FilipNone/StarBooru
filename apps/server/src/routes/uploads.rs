@@ -17,7 +17,7 @@ use crate::auth::AuthUser;
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 use crate::storage;
-use crate::uploads::{Phase, Upload};
+use crate::uploads::{Phase, PostFields, Upload};
 
 fn gone() -> AppError {
     AppError::Conflict {
@@ -66,9 +66,12 @@ pub async fn start(
         req.size,
         UPLOAD_CHUNK_SIZE,
         chunks,
-        tags,
-        req.rating,
-        source,
+        PostFields {
+            tags,
+            rating: req.rating,
+            source,
+            autotag: req.autotag,
+        },
     );
     if let Some(dropped) = state.uploads.add(Arc::new(upload)) {
         dropped.discard().await;
@@ -130,16 +133,7 @@ async fn store(state: &AppState, upload: &Arc<Upload>) -> AppResult<Stored> {
     let file_size = i64::try_from(upload.size).map_err(AppError::internal)?;
     let (worker, path) = (state.clone(), upload.path.clone());
     let info = tokio::task::spawn_blocking(move || worker.storage.ingest_file(&path)).await??;
-    posts::record_post(
-        state,
-        upload.user_id,
-        &info,
-        file_size,
-        upload.rating,
-        upload.source.clone(),
-        &upload.tags,
-    )
-    .await
+    posts::record_post(state, upload.user_id, &info, file_size, &upload.fields).await
 }
 
 /// `POST /uploads/{id}/finish`. A client whose answer was lost may ask again: a

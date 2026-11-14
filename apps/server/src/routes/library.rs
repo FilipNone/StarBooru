@@ -28,6 +28,7 @@ use crate::error::{AppError, AppResult};
 use crate::fetch::{FetchError, Fetcher, SiteCall};
 use crate::sources::{Answer, Call, Group, Item, MAX_ANSWER, Site};
 use crate::state::AppState;
+use crate::uploads::PostFields;
 
 /// Longest the worker sleeps before looking for work it wasn't told about.
 const IDLE: Duration = Duration::from_secs(60);
@@ -899,9 +900,12 @@ async fn store_item(
         state,
         job.user_id,
         Bytes::from(bytes),
-        item.rating.unwrap_or(unrated),
-        item.source.clone(),
-        &item.tags,
+        &PostFields {
+            tags: item.tags.clone(),
+            rating: item.rating.unwrap_or(unrated),
+            source: item.source.clone(),
+            autotag: None,
+        },
     )
     .await;
     let (post_id, counter) = match stored {

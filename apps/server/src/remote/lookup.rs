@@ -235,6 +235,7 @@ fn filled(req: &ImportRequest, post: RemotePost) -> ImportRequest {
         rating: post.rating,
         source: Some(post.page_url),
         url: post.file_url,
+        autotag: req.autotag,
     }
 }
 
@@ -292,6 +293,7 @@ pub async fn fetch(
         rating: page.rating.unwrap_or(req.rating),
         source: Some(req.source.unwrap_or_else(|| page_url.clone())),
         url: file_url,
+        autotag: req.autotag,
     };
     let bytes = download(fetcher, pace, &req.url, Some(&page_url), max_bytes, watch).await?;
     if html::is_html(&bytes) {
@@ -360,6 +362,7 @@ mod tests {
             tags: vec!["mine".into(), "sky".into()],
             rating: Rating::Explicit,
             source: source.map(str::to_owned),
+            autotag: None,
         }
     }
 
@@ -585,6 +588,7 @@ mod tests {
             tags: vec!["mine".into(), "character:sea".into(), "some_one".into()],
             rating: Rating::Safe,
             source: Some(page.clone()),
+            autotag: None,
         };
         let (_, got) = fetch(&fetcher, &pace, &mine, picked.clone(), 1 << 20, UNWATCHED)
             .await

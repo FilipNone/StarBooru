@@ -31,6 +31,23 @@ const PICKER_ACCEPT: Option<&str> = if cfg!(target_os = "android") {
 /// Kept across pages, like the list they apply to.
 static SHARED_TAGS: GlobalSignal<String> = Signal::global(String::new);
 static RATING: GlobalSignal<Rating> = Signal::global(Rating::default);
+/// Whether the AI tags what is sent. `None` until the toggle is pressed: the
+/// server's own setting.
+static AUTOTAG: GlobalSignal<Option<bool>> = Signal::global(|| None);
+
+/// What the bar puts on everything sent together.
+fn batch() -> activity::Batch {
+    activity::Batch {
+        tags: SHARED_TAGS.peek().clone(),
+        rating: *RATING.peek(),
+        autotag: *AUTOTAG.peek(),
+    }
+}
+
+/// Whether the AI tags what is sent, given the server's own choice.
+fn autotag_on(server: bool) -> bool {
+    AUTOTAG.read().unwrap_or(server)
+}
 
 /// How many tiles show a picture of their own file. A folder of thousands
 /// would otherwise decode every picture in it at once.
@@ -56,6 +73,8 @@ pub fn Upload() -> Element {
     // Hide URL import when the server has it off (shown while unknown).
     let url_import =
         use_resource(|| async move { store::server_info().await.is_none_or(|i| i.url_import) });
+    // The AI toggle shows only when the server can tag.
+    let ai = use_resource(store::ai_status);
     use_hook(activity::refresh);
 
     // Only images and videos. Those from a folder get its name as a tag.
@@ -174,6 +193,13 @@ pub fn Upload() -> Element {
     let clearable = QUEUE.read().iter().any(|i| i.status != Status::Uploading)
         || JOBS.read().iter().any(|j| !j.state.is_active());
     let show_url = url_import.read().unwrap_or(true);
+    // The server's own choice, when it can tag at all.
+    let ai_tagging = ai
+        .read()
+        .clone()
+        .flatten()
+        .filter(|s| s.tagging)
+        .map(|s| s.autotag);
     let empty = QUEUE.read().is_empty() && JOBS.read().is_empty();
     let queued = QUEUE.read().len();
     let grid_class = match (empty, clearing()) {
@@ -217,6 +243,17 @@ pub fn Upload() -> Element {
                     aria_pressed: folder_tags(),
                     onclick: move |_| folder_tags.toggle(),
                     Ico { icon: Icon::Label }
+                }
+                if let Some(ai) = ai_tagging {
+                    button {
+                        r#type: "button",
+                        class: if autotag_on(ai) { "icon-btn on" } else { "icon-btn" },
+                        title: t!("upload-autotag"),
+                        aria_label: t!("upload-autotag"),
+                        aria_pressed: autotag_on(ai),
+                        onclick: move |_| *AUTOTAG.write() = Some(!autotag_on(ai)),
+                        Ico { icon: Icon::Sparkle }
+                    }
                 }
                 if show_url {
                     button {
@@ -308,7 +345,7 @@ pub fn Upload() -> Element {
                     aria_label: t!("nav-upload"),
                     onsubmit: move |e| {
                         e.prevent_default();
-                        activity::start(&SHARED_TAGS.peek(), *RATING.peek());
+                        activity::start(&batch());
                     },
                     input {
                         class: "bulk-tags",
@@ -646,7 +683,7 @@ pub fn DropToUpload() -> Element {
             error.set(Some(problem.to_string()));
             return;
         }
-        activity::start_only(&chosen, &shared, *RATING.peek());
+        activity::start_only(&chosen, &batch());
         close(false);
     };
 

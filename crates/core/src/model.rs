@@ -352,6 +352,9 @@ pub struct ImportRequest {
     /// Defaults to `url`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
+    /// Whether AI tags the new post. `None` leaves it to the server's setting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub autotag: Option<bool>,
 }
 
 /// The size of a chunk in a chunked upload. A file no bigger than this goes in
@@ -371,6 +374,9 @@ pub struct UploadStart {
     pub rating: Rating,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
+    /// Whether AI tags the new post. `None` leaves it to the server's setting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub autotag: Option<bool>,
 }
 
 /// The answer to [`UploadStart`]: where to send the chunks, and how to cut them.

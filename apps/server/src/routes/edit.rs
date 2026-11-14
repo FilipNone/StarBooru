@@ -11,6 +11,7 @@ use super::posts;
 use crate::auth::AuthUser;
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
+use crate::uploads::PostFields;
 
 fn bad(e: EditError) -> AppError {
     AppError::BadRequest(e.to_string())
@@ -97,9 +98,12 @@ pub async fn edit(
         &state,
         user.id,
         Bytes::from(bytes),
-        post.rating,
-        post.source.clone(),
-        &post.tags,
+        &PostFields {
+            tags: post.tags.clone(),
+            rating: post.rating,
+            source: post.source.clone(),
+            autotag: None,
+        },
     )
     .await?;
     // An edited image drops its metadata; it still dates from the original.

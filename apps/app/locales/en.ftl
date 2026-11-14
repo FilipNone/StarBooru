@@ -445,6 +445,7 @@ upload-link = Add a link
 upload-drop-now = Drop to upload
 upload-folder = Choose a folder
 upload-folder-tags = Tag files with their folder name
+upload-autotag = Let the AI tag these uploads
 upload-urls-placeholder = Paste a link to a file or a booru post
 upload-urls-label = Links to files or booru posts
 add = Add

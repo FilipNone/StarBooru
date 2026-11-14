@@ -26,6 +26,16 @@ const MAX_OPEN_PER_USER: usize = 8;
 const IDLE_LIMIT: Duration = Duration::from_secs(3600);
 const SWEEP_EVERY: Duration = Duration::from_secs(600);
 
+/// What goes on a new post besides its file.
+#[derive(Debug, Clone, Default)]
+pub struct PostFields {
+    pub tags: Vec<String>,
+    pub rating: Rating,
+    pub source: Option<String>,
+    /// Whether AI tags the post. `None` leaves it to the server's setting.
+    pub autotag: Option<bool>,
+}
+
 /// What has become of an upload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
@@ -45,9 +55,7 @@ pub struct Upload {
     pub path: PathBuf,
     pub size: u64,
     pub chunk_size: u64,
-    pub tags: Vec<String>,
-    pub rating: Rating,
-    pub source: Option<String>,
+    pub fields: PostFields,
     /// Chunks hold this shared while writing and finishing holds it alone, so
     /// no chunk can change a file after it has been hashed.
     pub phase: RwLock<Phase>,
@@ -56,7 +64,6 @@ pub struct Upload {
 }
 
 impl Upload {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: String,
         user_id: i64,
@@ -64,9 +71,7 @@ impl Upload {
         size: u64,
         chunk_size: u64,
         chunks: u32,
-        tags: Vec<String>,
-        rating: Rating,
-        source: Option<String>,
+        fields: PostFields,
     ) -> Self {
         Self {
             id,
@@ -74,9 +79,7 @@ impl Upload {
             path,
             size,
             chunk_size,
-            tags,
-            rating,
-            source,
+            fields,
             phase: RwLock::new(Phase::Receiving),
             received: (0..chunks).map(|_| AtomicBool::new(false)).collect(),
             touched: Mutex::new(Instant::now()),
@@ -203,9 +206,7 @@ mod tests {
             10,
             5,
             chunks,
-            Vec::new(),
-            Rating::default(),
-            None,
+            PostFields::default(),
         ))
     }
 

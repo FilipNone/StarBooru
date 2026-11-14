@@ -22,8 +22,9 @@ use crate::store;
 pub enum Status {
     /// Waiting for the user to press Upload; its tags can still change.
     Draft,
-    /// Handed to the runner with its final tags.
-    Ready(Vec<String>, Rating),
+    /// Handed to the runner with its final tags, its rating and whether AI
+    /// tags it.
+    Ready(Vec<String>, Rating, Option<bool>),
     Uploading,
     Done(i64),
     Failed(String),
@@ -185,19 +186,21 @@ fn with_tags(own: &str, more: &[String]) -> String {
 /// its page as the source and its rating, and only with the tags the item
 /// has now: the server doesn't look it up again, so tags taken off stay off.
 /// Anything else goes as it is, and the server finds what it can.
-fn import_of(item: &Item, url: &str, tags: Vec<String>, rating: Rating) -> ImportRequest {
+fn import_of(item: &Item, url: &str, tags: Vec<String>, batch: &Batch) -> ImportRequest {
     match &item.remote {
         Remote::Found(post) if !post.file_url.trim().is_empty() => ImportRequest {
             url: post.file_url.clone(),
             tags,
             rating: post.rating,
             source: Some(post.page_url.clone()),
+            autotag: batch.autotag,
         },
         _ => ImportRequest {
             url: url.to_owned(),
             tags,
-            rating,
+            rating: batch.rating,
             source: None,
+            autotag: batch.autotag,
         },
     }
 }
@@ -248,25 +251,34 @@ pub fn finished_count() -> usize {
     uploads.saturating_add(imports)
 }
 
+/// What goes on everything sent together, from the Upload page's bar.
+pub struct Batch {
+    /// Tags for every item, before each one's own.
+    pub tags: String,
+    pub rating: Rating,
+    /// Whether AI tags the new posts. `None` leaves it to the server.
+    pub autotag: Option<bool>,
+}
+
 /// Sends every draft.
-pub fn start(shared: &str, rating: Rating) {
-    send(shared, rating, |_| true);
+pub fn start(batch: &Batch) {
+    send(batch, |_| true);
 }
 
 /// Sends these drafts and leaves any others waiting on the Upload page.
-pub fn start_only(keys: &[u64], shared: &str, rating: Rating) {
-    send(shared, rating, |key| keys.contains(&key));
+pub fn start_only(keys: &[u64], batch: &Batch) {
+    send(batch, |key| keys.contains(&key));
 }
 
 /// Files go to the upload runner and addresses to the server's import queue,
-/// each with the shared tags and rating.
-fn send(shared: &str, rating: Rating, wanted: impl Fn(u64) -> bool) {
-    let mut batch = Vec::new();
+/// each with what the batch puts on them.
+fn send(batch: &Batch, wanted: impl Fn(u64) -> bool) {
+    let mut imports = Vec::new();
     for item in QUEUE.write().iter_mut() {
         if item.status != Status::Draft || !wanted(item.key) {
             continue;
         }
-        let tags = match parse_tag_list(&format!("{shared} {}", item.tags)) {
+        let tags = match parse_tag_list(&format!("{} {}", batch.tags, item.tags)) {
             Ok(tags) => tags,
             Err(e) => {
                 item.status = Status::Failed(e.to_string());
@@ -274,15 +286,15 @@ fn send(shared: &str, rating: Rating, wanted: impl Fn(u64) -> bool) {
             }
         };
         item.status = match &item.source {
-            Source::File(_) => Status::Ready(tags, rating),
+            Source::File(_) => Status::Ready(tags, batch.rating, batch.autotag),
             Source::Url(url) => {
-                batch.push((item.key, import_of(item, url, tags, rating)));
+                imports.push((item.key, import_of(item, url, tags, batch)));
                 Status::Uploading
             }
         };
     }
-    if !batch.is_empty() {
-        spawn_forever(send_imports(batch));
+    if !imports.is_empty() {
+        spawn_forever(send_imports(imports));
     }
     if !*RUNNING.peek() && QUEUE.peek().iter().any(|i| i.pending()) {
         *RUNNING.write() = true;
@@ -336,16 +348,16 @@ async fn run_uploads() {
             .peek()
             .iter()
             .find_map(|i| match (&i.status, &i.source) {
-                (Status::Ready(tags, rating), Source::File(file)) => {
-                    Some((i.key, file.clone(), tags.clone(), *rating))
+                (Status::Ready(tags, rating, autotag), Source::File(file)) => {
+                    Some((i.key, file.clone(), tags.clone(), *rating, *autotag))
                 }
                 _ => None,
             });
-        let Some((key, file, tags, rating)) = next else {
+        let Some((key, file, tags, rating, autotag)) = next else {
             break;
         };
         set_status(key, Status::Uploading);
-        let status = upload(key, file, tags, rating).await;
+        let status = upload(key, file, tags, rating, autotag).await;
         match status {
             Status::Done(_) => done = done.saturating_add(1),
             _ => failed = failed.saturating_add(1),
@@ -358,7 +370,13 @@ async fn run_uploads() {
     }
 }
 
-async fn upload(key: u64, file: FileData, tags: Vec<String>, rating: Rating) -> Status {
+async fn upload(
+    key: u64,
+    file: FileData,
+    tags: Vec<String>,
+    rating: Rating,
+    autotag: Option<bool>,
+) -> Status {
     let Some(client) = store::client() else {
         return Status::Failed(t!("activity-signed-out"));
     };
@@ -368,6 +386,7 @@ async fn upload(key: u64, file: FileData, tags: Vec<String>, rating: Rating) -> 
         tags,
         rating,
         source: None,
+        autotag,
     };
     let read = |offset, len| crate::util::read_range(&file, offset, len);
     let total = file.size();
@@ -579,16 +598,17 @@ mod tests {
     fn a_found_post_is_imported_as_its_file_with_the_tags_left_on_it() {
         let mut it = item(1, Status::Draft);
         let tags = vec!["sky".to_owned()];
+        let batch = Batch {
+            tags: String::new(),
+            rating: Rating::Safe,
+            autotag: Some(false),
+        };
         // Not looked up: the server does it.
-        let plain = import_of(
-            &it,
-            "https://booru.example/post/1",
-            tags.clone(),
-            Rating::Safe,
-        );
+        let plain = import_of(&it, "https://booru.example/post/1", tags.clone(), &batch);
         assert_eq!(plain.url, "https://booru.example/post/1");
         assert_eq!(plain.source, None);
         assert_eq!(plain.rating, Rating::Safe);
+        assert_eq!(plain.autotag, Some(false));
 
         let post = RemotePost {
             id: 1,
@@ -610,18 +630,14 @@ mod tests {
             post_id: None,
         };
         it.remote = Remote::Found(Rc::new(post.clone()));
-        let found = import_of(
-            &it,
-            "https://booru.example/post/1",
-            tags.clone(),
-            Rating::Safe,
-        );
+        let found = import_of(&it, "https://booru.example/post/1", tags.clone(), &batch);
         assert_eq!(found.url, "https://cdn.booru.example/1.png");
         assert_eq!(
             found.source.as_deref(),
             Some("https://booru.example/post/1")
         );
         assert_eq!(found.rating, Rating::Explicit);
+        assert_eq!(found.autotag, Some(false));
         // "cloud" was taken off, and stays off.
         assert_eq!(found.tags, tags);
 
@@ -630,7 +646,7 @@ mod tests {
             file_url: String::new(),
             ..post
         }));
-        let by_page = import_of(&it, "https://booru.example/post/1", tags, Rating::Safe);
+        let by_page = import_of(&it, "https://booru.example/post/1", tags, &batch);
         assert_eq!(by_page.url, "https://booru.example/post/1");
         assert_eq!(by_page.source, None);
     }
@@ -652,7 +668,7 @@ mod tests {
         let kept: Vec<u64> = [
             item(1, Status::Done(4)),
             item(2, Status::Uploading),
-            item(3, Status::Ready(Vec::new(), Rating::default())),
+            item(3, Status::Ready(Vec::new(), Rating::default(), None)),
             item(4, Status::Failed("x".into())),
         ]
         .into_iter()

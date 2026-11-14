@@ -300,21 +300,25 @@ pub async fn suggest(
     }
 }
 
-/// Starts auto-tagging a new post in the background when it is turned on.
-/// Failures are logged without content and never affect the upload.
-pub fn autotag_later(state: &AppState, post_id: i64) {
+/// Starts auto-tagging a new post in the background when it is wanted: by
+/// the uploader, or else by the server's setting. Failures are logged without
+/// content and never affect the upload.
+pub fn autotag_later(state: &AppState, post_id: i64, wanted: Option<bool>) {
+    if wanted == Some(false) {
+        return;
+    }
     let state = state.clone();
     tokio::spawn(async move {
-        if let Err(e) = autotag(&state, post_id).await {
+        if let Err(e) = autotag(&state, post_id, wanted).await {
             warn!(post_id, "automatic tagging failed: {e}");
         }
     });
 }
 
-async fn autotag(state: &AppState, post_id: i64) -> AppResult<()> {
+async fn autotag(state: &AppState, post_id: i64, wanted: Option<bool>) -> AppResult<()> {
     let setup = crate::settings::ai(state).await?;
     let tool = setup.tool(AiTool::Tagging);
-    if !setup.autotag || tool.mode == AiMode::Off {
+    if !wanted.unwrap_or(setup.autotag) || tool.mode == AiMode::Off {
         return Ok(());
     }
     let route = route(state, &tool).await?;

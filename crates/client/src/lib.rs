@@ -106,6 +106,8 @@ pub struct Upload {
     pub tags: Vec<String>,
     pub rating: Rating,
     pub source: Option<String>,
+    /// Whether AI tags the post. `None` leaves it to the server's setting.
+    pub autotag: Option<bool>,
 }
 
 #[derive(Clone, Debug)]
@@ -638,6 +640,9 @@ impl Client {
             .text("rating", upload.rating.as_str());
         if let Some(source) = upload.source {
             form = form.text("source", source);
+        }
+        if let Some(autotag) = upload.autotag {
+            form = form.text("autotag", autotag.to_string());
         }
         Self::send(self.request(Method::POST, "/posts")?.multipart(form)).await
     }
