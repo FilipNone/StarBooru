@@ -2183,6 +2183,18 @@ html:has(.editor) { overflow-y: hidden; }
    and only the first screenful makes an entrance. */
 .up-tile { content-visibility: auto; contain-intrinsic-size: auto 168px; }
 .up-tile:nth-child(n + 40) { animation: none; }
+/* Clear: the tiles shrink away one after another, from the first. What is
+   still under way (`.stays`) stays. */
+.up-grid.clearing .up-tile:not(.stays) {
+  pointer-events: none;
+  animation: tile-out var(--med) var(--ease) both; animation-delay: calc(var(--i, 0) * 28ms);
+}
+.up-grid.clearing .up-tile:not(.stays):nth-child(n + 40) { animation: none; opacity: 0; }
+.app[data-effects="lite"] .up-grid.clearing .up-tile { animation-delay: 0ms; }
+@media (prefers-reduced-motion: reduce) {
+  .up-grid.clearing .up-tile { animation-delay: 0ms !important; }
+}
+@keyframes tile-out { to { opacity: 0; transform: scale(0.6); } }
 .up-face { align-content: center; justify-items: center; gap: 6px; padding: 12px; text-align: center; }
 .up-name {
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden;

@@ -42,6 +42,8 @@ pub fn Upload() -> Element {
     let mut linking = use_signal(|| false);
     let mut url_text = use_signal(String::new);
     let mut notice = use_signal(|| None::<String>);
+    // The Clear button's tiles on their way out.
+    let mut clearing = use_signal(|| false);
     // Hide URL import when the server has it off (shown while unknown).
     let url_import =
         use_resource(|| async move { store::server_info().await.is_none_or(|i| i.url_import) });
@@ -164,6 +166,12 @@ pub fn Upload() -> Element {
         || JOBS.read().iter().any(|j| !j.state.is_active());
     let show_url = url_import.read().unwrap_or(true);
     let empty = QUEUE.read().is_empty() && JOBS.read().is_empty();
+    let queued = QUEUE.read().len();
+    let grid_class = match (empty, clearing()) {
+        (true, _) => "grid up-grid empty",
+        (false, true) => "grid up-grid clearing",
+        (false, false) => "grid up-grid",
+    };
     rsx! {
         div { class: if drafts > 0 { "page upload sending" } else { "page upload" },
             div { class: "page-head",
@@ -219,8 +227,15 @@ pub fn Upload() -> Element {
                         title: t!("upload-clear"),
                         aria_label: t!("upload-clear"),
                         onclick: move |_| {
-                            activity::clear();
+                            if clearing() {
+                                return;
+                            }
+                            clearing.set(true);
                             spawn(async move {
+                                // The tiles go first, then the list.
+                                tiles_gone().await;
+                                activity::clear();
+                                clearing.set(false);
                                 if let Err(message) = activity::clear_jobs().await {
                                     notice.set(Some(message));
                                 }
@@ -255,7 +270,7 @@ pub fn Upload() -> Element {
             if let Some(message) = notice() {
                 div { class: "banner info", role: "status", "{message}" }
             }
-            div { class: if empty { "grid up-grid empty" } else { "grid up-grid" },
+            div { class: grid_class,
                 label {
                     class: if veil().is_some() { "up-drop lifted" } else { "up-drop" },
                     title: t!("upload-files"),
@@ -272,10 +287,10 @@ pub fn Upload() -> Element {
                     }
                 }
                 for (index, item) in QUEUE.read().iter().enumerate() {
-                    FileTile { key: "{item.key}", item: item.clone(), preview: index < MAX_PREVIEWS }
+                    FileTile { key: "{item.key}", item: item.clone(), place: index }
                 }
                 for (index, job) in JOBS.read().iter().enumerate() {
-                    JobTile { key: "job-{job.id}", job: job.clone(), preview: index < MAX_PREVIEWS }
+                    JobTile { key: "job-{job.id}", job: job.clone(), place: queued.saturating_add(index) }
                 }
             }
             if drafts > 0 {
@@ -820,7 +835,8 @@ fn TileFace(src: Option<String>, icon: Icon, caption: String) -> Element {
 
 /// One file or address waiting to go, on its way, or done.
 #[component]
-fn FileTile(item: Item, preview: bool) -> Element {
+fn FileTile(item: Item, place: usize) -> Element {
+    let preview = place < MAX_PREVIEWS;
     let key = item.key;
     let name = item.name();
     let source = item.source.clone();
@@ -847,7 +863,7 @@ fn FileTile(item: Item, preview: bool) -> Element {
     let face = rsx! { TileFace { src: shown.map(|(url, _)| url), icon, caption } };
     if let Status::Done(id) = item.status {
         return rsx! {
-            Link { class: "thumb up-tile done", title: "{name}", to: Route::PostView { id, q: String::new() },
+            Link { class: "thumb up-tile done", style: stagger(place), title: "{name}", to: Route::PostView { id, q: String::new() },
                 {face}
                 span { class: "up-mark ok", aria_label: t!("upload-done"), Ico { icon: Icon::Check, size: 18 } }
             }
@@ -859,9 +875,10 @@ fn FileTile(item: Item, preview: bool) -> Element {
         div {
             class: match &item.status {
                 Status::Failed(_) => "thumb up-tile failed",
-                Status::Uploading => "thumb up-tile busy",
+                Status::Uploading => "thumb up-tile busy stays",
                 _ => "thumb up-tile",
             },
+            style: stagger(place),
             title: "{name}",
             {face}
             if removable {
@@ -915,6 +932,32 @@ fn FileTile(item: Item, preview: bool) -> Element {
     }
 }
 
+/// How long a tile waits before going when the list is cleared, so they go
+/// one after another from the first. Past the first screenful, all at once.
+fn stagger(place: usize) -> String {
+    format!("--i: {}", place.min(MAX_STAGGER))
+}
+
+/// The tiles that go one after another; enough for a screenful.
+const MAX_STAGGER: usize = 24;
+
+/// Waits for the tiles to finish going, or at most a second.
+async fn tiles_gone() {
+    let mut eval = document::eval(
+        r#"
+        await new Promise(requestAnimationFrame);
+        const grid = document.querySelector(".up-grid");
+        const going = grid?.getAnimations({ subtree: true }) ?? [];
+        await Promise.race([
+          Promise.allSettled(going.map((a) => a.finished)),
+          new Promise((done) => setTimeout(done, 1000)),
+        ]);
+        dioxus.send(true);
+        "#,
+    );
+    let _ = eval.recv::<bool>().await;
+}
+
 /// The mark on a tile that failed. Its reason shows on hover, and in a notice
 /// when pressed, as a finger has no hover.
 #[component]
@@ -934,14 +977,15 @@ fn FailMark(message: String) -> Element {
 
 /// One address the server is importing, or has.
 #[component]
-fn JobTile(job: ImportJob, preview: bool) -> Element {
+fn JobTile(job: ImportJob, place: usize) -> Element {
+    let preview = place < MAX_PREVIEWS;
     let id = job.id;
     let name = job.source.clone().unwrap_or_else(|| job.url.clone());
     let src = (preview && is_picture_url(&job.url)).then(|| job.url.clone());
     let face = rsx! { TileFace { src, icon: Icon::Link, caption: host_of(&name) } };
     if let (JobState::Done, Some(post)) = (job.state, job.post_id) {
         return rsx! {
-            Link { class: "thumb up-tile done", title: "{name}", to: Route::PostView { id: post, q: String::new() },
+            Link { class: "thumb up-tile done", style: stagger(place), title: "{name}", to: Route::PostView { id: post, q: String::new() },
                 {face}
                 span { class: "up-mark ok", aria_label: t!("upload-done"), Ico { icon: Icon::Check, size: 18 } }
             }
@@ -952,9 +996,11 @@ fn JobTile(job: ImportJob, preview: bool) -> Element {
         div {
             class: match job.state {
                 JobState::Failed => "thumb up-tile failed",
-                JobState::Running => "thumb up-tile busy",
+                JobState::Running => "thumb up-tile busy stays",
+                JobState::Queued => "thumb up-tile stays",
                 _ => "thumb up-tile",
             },
+            style: stagger(place),
             title: if note.is_empty() { name.clone() } else { format!("{name}\n{note}") },
             {face}
             match job.state {
@@ -1045,6 +1091,16 @@ mod tests {
         assert!(tag_problem("sky", ["cloud", long.as_str()]).is_some());
         // Nothing to send, nothing wrong.
         assert!(tag_problem(&long, []).is_none());
+    }
+
+    #[test]
+    fn cleared_tiles_go_one_after_another_and_busy_ones_stay() {
+        let css = include_str!("../../assets/main.css");
+        assert!(css.contains(".up-grid.clearing .up-tile:not(.stays) {"));
+        assert!(css.contains("animation-delay: calc(var(--i, 0) * 28ms)"));
+        assert_eq!(stagger(3), "--i: 3");
+        // A long list doesn't keep the last tile waiting.
+        assert_eq!(stagger(5000), format!("--i: {MAX_STAGGER}"));
     }
 
     #[test]

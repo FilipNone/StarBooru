@@ -87,8 +87,18 @@ fn poll_every(jobs: &[ImportJob]) -> u32 {
     }
 }
 
-/// Adds a draft and returns its key.
+/// Adds a draft and returns its key. The first of a new batch clears away
+/// what the last one left: finished uploads, failures and finished imports.
 pub fn add(source: Source, tags: String) -> u64 {
+    if starts_batch(&QUEUE.peek()) {
+        QUEUE.write().retain(Item::pending);
+        if JOBS.peek().iter().any(|j| !j.state.is_active()) {
+            spawn_forever(async {
+                // Kept on a failure; the Clear button can try again.
+                let _ = clear_jobs().await;
+            });
+        }
+    }
     let key = *NEXT_KEY.peek();
     *NEXT_KEY.write() = key.wrapping_add(1);
     QUEUE.write().push(Item {
@@ -99,6 +109,12 @@ pub fn add(source: Source, tags: String) -> u64 {
         progress: None,
     });
     key
+}
+
+/// Whether something added now begins a new batch: nothing is waiting to be
+/// sent, so whatever is on the list belongs to one already sent.
+fn starts_batch(queue: &[Item]) -> bool {
+    !queue.iter().any(|i| i.status == Status::Draft)
 }
 
 pub fn set_tags(key: u64, tags: String) {
@@ -455,6 +471,43 @@ mod tests {
             finished_at: None,
             progress: None,
         }
+    }
+
+    fn item(key: u64, status: Status) -> Item {
+        Item {
+            key,
+            source: Source::Url(format!("https://example.org/{key}.png")),
+            tags: String::new(),
+            status,
+            progress: None,
+        }
+    }
+
+    #[test]
+    fn a_new_batch_starts_once_nothing_waits_to_be_sent() {
+        assert!(starts_batch(&[]));
+        assert!(starts_batch(&[
+            item(1, Status::Done(4)),
+            item(2, Status::Failed("x".into()))
+        ]));
+        assert!(starts_batch(&[item(1, Status::Uploading)]));
+        // Files still being picked belong to the batch being made.
+        assert!(!starts_batch(&[
+            item(1, Status::Done(4)),
+            item(2, Status::Draft)
+        ]));
+        // What is under way stays when a batch starts.
+        let kept: Vec<u64> = [
+            item(1, Status::Done(4)),
+            item(2, Status::Uploading),
+            item(3, Status::Ready(Vec::new(), Rating::default())),
+            item(4, Status::Failed("x".into())),
+        ]
+        .into_iter()
+        .filter(Item::pending)
+        .map(|i| i.key)
+        .collect();
+        assert_eq!(kept, [2, 3]);
     }
 
     #[test]
