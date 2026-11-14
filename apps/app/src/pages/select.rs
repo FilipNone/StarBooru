@@ -288,6 +288,21 @@ mod tests {
     }
 
     #[test]
+    fn the_arrow_is_a_drawn_shape() {
+        // Regression: two gradient halves made a jagged arrow with a seam.
+        let css = include_str!("../../assets/main.css");
+        assert!(!css.contains("linear-gradient(45deg, transparent 50%"));
+        let arrow = css
+            .split_once(".select-button::after {")
+            .and_then(|(_, rest)| rest.split_once('}'))
+            .map(|(rule, _)| rule)
+            .unwrap_or("");
+        assert!(arrow.contains("background: var(--on-surface-2)"));
+        assert!(arrow.contains("mask: url(\"data:image/svg+xml"));
+        assert!(arrow.contains("pointer-events: none"));
+    }
+
+    #[test]
     fn enter_space_and_escape_only_act_when_open() {
         assert_eq!(key_action(&Key::Enter, true, 2, None, 5), Action::Pick(2));
         assert_eq!(
