@@ -31,8 +31,8 @@ const PICKER_ACCEPT: Option<&str> = if cfg!(target_os = "android") {
 /// Kept across pages, like the list they apply to.
 static SHARED_TAGS: GlobalSignal<String> = Signal::global(String::new);
 static RATING: GlobalSignal<Rating> = Signal::global(Rating::default);
-/// Whether the AI tags what is sent. `None` until the toggle is pressed: the
-/// server's own setting.
+/// Whether the AI tags what is sent. Until the toggle is pressed it is
+/// `None`, and the server's setting decides.
 static AUTOTAG: GlobalSignal<Option<bool>> = Signal::global(|| None);
 
 /// What the bar puts on everything sent together.
@@ -193,7 +193,7 @@ pub fn Upload() -> Element {
     let clearable = QUEUE.read().iter().any(|i| i.status != Status::Uploading)
         || JOBS.read().iter().any(|j| !j.state.is_active());
     let show_url = url_import.read().unwrap_or(true);
-    // The server's own choice, when it can tag at all.
+    // The server's setting, or `None` when it can't tag.
     let ai_tagging = ai
         .read()
         .clone()

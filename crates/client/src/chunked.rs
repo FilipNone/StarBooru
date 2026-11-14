@@ -480,7 +480,7 @@ mod tests {
             .unwrap();
         assert_eq!(post.id, 7);
         assert_eq!(fake.reassembled(BIG), bytes);
-        // What goes on the post is said up front, the AI tagging choice too.
+        // The start request carries the tags and the AI choice, before any chunk.
         let start = fake.start.lock().unwrap().clone().unwrap();
         assert_eq!(start["tags"], serde_json::json!(["cat"]));
         assert_eq!(start["autotag"], false);

@@ -53,7 +53,8 @@ pub struct AiStatus {
     /// Translation of the text in comics, over the picture.
     #[serde(default)]
     pub comics: bool,
-    /// New uploads are tagged unless the uploader says otherwise.
+    /// Whether the AI tags a new upload whose uploader doesn't say. Always
+    /// false while tagging is off.
     #[serde(default)]
     pub autotag: bool,
 }
