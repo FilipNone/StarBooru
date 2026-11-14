@@ -1808,7 +1808,7 @@ pre.command {
 .item-glow.on { opacity: 0.85; }
 .app:is([data-saver="on"], [data-effects="lite"]) .item-glow { display: none; }
 /* The picture with what is known of it, then the rating and the tags. */
-.item-about, .item-fields, .item-note { display: grid; align-content: start; gap: 12px; min-width: 0; }
+.item-about, .item-fields, .item-top, .item-note { display: grid; align-content: start; gap: 12px; min-width: 0; }
 .item-facts { font-size: 13px; gap: 4px 14px; }
 .item-facts dd { min-width: 0; }
 .item-fields .field { margin: 0; }
@@ -1830,11 +1830,14 @@ pre.command {
    from, what is wrong with them), and the tags it offers cover it while there
    are any, so nothing moves when they come. */
 @media (min-width: 601px) {
-  .item-body { grid-template-rows: auto minmax(0, 1fr) auto; }
+  .item-body { grid-template-rows: auto minmax(0, 1fr); }
   .item-preview { grid-area: 1 / 1; }
   .item-about { grid-area: 2 / 1; }
-  .item-note { grid-area: 2 / 2; min-height: 66px; }
-  .item-fields { grid-area: 1 / 2; display: flex; flex-direction: column; }
+  /* The column takes the body's two rows: the rating and the box in the
+     picture's, the note in the details'. */
+  .item-fields { grid-column: 2; grid-row: 1 / 3; display: grid; grid-template-rows: subgrid; }
+  .item-top { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+  .item-note { min-height: 66px; align-content: start; }
   .item-tag-field { flex: 1 0 auto; display: flex; flex-direction: column; position: relative; }
   .item-tag-field .text-box { flex: 1 0 auto; display: flex; flex-direction: column; }
   .item-tag-field textarea { flex: 1 0 auto; height: 96px; }
@@ -1844,18 +1847,16 @@ pre.command {
   .app[data-hand="left"] .item-body { grid-template-columns: minmax(0, 1fr) minmax(0, 320px); }
   .app[data-hand="left"] .item-preview { grid-area: 1 / 2; }
   .app[data-hand="left"] .item-about { grid-area: 2 / 2; }
-  .app[data-hand="left"] .item-fields { grid-area: 1 / 1; }
-  .app[data-hand="left"] .item-note { grid-area: 2 / 1; }
+  .app[data-hand="left"] .item-fields { grid-column: 1; }
   /* The offers, while there are any, take the note's place under the box. */
   .item-body:has(.tag-offers:not(:empty)) .item-note > * { visibility: hidden; }
-  /* A tag box made taller by its grip takes the second row too, so it grows
-     past the details instead of pushing them down from under the picture.
-     The second row is flexible, so the first stays the picture's height, and
-     the note goes under both. */
+  /* A tag box made taller by its grip no longer shares the picture's row:
+     the column becomes a plain stack, so the box grows past the details
+     without pushing them down and the note moves with it. The second row is
+     flexible, so the first stays the picture's height. */
   .app .item-body > .item-fields:has(textarea[data-sized]) {
-    grid-row: 1 / 3; align-self: start;
+    display: flex; flex-direction: column; gap: 12px; align-self: start;
   }
-  .app .item-body:has(textarea[data-sized]) > .item-note { grid-row: 3; }
 }
 .btn.text.bin { color: var(--on-surface-2); }
 .btn.text.bin:hover:not(:disabled), .btn.text.bin:focus-visible { background: var(--danger); color: var(--on-primary); }

@@ -1217,50 +1217,55 @@ fn ItemSheet(
                         }
                     }
                     div { class: "item-fields",
-                        // Not a `label`: a click on the list would also
-                        // press the button inside it and open it again.
-                        div { class: "field",
-                            span { {t!("rating")} }
-                            Select {
-                                class: "boxed item-rating",
-                                aria_label: t!("rating"),
-                                value: item.rating.map(|r| r.as_str().to_string()).unwrap_or_default(),
-                                options: rating_choices(usual),
-                                onchange: move |v: String| activity::set_rating(key, Rating::parse(&v)),
+                        // The rating and the tag box: wide, they fill the
+                        // picture's height, and the note goes under them.
+                        div { class: "item-top",
+                            // Not a `label`: a click on the list would also
+                            // press the button inside it and open it again.
+                            div { class: "field",
+                                span { {t!("rating")} }
+                                Select {
+                                    class: "boxed item-rating",
+                                    aria_label: t!("rating"),
+                                    value: item.rating.map(|r| r.as_str().to_string()).unwrap_or_default(),
+                                    options: rating_choices(usual),
+                                    onchange: move |v: String| activity::set_rating(key, Rating::parse(&v)),
+                                }
+                            }
+                            label { class: "field item-tag-field",
+                                span { {t!("post-tags")} }
+                                TagBox {
+                                    id: "item-tags",
+                                    class: "item-tags",
+                                    rows: 8,
+                                    placeholder: t!("upload-file-tags-placeholder"),
+                                    value: item.tags.clone(),
+                                    oninput: move |tags: String| activity::set_tags(key, tags),
+                                }
                             }
                         }
-                        label { class: "field item-tag-field",
-                            span { {t!("post-tags")} }
-                            TagBox {
-                                id: "item-tags",
-                                class: "item-tags",
-                                rows: 8,
-                                placeholder: t!("upload-file-tags-placeholder"),
-                                value: item.tags.clone(),
-                                oninput: move |tags: String| activity::set_tags(key, tags),
+                        // Under the tag box: where its tags came from, and what is
+                        // wrong with them. Wide, it keeps the room the offers take,
+                        // and it moves with the box when the box is made taller.
+                        div { class: "item-note",
+                            match &item.remote {
+                                Remote::Asking => rsx! {
+                                    p { class: "item-source muted", role: "status",
+                                        span { class: "spinner small", aria_hidden: "true" }
+                                        {t!("upload-looking-up")}
+                                    }
+                                },
+                                Remote::Found(post) => rsx! {
+                                    p { class: "item-source", role: "status",
+                                        Ico { icon: Icon::Check, size: 18 }
+                                        {t!("upload-tags-from", site = super::boorus::site_name(&post.site))}
+                                    }
+                                },
+                                _ => rsx! {},
                             }
-                        }
-                    }
-                    // Under the tag box: where its tags came from, and what is
-                    // wrong with them. Wide, it keeps the room the offers take.
-                    div { class: "item-note",
-                        match &item.remote {
-                            Remote::Asking => rsx! {
-                                p { class: "item-source muted", role: "status",
-                                    span { class: "spinner small", aria_hidden: "true" }
-                                    {t!("upload-looking-up")}
-                                }
-                            },
-                            Remote::Found(post) => rsx! {
-                                p { class: "item-source", role: "status",
-                                    Ico { icon: Icon::Check, size: 18 }
-                                    {t!("upload-tags-from", site = super::boorus::site_name(&post.site))}
-                                }
-                            },
-                            _ => rsx! {},
-                        }
-                        if let Some(problem) = problem {
-                            p { class: "queue-error", role: "alert", "{problem}" }
+                            if let Some(problem) = problem {
+                                p { class: "queue-error", role: "alert", "{problem}" }
+                            }
                         }
                     }
                 }
@@ -1903,9 +1908,13 @@ mod tests {
         assert!(css.contains(".item-tag-field textarea { flex: 1 0 auto; height: 96px; }"));
         // A box made taller by hand doesn't push the details down: its
         // column takes both rows, and the second row is the flexible one.
-        assert!(css.contains("grid-template-rows: auto minmax(0, 1fr) auto;"));
-        assert!(css.contains(".item-fields:has(textarea[data-sized]) {\n    grid-row: 1 / 3;"));
-        assert!(css.contains(".item-body:has(textarea[data-sized]) > .item-note { grid-row: 3; }"));
+        assert!(css.contains("grid-template-rows: auto minmax(0, 1fr);"));
+        assert!(css.contains("grid-row: 1 / 3; display: grid; grid-template-rows: subgrid;"));
+        // Once sized by hand, the column is a plain stack, so the note
+        // stays under the box and moves with it.
+        assert!(css.contains(".item-fields:has(textarea[data-sized]) {\n    display: flex;"));
+        let top = sheet.find(r#"class: "item-top""#).unwrap();
+        assert!(fields < top && top < rating && note > top);
     }
 
     #[test]
