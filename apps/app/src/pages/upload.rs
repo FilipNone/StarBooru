@@ -10,7 +10,7 @@ use starbooru_core::{ImportJob, JobState, Rating, parse_tag_list};
 use super::post::RatingPicker;
 use super::{Choice, Select, TransferBar, notify};
 use crate::Route;
-use crate::activity::{self, Item, JOBS, QUEUE, Source, Status};
+use crate::activity::{self, Item, JOBS, QUEUE, Remote, Source, Status};
 use crate::icons::{Ico, Icon};
 use crate::motion;
 use crate::paste;
@@ -42,6 +42,15 @@ pub fn Upload() -> Element {
     let mut linking = use_signal(|| false);
     let mut url_text = use_signal(String::new);
     let mut notice = use_signal(|| None::<String>);
+    // The item whose popup is open, and where its tile is.
+    let mut opened = use_signal(|| None::<(u64, (f64, f64))>);
+    let open_item = move |key: u64| {
+        spawn(async move {
+            let from = tile_offset(key).await;
+            activity::look_up(key);
+            opened.set(Some((key, from)));
+        });
+    };
     // The Clear button's tiles on their way out.
     let mut clearing = use_signal(|| false);
     // Hide URL import when the server has it off (shown while unknown).
@@ -287,7 +296,7 @@ pub fn Upload() -> Element {
                     }
                 }
                 for (index, item) in QUEUE.read().iter().enumerate() {
-                    FileTile { key: "{item.key}", item: item.clone(), place: index }
+                    FileTile { key: "{item.key}", item: item.clone(), place: index, onopen: open_item }
                 }
                 for (index, job) in JOBS.read().iter().enumerate() {
                     JobTile { key: "job-{job.id}", job: job.clone(), place: queued.saturating_add(index) }
@@ -327,6 +336,9 @@ pub fn Upload() -> Element {
                         {t!("upload-start", count = drafts)}
                     }
                 }
+            }
+            if let Some((key, from)) = opened() {
+                ItemSheet { key: "{key}", item_key: key, from, onclose: move |_| opened.set(None) }
             }
             if let Some(rect) = veil() {
                 div {
@@ -833,26 +845,51 @@ fn TileFace(src: Option<String>, icon: Icon, caption: String) -> Element {
     }
 }
 
-/// One file or address waiting to go, on its way, or done.
-#[component]
-fn FileTile(item: Item, place: usize) -> Element {
-    let preview = place < MAX_PREVIEWS;
-    let key = item.key;
-    let name = item.name();
-    let source = item.source.clone();
-    // Made once, and given back when the tile goes.
-    let shown = use_hook(|| match (&source, preview) {
-        (Source::File(file), true) => object_url(file).map(|url| (url, true)),
-        (Source::Url(url), true) if is_picture_url(url) => Some((url.clone(), false)),
+/// What a tile or the item popup shows of a file or an address: the file
+/// itself on the web, a picture's own address, or the post's preview from the
+/// booru it was found on. The flag says whether it is an object URL to give
+/// back.
+fn face_src(item: &Item, preview: bool) -> Option<(String, bool)> {
+    if !preview {
+        return None;
+    }
+    match (&item.source, &item.remote) {
+        (Source::Url(_), Remote::Found(post)) if !post.preview_url.is_empty() => {
+            let shown = post.sample_url.as_deref().unwrap_or(&post.preview_url);
+            let client = store::client()?;
+            Some((super::boorus::picture_src(&client, shown), false))
+        }
+        (Source::File(file), _) => object_url(file).map(|url| (url, true)),
+        (Source::Url(url), _) if is_picture_url(url) => Some((url.clone(), false)),
         _ => None,
-    });
-    let held = shown.clone();
+    }
+}
+
+/// What to show of an item. An object URL is made once and given back when
+/// its holder goes.
+fn use_face(item: &Item, preview: bool) -> Option<String> {
+    let first = item.clone();
+    let made = use_hook(move || face_src(&first, preview));
+    let held = made.clone();
     use_drop(move || {
         if let Some((url, true)) = &held {
             release_url(url);
         }
     });
-    let mut tagging = use_signal(|| false);
+    // A post found after the tile was made brings a picture of its own.
+    if let (Remote::Found(_), Some((url, false))) = (&item.remote, face_src(item, preview)) {
+        return Some(url);
+    }
+    made.map(|(url, _)| url)
+}
+
+/// One file or address waiting to go, on its way, or done.
+#[component]
+fn FileTile(item: Item, place: usize, onopen: EventHandler<u64>) -> Element {
+    let preview = place < MAX_PREVIEWS;
+    let key = item.key;
+    let name = item.name();
+    let shown = use_face(&item, preview);
     let (icon, caption) = match &item.source {
         Source::File(file) => (
             Icon::Gallery,
@@ -860,7 +897,7 @@ fn FileTile(item: Item, place: usize) -> Element {
         ),
         Source::Url(url) => (Icon::Link, host_of(url)),
     };
-    let face = rsx! { TileFace { src: shown.map(|(url, _)| url), icon, caption } };
+    let face = rsx! { TileFace { src: shown, icon, caption } };
     if let Status::Done(id) = item.status {
         return rsx! {
             Link { class: "thumb up-tile done", style: stagger(place), title: "{name}", to: Route::PostView { id, q: String::new() },
@@ -870,7 +907,7 @@ fn FileTile(item: Item, place: usize) -> Element {
         };
     }
     let removable = matches!(item.status, Status::Draft | Status::Ready(..));
-    let tagged = !item.tags.trim().is_empty();
+    let tag_count = item.tags.split_whitespace().count();
     rsx! {
         div {
             class: match &item.status {
@@ -879,46 +916,27 @@ fn FileTile(item: Item, place: usize) -> Element {
                 _ => "thumb up-tile",
             },
             style: stagger(place),
+            "data-up-key": "{key}",
             title: "{name}",
-            {face}
-            if removable {
-                button {
-                    r#type: "button",
-                    class: "up-btn up-x",
-                    aria_label: t!("upload-remove", name = name.clone()),
-                    title: t!("upload-remove", name = name.clone()),
-                    onclick: move |_| activity::remove(key),
-                    Ico { icon: Icon::Close, size: 18 }
-                }
-            }
             if item.status == Status::Draft {
                 button {
                     r#type: "button",
-                    class: if tagged || tagging() { "up-btn up-tag on" } else { "up-btn up-tag" },
-                    aria_label: t!("upload-file-tags-label", name = name.clone()),
-                    title: if tagged { item.tags.clone() } else { t!("upload-file-tags-placeholder") },
-                    aria_expanded: tagging(),
-                    onclick: move |_| tagging.toggle(),
-                    Ico { icon: Icon::Label, size: 18 }
+                    class: "up-open",
+                    aria_label: t!("upload-open", name = name.clone()),
+                    onclick: move |_| onopen.call(key),
+                    {face}
                 }
-                if tagging() {
-                    input {
-                        class: "up-tags",
-                        placeholder: t!("upload-file-tags-placeholder"),
-                        aria_label: t!("upload-file-tags-label", name = name.clone()),
-                        spellcheck: "false",
-                        autocapitalize: "none",
-                        autofocus: true,
-                        value: "{item.tags}",
-                        oninput: move |e| activity::set_tags(key, e.value()),
-                        onkeydown: move |e: KeyboardEvent| {
-                            if matches!(e.key(), Key::Enter | Key::Escape) {
-                                e.prevent_default();
-                                tagging.set(false);
-                            }
-                        },
+                if tag_count > 0 {
+                    span { class: "up-count", aria_hidden: "true",
+                        Ico { icon: Icon::Label, size: 16 }
+                        "{tag_count}"
                     }
                 }
+            } else {
+                {face}
+            }
+            if removable {
+                BinButton { class: "up-btn up-x", size: 18, label: t!("upload-remove", name = name.clone()), onclick: move |_| activity::remove(key) }
             }
             if item.status == Status::Uploading {
                 div { class: "up-progress",
@@ -927,6 +945,176 @@ fn FileTile(item: Item, place: usize) -> Element {
             }
             if let Status::Failed(message) = &item.status {
                 FailMark { message: message.clone() }
+            }
+        }
+    }
+}
+
+/// How far the middle of an item's tile is from the middle of the window,
+/// for its popup to come out of it and go back into it.
+async fn tile_offset(key: u64) -> (f64, f64) {
+    let mut eval = document::eval(&format!(
+        r#"
+        const tile = document.querySelector('[data-up-key="{key}"]')?.getBoundingClientRect();
+        dioxus.send(tile && tile.width > 0
+          ? [tile.left + tile.width / 2 - innerWidth / 2, tile.top + tile.height / 2 - innerHeight / 2]
+          : [0, 0]);
+        "#
+    ));
+    eval.recv().await.unwrap_or_default()
+}
+
+/// A button that removes something: a cross, which turns into a bin when
+/// pointed at or reached with the keyboard, so it isn't mistaken for a way
+/// to close.
+#[component]
+fn BinButton(
+    class: String,
+    size: u32,
+    label: String,
+    onclick: EventHandler<MouseEvent>,
+) -> Element {
+    rsx! {
+        button {
+            r#type: "button",
+            class: "{class} bin-x",
+            aria_label: "{label}",
+            title: "{label}",
+            onclick: move |e| onclick.call(e),
+            span { class: "bin-rest", Ico { icon: Icon::Close, size } }
+            span { class: "bin-hover", Ico { icon: Icon::Delete, size } }
+        }
+    }
+}
+
+/// A file or an address, opened from its tile: a bigger picture and its own
+/// tags. An address on a booru the server knows comes with the post's tags
+/// there, to change like any others.
+#[component]
+fn ItemSheet(item_key: u64, from: (f64, f64), onclose: EventHandler<()>) -> Element {
+    let key = item_key;
+    let mut closing = use_signal(|| false);
+    let item = QUEUE.read().iter().find(|i| i.key == key).cloned();
+    let first = item.clone();
+    let made = use_hook(move || first.and_then(|i| face_src(&i, true)));
+    let held = made.clone();
+    use_drop(move || {
+        if let Some((url, true)) = &held {
+            release_url(url);
+        }
+    });
+    use_effect(move || {
+        if !closing() {
+            return;
+        }
+        spawn(async move {
+            motion::settled(".item-sheet").await;
+            onclose.call(());
+        });
+    });
+    let mut close = move || {
+        if !*closing.peek() {
+            closing.set(true);
+        }
+    };
+    // Sent, or gone from the list some other way: nothing left to show.
+    let gone = item.as_ref().is_none_or(|i| i.status != Status::Draft);
+    use_effect(use_reactive!(|gone| {
+        if gone {
+            close();
+        }
+    }));
+    let Some(item) = item else {
+        return rsx! {};
+    };
+    let name = item.name();
+    let src = match (&item.remote, face_src(&item, true)) {
+        (Remote::Found(_), Some((url, false))) => Some(url),
+        _ => made.map(|(url, _)| url),
+    };
+    let (icon, detail) = match &item.source {
+        Source::File(file) => (Icon::Gallery, human_size(file.size() as i64)),
+        Source::Url(url) => (Icon::Link, host_of(url)),
+    };
+    let problem = tag_problem("", [item.tags.as_str()]);
+    let (x, y) = from;
+    rsx! {
+        div {
+            class: if closing() { "sheet-scrim closing" } else { "sheet-scrim" },
+            onclick: move |_| close(),
+            onkeydown: move |e| {
+                if e.key() == Key::Escape {
+                    close();
+                }
+            },
+            div {
+                class: "card sheet item-sheet",
+                style: "--from-x: {x:.1}px; --from-y: {y:.1}px",
+                role: "dialog",
+                aria_modal: "true",
+                aria_labelledby: "item-sheet-title",
+                onclick: move |e| e.stop_propagation(),
+                div { class: "sheet-head item-head",
+                    button {
+                        r#type: "button",
+                        class: "icon-btn",
+                        aria_label: t!("post-back"),
+                        title: t!("post-back"),
+                        autofocus: true,
+                        onclick: move |_| close(),
+                        Ico { icon: Icon::ArrowBack }
+                    }
+                    h2 { id: "item-sheet-title", class: "card-title item-title", title: "{name}", "{name}" }
+                    BinButton {
+                        class: "icon-btn danger",
+                        size: 24,
+                        label: t!("upload-remove", name = name.clone()),
+                        onclick: move |_| {
+                            activity::remove(key);
+                            close();
+                        },
+                    }
+                }
+                div { class: "item-body",
+                    div { class: "item-preview",
+                        TileFace { src, icon, caption: detail.clone() }
+                    }
+                    div { class: "item-fields",
+                        p { class: "muted item-detail", "{detail}" }
+                        match &item.remote {
+                            Remote::Asking => rsx! {
+                                p { class: "item-source muted", role: "status",
+                                    span { class: "spinner small", aria_hidden: "true" }
+                                    {t!("upload-looking-up")}
+                                }
+                            },
+                            Remote::Found(post) => rsx! {
+                                p { class: "item-source", role: "status",
+                                    Ico { icon: Icon::Check, size: 18 }
+                                    {t!("upload-tags-from", site = super::boorus::site_name(&post.site))}
+                                }
+                            },
+                            _ => rsx! {},
+                        }
+                        label { class: "field",
+                            span { {t!("post-tags")} }
+                            textarea {
+                                class: "item-tags",
+                                rows: "8",
+                                placeholder: t!("upload-file-tags-placeholder"),
+                                spellcheck: "false",
+                                autocapitalize: "none",
+                                value: "{item.tags}",
+                                oninput: move |e| activity::set_tags(key, e.value()),
+                            }
+                        }
+                        if let Some(problem) = problem {
+                            p { class: "queue-error", role: "alert", "{problem}" }
+                        } else {
+                            p { class: "muted hint", {t!("post-tags-hint")} }
+                        }
+                    }
+                }
             }
         }
     }
@@ -1005,11 +1193,10 @@ fn JobTile(job: ImportJob, place: usize) -> Element {
             {face}
             match job.state {
                 JobState::Queued => rsx! {
-                    button {
-                        r#type: "button",
+                    BinButton {
                         class: "up-btn up-x",
-                        aria_label: t!("upload-job-cancel"),
-                        title: t!("upload-job-cancel"),
+                        size: 18,
+                        label: t!("upload-job-cancel"),
                         onclick: move |_| {
                             spawn(async move {
                                 if let Err(message) = activity::cancel(id).await {
@@ -1017,7 +1204,6 @@ fn JobTile(job: ImportJob, place: usize) -> Element {
                                 }
                             });
                         },
-                        Ico { icon: Icon::Close, size: 18 }
                     }
                 },
                 JobState::Running => rsx! {
@@ -1091,6 +1277,25 @@ mod tests {
         assert!(tag_problem("sky", ["cloud", long.as_str()]).is_some());
         // Nothing to send, nothing wrong.
         assert!(tag_problem(&long, []).is_none());
+    }
+
+    #[test]
+    fn removing_shows_a_bin_and_the_tags_live_in_the_popup() {
+        let css = include_str!("../../assets/main.css");
+        assert!(css.contains(
+            ".bin-x .bin-hover, .bin-x:hover .bin-rest, .bin-x:focus-visible .bin-rest { display: none; }"
+        ));
+        assert!(
+            css.contains(
+                ".bin-x:hover .bin-hover, .bin-x:focus-visible .bin-hover { display: grid;"
+            )
+        );
+        // The popup comes out of its tile and goes back into it.
+        assert!(css.contains(".item-sheet { width: min(820px, 100%); animation: from-tab"));
+        assert!(css.contains(".sheet-scrim.closing .item-sheet { animation: to-tab"));
+        // The tiles' own little tag field is gone.
+        assert!(!css.contains(".up-tags {"));
+        assert!(!css.contains(".up-tag {"));
     }
 
     #[test]

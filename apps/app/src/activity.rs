@@ -4,13 +4,15 @@
 //! the app closes; imports run on the server and finish regardless.
 
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 use dioxus::core::spawn_forever;
 use dioxus::html::FileData;
 use dioxus::prelude::*;
 use starbooru_client::{ClientError, FileUpload};
 use starbooru_core::{
-    ImportJob, ImportRequest, JobState, MAX_IMPORT_BATCH, Meter, Rating, Transfer, parse_tag_list,
+    ImportJob, ImportRequest, JobState, MAX_IMPORT_BATCH, Meter, Rating, RemotePost, Transfer,
+    parse_tag_list,
 };
 
 use crate::pages::notify;
@@ -33,6 +35,19 @@ pub enum Source {
     Url(String),
 }
 
+/// What the booru behind an address said about it.
+#[derive(Clone, PartialEq, Default)]
+pub enum Remote {
+    /// Not asked yet: it is asked when the address is opened.
+    #[default]
+    Unasked,
+    Asking,
+    /// A post there, whose tags were added to the item's.
+    Found(Rc<RemotePost>),
+    /// Not a post on a site the server knows, or the site wouldn't say.
+    Unknown,
+}
+
 #[derive(Clone, PartialEq)]
 pub struct Item {
     pub key: u64,
@@ -42,6 +57,8 @@ pub struct Item {
     pub status: Status,
     /// How far its upload has got, once the first piece is through.
     pub progress: Option<Transfer>,
+    /// For an address: the post it is on another booru, once asked.
+    pub remote: Remote,
 }
 
 impl Item {
@@ -107,8 +124,82 @@ pub fn add(source: Source, tags: String) -> u64 {
         tags,
         status: Status::Draft,
         progress: None,
+        remote: Remote::Unasked,
     });
     key
+}
+
+/// Asks the server which post an address is on another booru, once. A post
+/// found there brings its tags, which can then be changed like any others.
+pub fn look_up(key: u64) {
+    let url = {
+        let mut queue = QUEUE.write();
+        let Some(item) = queue.iter_mut().find(|i| i.key == key) else {
+            return;
+        };
+        let Source::Url(url) = &item.source else {
+            return;
+        };
+        if item.remote != Remote::Unasked {
+            return;
+        }
+        item.remote = Remote::Asking;
+        url.clone()
+    };
+    let Some(client) = store::client() else {
+        set_remote(key, Remote::Unknown);
+        return;
+    };
+    spawn_forever(async move {
+        let remote = match client.remote_post(&url).await {
+            Ok(post) => Remote::Found(Rc::new(post)),
+            Err(_) => Remote::Unknown,
+        };
+        if let Some(item) = QUEUE.write().iter_mut().find(|i| i.key == key) {
+            if let Remote::Found(post) = &remote {
+                item.tags = with_tags(&item.tags, &post.import_tags());
+            }
+            item.remote = remote;
+        }
+    });
+}
+
+fn set_remote(key: u64, remote: Remote) {
+    if let Some(item) = QUEUE.write().iter_mut().find(|i| i.key == key) {
+        item.remote = remote;
+    }
+}
+
+/// `own` with each of `more` that it doesn't have yet, after it.
+fn with_tags(own: &str, more: &[String]) -> String {
+    let mut words: Vec<&str> = own.split_whitespace().collect();
+    for tag in more {
+        if !words.contains(&tag.as_str()) {
+            words.push(tag);
+        }
+    }
+    words.join(" ")
+}
+
+/// What imports an address. A post found on a booru goes as its file, with
+/// its page as the source and its rating, and only with the tags the item
+/// has now: the server doesn't look it up again, so tags taken off stay off.
+/// Anything else goes as it is, and the server finds what it can.
+fn import_of(item: &Item, url: &str, tags: Vec<String>, rating: Rating) -> ImportRequest {
+    match &item.remote {
+        Remote::Found(post) if !post.file_url.trim().is_empty() => ImportRequest {
+            url: post.file_url.clone(),
+            tags,
+            rating: post.rating,
+            source: Some(post.page_url.clone()),
+        },
+        _ => ImportRequest {
+            url: url.to_owned(),
+            tags,
+            rating,
+            source: None,
+        },
+    }
 }
 
 /// Whether something added now begins a new batch: nothing is waiting to be
@@ -185,15 +276,7 @@ fn send(shared: &str, rating: Rating, wanted: impl Fn(u64) -> bool) {
         item.status = match &item.source {
             Source::File(_) => Status::Ready(tags, rating),
             Source::Url(url) => {
-                batch.push((
-                    item.key,
-                    ImportRequest {
-                        url: url.clone(),
-                        tags,
-                        rating,
-                        source: None,
-                    },
-                ));
+                batch.push((item.key, import_of(item, url, tags, rating)));
                 Status::Uploading
             }
         };
@@ -480,7 +563,76 @@ mod tests {
             tags: String::new(),
             status,
             progress: None,
+            remote: Remote::Unasked,
         }
+    }
+
+    #[test]
+    fn a_found_post_brings_its_tags_once_and_keeps_the_own() {
+        let found = ["artist:someone".to_owned(), "sky".to_owned()];
+        assert_eq!(with_tags("", &found), "artist:someone sky");
+        assert_eq!(with_tags("sky cloud", &found), "sky cloud artist:someone");
+        assert_eq!(with_tags("  a  ", &[]), "a");
+    }
+
+    #[test]
+    fn a_found_post_is_imported_as_its_file_with_the_tags_left_on_it() {
+        let mut it = item(1, Status::Draft);
+        let tags = vec!["sky".to_owned()];
+        // Not looked up: the server does it.
+        let plain = import_of(
+            &it,
+            "https://booru.example/post/1",
+            tags.clone(),
+            Rating::Safe,
+        );
+        assert_eq!(plain.url, "https://booru.example/post/1");
+        assert_eq!(plain.source, None);
+        assert_eq!(plain.rating, Rating::Safe);
+
+        let post = RemotePost {
+            id: 1,
+            site: "https://booru.example".into(),
+            page_url: "https://booru.example/post/1".into(),
+            preview_url: String::new(),
+            sample_url: None,
+            file_url: "https://cdn.booru.example/1.png".into(),
+            tags: vec!["sky".into(), "cloud".into()],
+            groups: Default::default(),
+            rating: Rating::Explicit,
+            width: 1,
+            height: 1,
+            md5: None,
+            source: None,
+            score: None,
+            created_at: None,
+            file_size: None,
+            post_id: None,
+        };
+        it.remote = Remote::Found(Rc::new(post.clone()));
+        let found = import_of(
+            &it,
+            "https://booru.example/post/1",
+            tags.clone(),
+            Rating::Safe,
+        );
+        assert_eq!(found.url, "https://cdn.booru.example/1.png");
+        assert_eq!(
+            found.source.as_deref(),
+            Some("https://booru.example/post/1")
+        );
+        assert_eq!(found.rating, Rating::Explicit);
+        // "cloud" was taken off, and stays off.
+        assert_eq!(found.tags, tags);
+
+        // A post whose site showed no file goes by its page.
+        it.remote = Remote::Found(Rc::new(RemotePost {
+            file_url: String::new(),
+            ..post
+        }));
+        let by_page = import_of(&it, "https://booru.example/post/1", tags, Rating::Safe);
+        assert_eq!(by_page.url, "https://booru.example/post/1");
+        assert_eq!(by_page.source, None);
     }
 
     #[test]

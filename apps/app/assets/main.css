@@ -1737,6 +1737,32 @@ pre.command {
 .upload-sheet .queue { margin: 12px 0 16px; max-height: 32dvh; overflow-y: auto; }
 .sheet-scrim.closing { animation: fade-out var(--med) var(--ease) forwards; }
 .sheet-scrim.closing .upload-sheet { animation: to-tab var(--med) var(--ease) forwards; }
+/* A file or an address opened from the Upload page. It comes out of its tile
+   and goes back into it (`--from-x`, `--from-y`). */
+.item-sheet { width: min(820px, 100%); animation: from-tab var(--slow) var(--ease); }
+.sheet-scrim.closing .item-sheet { animation: to-tab var(--med) var(--ease) forwards; }
+.item-head { justify-content: flex-start; }
+.item-head .item-title {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 18px;
+}
+.item-body { display: grid; grid-template-columns: minmax(0, 320px) minmax(0, 1fr); gap: 20px; margin-top: 12px; }
+.item-preview {
+  position: relative; align-self: start; aspect-ratio: 1; overflow: hidden;
+  border-radius: var(--radius-m); background: var(--surface-2);
+}
+.item-preview img { width: 100%; height: 100%; object-fit: contain; }
+.item-fields { display: grid; align-content: start; gap: 12px; min-width: 0; }
+.item-fields .field { margin: 0; }
+.item-fields .hint, .item-fields .queue-error { margin: 0; }
+.item-detail { margin: 0; overflow-wrap: anywhere; }
+.item-source { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--primary); font-size: 14px; }
+.item-source.muted { color: var(--on-surface-2); }
+.item-tags { min-height: 200px; }
+@media (max-width: 600px) {
+  .item-body { grid-template-columns: 1fr; gap: 14px; }
+  .item-preview { aspect-ratio: 4 / 3; }
+  .item-tags { min-height: 160px; }
+}
 @keyframes from-tab { from { opacity: 0; transform: translate(var(--from-x), var(--from-y)) scale(0.08); } }
 @keyframes to-tab { to { opacity: 0; transform: translate(var(--from-x), var(--from-y)) scale(0.08); } }
 @keyframes fade-out { to { opacity: 0; } }
@@ -2210,17 +2236,28 @@ html:has(.editor) { overflow-y: hidden; }
 .up-btn:hover { background: oklch(0 0 0 / 0.85); }
 .up-btn:active { transform: scale(0.88); }
 .up-x { top: 6px; right: 6px; }
-.up-tag { left: 6px; bottom: 6px; }
-.up-tag.on { background: var(--primary); color: var(--on-primary); }
 .up-mark { top: 6px; left: 6px; }
 .up-mark.ok { background: var(--primary); color: var(--on-primary); }
 .up-mark.bad { background: var(--danger); color: var(--on-primary); cursor: pointer; }
-.up-tags {
-  position: absolute; left: 42px; right: 6px; bottom: 6px; min-width: 0; height: 30px; padding: 0 12px;
-  border: 1px solid var(--outline); border-radius: 999px;
-  background: var(--surface); color: var(--on-surface); font: inherit; font-size: 13px;
+/* A waiting tile opens its popup. How many tags it has shows at its foot. */
+.up-open {
+  position: absolute; inset: 0; display: block; width: 100%; padding: 0; border: 0;
+  background: none; color: inherit; font: inherit; cursor: pointer; border-radius: inherit;
 }
-.up-tags:focus { outline: none; border-color: var(--primary); }
+.up-open:focus-visible { outline-offset: -3px; }
+.up-open .thumb-media { transition: transform var(--med) var(--ease); }
+.up-open:hover .thumb-media { transform: scale(1.04); }
+.up-count {
+  position: absolute; left: 6px; bottom: 6px; display: inline-flex; align-items: center; gap: 4px;
+  height: 26px; padding: 0 10px 0 8px; border-radius: 999px; pointer-events: none;
+  background: var(--primary); color: var(--on-primary); font-size: 12px; font-weight: 600;
+}
+/* A cross that turns into a bin when pointed at, so removing isn't taken
+   for closing. */
+.bin-x .bin-rest, .bin-x .bin-hover { display: grid; place-items: center; }
+.bin-x .bin-hover, .bin-x:hover .bin-rest, .bin-x:focus-visible .bin-rest { display: none; }
+.bin-x:hover .bin-hover, .bin-x:focus-visible .bin-hover { display: grid; animation: pop-in var(--fast) var(--ease-spring); }
+.up-x.bin-x:hover, .up-x.bin-x:focus-visible { background: var(--danger); color: var(--on-primary); }
 .up-progress { position: absolute; left: 8px; right: 8px; bottom: 8px; padding: 6px 10px; border-radius: 999px; background: oklch(0 0 0 / 0.65); }
 .up-progress .transfer { gap: 8px; }
 .up-progress .transfer-text { color: white; font-size: 12px; }
