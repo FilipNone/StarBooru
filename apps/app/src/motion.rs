@@ -705,6 +705,31 @@ pub fn glow(url: Option<&str>) {
     document::eval(&format!("{GLOW}\nwindow.__sbGlow.want({url});"));
 }
 
+/// The same light inside a box, behind a picture that doesn't fill it:
+/// painted once onto the canvas `selector` finds, which then fades in. Not
+/// drawn with reduced effects or the battery saver.
+pub fn glow_box(selector: &str, url: &str) {
+    let selector = serde_json::to_string(selector).unwrap_or_else(|_| "null".into());
+    let url = serde_json::to_string(url).unwrap_or_else(|_| "null".into());
+    document::eval(&format!(
+        "{GLOW}\n{GLOW_BOX}\nawait glowBox({selector}, {url});"
+    ));
+}
+
+const GLOW_BOX: &str = r##"
+async function glowBox(selector, url) {
+  if (document.querySelector('.app[data-saver="on"], .app[data-effects="lite"]')) return;
+  const el = document.querySelector(selector);
+  if (!el || el.dataset.url === url) return;
+  const img = new Image();
+  img.src = url;
+  if (!(await img.decode().then(() => true, () => false))) return;
+  if (!el.isConnected || !window.__sbGlow.paint(el, img)) return;
+  el.dataset.url = url;
+  el.classList.add("on");
+}
+"##;
+
 /// Before going to the previous or next post. Returns once the copy of the
 /// picture can stand in for it.
 pub async fn hold() {
@@ -1227,6 +1252,15 @@ mod tests {
         assert!(GLOW.contains("if (!this.busy &&"));
         // It never ends up waiting on a picture that doesn't come.
         assert!(run.contains("after(3000)"));
+    }
+
+    #[test]
+    fn a_glow_in_a_box_is_painted_once_and_only_with_full_effects() {
+        assert!(GLOW_BOX.contains(r#".app[data-saver="on"], .app[data-effects="lite"]"#));
+        assert!(GLOW_BOX.contains("window.__sbGlow.paint(el, img)"));
+        // The same picture isn't painted again.
+        assert!(GLOW_BOX.contains("el.dataset.url === url"));
+        assert!(!GLOW_BOX.contains("filter") && !GLOW_BOX.contains("getImageData"));
     }
 
     #[test]

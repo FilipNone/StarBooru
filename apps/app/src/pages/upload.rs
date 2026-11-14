@@ -1106,6 +1106,13 @@ fn ItemSheet(
         (Remote::Found(_), Some((url, false))) => Some(url),
         _ => made.map(|(url, _)| url),
     };
+    // Its light around it, where the picture leaves the box empty. The item
+    // stays shown once seen (`kept`), so this hook runs on every render.
+    use_effect(use_reactive!(|src| {
+        if let Some(url) = src {
+            motion::glow_box(".item-glow", &url);
+        }
+    }));
     let (icon, detail) = match &item.source {
         Source::File(file) => (Icon::Gallery, human_size(file.size() as i64)),
         Source::Url(url) => (Icon::Link, host_of(url)),
@@ -1155,6 +1162,7 @@ fn ItemSheet(
                 }
                 div { class: "item-body",
                     div { class: "item-preview",
+                        canvas { class: "item-glow", aria_hidden: "true" }
                         TileFace { src, icon, caption: detail.clone() }
                     }
                     div { class: "item-fields",
@@ -1606,6 +1614,15 @@ mod tests {
         // a count, in front of a round field.
         let css = include_str!("../../assets/main.css");
         assert!(css.contains(".up-bar { padding: 10px; }"));
+    }
+
+    #[test]
+    fn the_popup_picture_has_its_light_around_it_unless_effects_are_reduced() {
+        let css = include_str!("../../assets/main.css");
+        assert!(css.contains(".item-glow.on { opacity: 0.85; }"));
+        assert!(css.contains(
+            ".app:is([data-saver=\"on\"], [data-effects=\"lite\"]) .item-glow { display: none; }"
+        ));
     }
 
     #[test]

@@ -1772,6 +1772,14 @@ pre.command {
   border-radius: var(--radius-m); background: var(--surface-2);
 }
 .item-preview img { width: 100%; height: 100%; object-fit: contain; }
+/* The picture's light where it leaves the box empty, as behind the viewer:
+   painted once (motion.rs), so only its opacity moves. */
+.item-glow {
+  position: absolute; left: -12%; top: -12%; width: 124%; height: 124%; pointer-events: none;
+  opacity: 0; transition: opacity var(--fade) ease-in-out;
+}
+.item-glow.on { opacity: 0.85; }
+.app:is([data-saver="on"], [data-effects="lite"]) .item-glow { display: none; }
 .item-fields { display: grid; align-content: start; gap: 12px; min-width: 0; }
 .item-fields .field { margin: 0; }
 .item-fields .hint, .item-fields .queue-error { margin: 0; }
