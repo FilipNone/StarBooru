@@ -13,6 +13,7 @@ use starbooru_core::tag::TagError;
 use starbooru_core::{ImportJob, JobState, Rating, parse_tag_list};
 
 use super::post::RatingPicker;
+use super::tag_box::TagBox;
 use super::{Choice, Select, TransferBar, notify};
 use crate::Route;
 use crate::activity::{self, Item, JOBS, QUEUE, Remote, Source, Status};
@@ -868,7 +869,12 @@ fn host_of(url: &str) -> String {
 /// What a tile shows of its file: the picture when there is one to show, or
 /// an icon with a few words.
 #[component]
-fn TileFace(src: Option<String>, icon: Icon, caption: String) -> Element {
+fn TileFace(
+    src: Option<String>,
+    icon: Icon,
+    caption: String,
+    #[props(default)] onload: Option<EventHandler<()>>,
+) -> Element {
     // A file the browser can't draw (a video, an odd format) falls back.
     let mut broken = use_signal(|| false);
     rsx! {
@@ -881,6 +887,11 @@ fn TileFace(src: Option<String>, icon: Icon, caption: String) -> Element {
                     decoding: "async",
                     "referrerpolicy": "no-referrer",
                     onerror: move |_| broken.set(true),
+                    onload: move |_| {
+                        if let Some(onload) = onload {
+                            onload.call(());
+                        }
+                    },
                 }
             } else {
                 div { class: "thumb-placeholder up-face",
@@ -1090,6 +1101,17 @@ fn ItemSheet(
             closing.set(true);
         }
     };
+    // A file's size and type from its start, read once.
+    let file = use_hook(|| match live.as_ref().map(|i| &i.source) {
+        Some(Source::File(file)) => Some(file.clone()),
+        _ => None,
+    });
+    let head = use_resource(move || {
+        let file = file.clone();
+        async move { file_facts(&file?).await }
+    });
+    // What the picture said once drawn, for one whose start doesn't say.
+    let mut drawn = use_signal(|| None::<(u32, u32)>);
     // Sent, or gone from the list some other way: nothing left to show.
     let gone = live.as_ref().is_none_or(|i| i.status != Status::Draft);
     let item = live.or_else(|| kept.borrow().clone());
@@ -1117,6 +1139,7 @@ fn ItemSheet(
         Source::File(file) => (Icon::Gallery, human_size(file.size() as i64)),
         Source::Url(url) => (Icon::Link, host_of(url)),
     };
+    let facts = Facts::of(&item, head.read().clone().flatten(), drawn());
     let problem = tag_problem("", [item.tags.as_str()]);
     let usual = rating_label(item.usual_rating(*RATING.read()));
     let usual = match &item.remote {
@@ -1161,12 +1184,37 @@ fn ItemSheet(
                     }
                 }
                 div { class: "item-body",
-                    div { class: "item-preview",
-                        canvas { class: "item-glow", aria_hidden: "true" }
-                        TileFace { src, icon, caption: detail.clone() }
-                    }
-                    div { class: "item-fields",
-                        p { class: "muted item-detail", "{detail}" }
+                    div { class: "item-side",
+                        div { class: "item-preview",
+                            canvas { class: "item-glow", aria_hidden: "true" }
+                            TileFace {
+                                src,
+                                icon,
+                                caption: detail.clone(),
+                                onload: move |_| {
+                                    spawn(async move {
+                                        if let Some(size) = drawn_size(".item-preview img").await {
+                                            drawn.set(Some(size));
+                                        }
+                                    });
+                                },
+                            }
+                        }
+                        dl { class: "meta item-facts",
+                            if let Some(source) = facts.source {
+                                dt { {t!("post-source")} }
+                                dd { class: "break", title: "{source}", "{source}" }
+                            }
+                            if let Some(size) = facts.size {
+                                dt { {t!("post-size")} } dd { "{size}" }
+                            }
+                            if let Some((w, h)) = facts.dimensions {
+                                dt { {t!("post-dimensions")} } dd { "{w} × {h}" }
+                            }
+                            if let Some(kind) = facts.kind {
+                                dt { {t!("post-type")} } dd { "{kind}" }
+                            }
+                        }
                         match &item.remote {
                             Remote::Asking => rsx! {
                                 p { class: "item-source muted", role: "status",
@@ -1182,6 +1230,8 @@ fn ItemSheet(
                             },
                             _ => rsx! {},
                         }
+                    }
+                    div { class: "item-fields",
                         // Not a `label`: a click on the list would also
                         // press the button inside it and open it again.
                         div { class: "field",
@@ -1196,23 +1246,17 @@ fn ItemSheet(
                         }
                         label { class: "field",
                             span { {t!("post-tags")} }
-                            span { class: "text-box",
-                                textarea {
-                                    class: "item-tags",
-                                    rows: "8",
-                                    placeholder: t!("upload-file-tags-placeholder"),
-                                    spellcheck: "false",
-                                    autocapitalize: "none",
-                                    value: "{item.tags}",
-                                    oninput: move |e| activity::set_tags(key, e.value()),
-                                }
-                                crate::grip::Grip {}
+                            TagBox {
+                                id: "item-tags",
+                                class: "item-tags",
+                                rows: 8,
+                                placeholder: t!("upload-file-tags-placeholder"),
+                                value: item.tags.clone(),
+                                oninput: move |tags: String| activity::set_tags(key, tags),
                             }
                         }
                         if let Some(problem) = problem {
                             p { class: "queue-error", role: "alert", "{problem}" }
-                        } else {
-                            p { class: "muted hint", {t!("post-tags-hint")} }
                         }
                     }
                 }
@@ -1250,6 +1294,117 @@ fn rating_choices(usual: String) -> Vec<Choice> {
             .map(|r| Choice::new(r.as_str(), rating_label(r))),
     );
     choices
+}
+
+/// What the popup says about an item under its picture. Each is left out
+/// when it isn't known.
+#[derive(Debug, Default, PartialEq)]
+struct Facts {
+    /// Where it comes from: the file's path (its name in a browser, which
+    /// keeps paths to itself), or the address's site.
+    source: Option<String>,
+    size: Option<String>,
+    dimensions: Option<(u32, u32)>,
+    /// The format, as `PNG`.
+    kind: Option<String>,
+}
+
+impl Facts {
+    /// `head` is what the file's start said (`file_facts`), `drawn` the
+    /// size the picture had once shown.
+    fn of(item: &Item, head: Option<Head>, drawn: Option<(u32, u32)>) -> Self {
+        let head = head.unwrap_or_default();
+        match (&item.source, &item.remote) {
+            (Source::File(file), _) => Self {
+                source: Some(file.path().display().to_string()).filter(|p| !p.is_empty()),
+                size: Some(human_size(i64::try_from(file.size()).unwrap_or(i64::MAX))),
+                dimensions: head.size.or(drawn),
+                kind: head
+                    .mime
+                    .and_then(format_of)
+                    .or_else(|| format_by_name(&file.name())),
+            },
+            (Source::Url(url), Remote::Found(post)) => Self {
+                source: Some(host_of(&post.page_url))
+                    .filter(|h| !h.is_empty())
+                    .or_else(|| Some(host_of(url))),
+                size: post
+                    .file_size
+                    .map(|n| human_size(i64::try_from(n).unwrap_or(i64::MAX))),
+                dimensions: Some((post.width, post.height))
+                    .filter(|(w, h)| *w > 0 && *h > 0)
+                    .or(drawn),
+                kind: format_by_name(&post.file_url),
+            },
+            (Source::Url(url), _) => Self {
+                source: Some(host_of(url)).filter(|h| !h.is_empty()),
+                size: None,
+                dimensions: drawn,
+                kind: format_by_name(url),
+            },
+        }
+    }
+}
+
+/// What the start of a file says.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct Head {
+    mime: Option<&'static str>,
+    size: Option<(u32, u32)>,
+}
+
+/// Reads the start of `file` for its format and, for a picture, its size.
+async fn file_facts(file: &FileData) -> Option<Head> {
+    let head = crate::util::read_range(file, 0, u64::from(starbooru_core::SIZE_BYTES))
+        .await
+        .ok()?;
+    Some(Head {
+        mime: starbooru_core::detect_mime(&head),
+        size: starbooru_core::picture_size(&head),
+    })
+}
+
+/// A format's short name, as `PNG`, for one StarBooru keeps.
+fn format_of(mime: &str) -> Option<String> {
+    starbooru_core::FORMATS
+        .iter()
+        .find(|(m, ..)| *m == mime)
+        .map(|(_, ext, ..)| ext.to_ascii_uppercase())
+}
+
+/// The same from a name or an address that ends like a kept format's.
+fn format_by_name(name: &str) -> Option<String> {
+    let path = name.split(['?', '#']).next().unwrap_or_default();
+    let (stem, ext) = path.rsplit_once('.')?;
+    if stem.is_empty() || ext.contains('/') {
+        return None;
+    }
+    let ext = match ext.to_ascii_lowercase().as_str() {
+        "jpeg" | "jpe" => "jpg".to_owned(),
+        "tif" => "tiff".to_owned(),
+        other => other.to_owned(),
+    };
+    starbooru_core::FORMATS
+        .iter()
+        .any(|(_, e, ..)| *e == ext)
+        .then(|| ext.to_ascii_uppercase())
+}
+
+/// A shown picture's own size.
+async fn drawn_size(selector: &str) -> Option<(u32, u32)> {
+    let selector = serde_json::to_string(selector).ok()?;
+    let size = document::eval(&format!(
+        "const img = document.querySelector({selector}); return img ? [img.naturalWidth, img.naturalHeight] : null;"
+    ))
+    .await
+    .ok()?;
+    let side = |i: usize| {
+        size.get(i)?
+            .as_u64()
+            .and_then(|n| u32::try_from(n).ok())
+            .filter(|n| *n > 0)
+    };
+    Some((side(0)?, side(1)?))
 }
 
 /// Tiles taken off the list, kept on the grid while they go: the lists as
@@ -1626,6 +1781,114 @@ mod tests {
         assert!(css.contains(
             ".app:is([data-saver=\"on\"], [data-effects=\"lite\"]) .item-glow { display: none; }"
         ));
+    }
+
+    #[test]
+    fn a_format_is_named_by_its_content_or_its_name() {
+        assert_eq!(format_of("image/png").as_deref(), Some("PNG"));
+        assert_eq!(format_of("video/x-matroska").as_deref(), Some("MKV"));
+        assert_eq!(format_of("application/pdf"), None);
+        assert_eq!(format_by_name("Holiday.JPEG").as_deref(), Some("JPG"));
+        assert_eq!(
+            format_by_name("https://cdn.example/a/b.webp?x=1#y").as_deref(),
+            Some("WEBP")
+        );
+        assert_eq!(format_by_name("scan.tif").as_deref(), Some("TIFF"));
+        for none in [
+            "anime",
+            ".png",
+            "notes.txt",
+            "https://example.org/post/12",
+            "https://example.org/v1.2/page",
+        ] {
+            assert_eq!(format_by_name(none), None, "{none}");
+        }
+    }
+
+    fn url_item(url: &str, remote: Remote) -> Item {
+        Item {
+            key: 1,
+            source: Source::Url(url.into()),
+            tags: String::new(),
+            status: Status::Draft,
+            progress: None,
+            remote,
+            rating: None,
+        }
+    }
+
+    #[test]
+    fn a_link_says_its_site_and_what_its_post_there_says() {
+        let plain = Facts::of(
+            &url_item("https://www.example.org/pics/cat.gif", Remote::Unknown),
+            None,
+            None,
+        );
+        assert_eq!(
+            plain,
+            Facts {
+                source: Some("example.org".into()),
+                size: None,
+                dimensions: None,
+                kind: Some("GIF".into()),
+            }
+        );
+        // Drawn, a picture has its size.
+        let drawn = Facts::of(
+            &url_item("https://example.org/cat.gif", Remote::Unknown),
+            None,
+            Some((40, 30)),
+        );
+        assert_eq!(drawn.dimensions, Some((40, 30)));
+        let post = starbooru_core::RemotePost {
+            id: 7,
+            site: "https://booru.example".into(),
+            page_url: "https://booru.example/post/7".into(),
+            preview_url: String::new(),
+            sample_url: None,
+            file_url: "https://cdn.booru.example/7.jpeg".into(),
+            tags: Vec::new(),
+            groups: Default::default(),
+            rating: Rating::Safe,
+            width: 1200,
+            height: 1600,
+            md5: None,
+            source: None,
+            score: None,
+            created_at: None,
+            file_size: Some(2048),
+            post_id: None,
+        };
+        let found = Facts::of(
+            &url_item("https://booru.example/post/7", Remote::Found(Rc::new(post))),
+            None,
+            Some((300, 400)),
+        );
+        assert_eq!(found.source.as_deref(), Some("booru.example"));
+        assert_eq!(found.size.as_deref(), Some(human_size(2048).as_str()));
+        // The site's numbers are the original's, not the sample's on screen.
+        assert_eq!(found.dimensions, Some((1200, 1600)));
+        assert_eq!(found.kind.as_deref(), Some("JPG"));
+    }
+
+    #[test]
+    fn the_popup_has_the_details_under_the_picture_and_the_fields_beside() {
+        let sheet = include_str!("upload.rs")
+            .split_once("fn ItemSheet(")
+            .map(|(_, rest)| rest)
+            .and_then(|rest| rest.split_once("fn rating_choices"))
+            .map(|(sheet, _)| sheet)
+            .unwrap_or("");
+        let side = sheet.find(r#"class: "item-side""#).unwrap();
+        let facts = sheet.find(r#"class: "meta item-facts""#).unwrap();
+        let fields = sheet.find(r#"class: "item-fields""#).unwrap();
+        let rating = sheet.find(r#"t!("rating")"#).unwrap();
+        assert!(side < facts && facts < fields && fields < rating);
+        assert!(sheet.contains("TagBox {"));
+        // The category hint is gone from here.
+        assert!(!sheet.contains("post-tags-hint"));
+        let css = include_str!("../../assets/main.css");
+        assert!(css.contains(".app[data-hand=\"left\"] .item-side { order: 1; }"));
     }
 
     #[test]

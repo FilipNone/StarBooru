@@ -56,7 +56,7 @@ pub use library::{
     LibrarySite, LibrarySource, LibraryState, MAX_ACTIVE_LIBRARY_IMPORTS, clean_credentials,
 };
 pub use local_ai::{Gpu, GpuKind, Hardware};
-pub use media::{FORMATS, SNIFF_BYTES, detect_mime, is_media};
+pub use media::{FORMATS, SIZE_BYTES, SNIFF_BYTES, detect_mime, is_media, picture_size};
 pub use model::*;
 pub use oidc::{Identity, OidcBegin, OidcError, OidcFinish, OidcStart, SignInMethods};
 pub use panels::{PanelTranslation, TextBlock, panel_prompt, parse_panel_blocks};

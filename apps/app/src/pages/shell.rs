@@ -418,6 +418,25 @@ thread_local! {
     static REMOTE_SUGGESTED: std::cell::RefCell<Answers<RemoteTag>> = std::cell::RefCell::default();
 }
 
+/// The collection's tags starting with `typed`, for a box being typed in:
+/// from the answers kept, or asked for once the typing pauses. The next
+/// letter drops the future that waits, so a word typed in one go asks once.
+pub(crate) async fn local_tags(typed: String) -> Vec<Tag> {
+    let owner = store::owner();
+    if let Some(known) = SUGGESTED.with_borrow(|s| s.get(&owner, &typed, Utc::now())) {
+        return known;
+    }
+    sleep_ms(TYPING_PAUSE_MS).await;
+    let Some(client) = store::client() else {
+        return Vec::new();
+    };
+    let Ok(tags) = client.tags(&typed, 8).await else {
+        return Vec::new();
+    };
+    SUGGESTED.with_borrow_mut(|s| s.put(&owner, typed, tags.clone(), Utc::now()));
+    tags
+}
+
 /// A tag offered under the search box, the collection's or another site's.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Hint {
@@ -501,19 +520,7 @@ fn SearchBox(route: Route) -> Element {
         };
         let owner = store::owner();
         let Scope::Boorus(sites) = scope else {
-            if let Some(known) = SUGGESTED.with_borrow(|s| s.get(&owner, &typed, Utc::now())) {
-                return hints(known);
-            }
-            // The next letter restarts this, which drops it here before it asks.
-            sleep_ms(TYPING_PAUSE_MS).await;
-            let Some(client) = store::client() else {
-                return Vec::new();
-            };
-            let Ok(tags) = client.tags(&typed, 8).await else {
-                return Vec::new();
-            };
-            SUGGESTED.with_borrow_mut(|s| s.put(&owner, typed, tags.clone(), Utc::now()));
-            return hints(tags);
+            return hints(local_tags(typed).await);
         };
         // The booru browser: the first of its sites says how its tags go on.
         let Some(site) = boorus::completing_site(&sites) else {

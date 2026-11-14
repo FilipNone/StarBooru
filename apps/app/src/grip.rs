@@ -79,12 +79,14 @@ mod tests {
 
     #[test]
     fn every_text_box_has_a_grip() {
+        let mut all = 0;
         for (name, page) in [
             ("upload", include_str!("pages/upload.rs")),
             ("post", include_str!("pages/post.rs")),
+            ("tag box", include_str!("pages/tag_box.rs")),
         ] {
             let boxes = page.matches("textarea {").count();
-            assert!(boxes > 0, "{name}");
+            all += boxes;
             assert_eq!(page.matches("Grip {}").count(), boxes, "{name}");
             assert_eq!(
                 page.matches(r#"class: "text-box""#).count(),
@@ -92,6 +94,7 @@ mod tests {
                 "{name}"
             );
         }
+        assert_eq!(all, 2);
     }
 
     #[test]

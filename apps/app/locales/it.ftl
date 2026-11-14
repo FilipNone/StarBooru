@@ -476,6 +476,7 @@ upload-rating-usual = Come gli altri ({ $rating })
 upload-rating-site = Come su { $site } ({ $rating })
 upload-looking-up = Cerco questo post…
 upload-tags-from = Tag da { $site }. Cambiali come vuoi.
+tag-offers = Tag che corrispondono
 upload-done = Importato
 upload-job-running = In importazione
 upload-job-cancel = Annulla

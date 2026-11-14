@@ -476,6 +476,7 @@ upload-rating-usual = Same as the rest ({ $rating })
 upload-rating-site = As on { $site } ({ $rating })
 upload-looking-up = Looking for this post…
 upload-tags-from = Tags from { $site }. Change them as you like.
+tag-offers = Matching tags
 upload-done = Imported
 upload-job-running = Importing
 upload-job-cancel = Cancel

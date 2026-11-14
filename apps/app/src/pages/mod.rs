@@ -22,6 +22,7 @@ mod settings;
 mod share;
 mod shell;
 mod strength;
+mod tag_box;
 mod tags;
 mod trash;
 mod upload;
