@@ -2162,8 +2162,20 @@ html:has(.editor) { overflow-y: hidden; }
   transition: border-color var(--med) var(--ease), background-color var(--med) var(--ease),
     transform var(--med) var(--ease-spring);
 }
-.up-drop:hover, .up-drop.over { border-color: var(--primary); background: var(--primary-container); color: var(--on-primary-container); }
-.up-drop.over { transform: scale(1.03); }
+.up-drop:hover { border-color: var(--primary); background: var(--primary-container); color: var(--on-primary-container); }
+/* The box lifts off while the veil is out of it. */
+.up-drop.lifted { opacity: 0; transition: opacity var(--fast) var(--ease); }
+/* Files dragged over the Upload page: the gallery's veil, grown out of the
+   drop box wherever it is and however big, and shrunk back into it after. */
+.up-veil { overflow: hidden; animation: veil-grow var(--slow) var(--ease); }
+.up-veil.closing { pointer-events: none; animation: veil-shrink var(--med) var(--ease) forwards; }
+.up-veil .drop-veil-card { animation: pop-in var(--slow) var(--ease-spring); }
+@keyframes veil-grow {
+  from { inset: var(--box-t) var(--box-r) var(--box-b) var(--box-l); border-radius: var(--box-radius); background: var(--primary-container); }
+}
+@keyframes veil-shrink {
+  to { inset: var(--box-t) var(--box-r) var(--box-b) var(--box-l); border-radius: var(--box-radius); background: var(--primary-container); opacity: 0; }
+}
 /* With nothing chosen yet, the drop tile is the page. */
 .up-grid.empty { display: block; }
 .up-grid.empty .up-drop { aspect-ratio: auto; min-height: min(52vh, 420px); border-radius: var(--radius-l); font-size: 16px; }

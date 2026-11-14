@@ -37,7 +37,6 @@ const MAX_PREVIEWS: usize = 120;
 
 #[component]
 pub fn Upload() -> Element {
-    let mut dragging = use_signal(|| false);
     let mut folder_tags = use_signal(|| true);
     let mut linking = use_signal(|| false);
     let mut url_text = use_signal(String::new);
@@ -48,18 +47,69 @@ pub fn Upload() -> Element {
     use_hook(activity::refresh);
 
     // Only images and videos. Those from a folder get its name as a tag.
-    let add = move |files: Vec<FileData>, from_folder: bool| {
+    let add = move |files: Vec<FileData>, from_folder: bool| async move {
+        let (media, skipped) = media_files(files).await;
+        for file in media {
+            let tags = if from_folder && folder_tags() {
+                folder_tag(&file.path()).unwrap_or_default()
+            } else {
+                String::new()
+            };
+            activity::add(Source::File(file), tags);
+        }
+        notice.set((skipped > 0).then(|| t!("upload-skipped", count = skipped)));
+    };
+
+    // Files dragged over the window: the veil grows out of the drop box.
+    let mut veil = use_signal(|| None::<BoxRect>);
+    let mut veil_closing = use_signal(|| false);
+    use_hook(move || {
         spawn(async move {
-            let (media, skipped) = media_files(files).await;
-            for file in media {
-                let tags = if from_folder && folder_tags() {
-                    folder_tag(&file.path()).unwrap_or_default()
-                } else {
-                    String::new()
-                };
-                activity::add(Source::File(file), tags);
+            let script = WATCH_PAGE_DROP.replace("FILE_DRAG", FILE_DRAG);
+            let mut watch = document::eval(&script);
+            while let Ok(shown) = watch.recv::<bool>().await {
+                if !shown {
+                    if veil.peek().is_some() && !*veil_closing.peek() {
+                        veil.set(Some(drop_box().await));
+                        veil_closing.set(true);
+                    }
+                } else if *veil_closing.peek() {
+                    veil_closing.set(false);
+                } else if veil.peek().is_none() && store::can_upload() {
+                    veil.set(Some(drop_box().await));
+                }
             }
-            notice.set((skipped > 0).then(|| t!("upload-skipped", count = skipped)));
+        });
+    });
+    use_drop(|| {
+        document::eval(WATCH_PAGE_DROP_OFF);
+    });
+    // Back into the box, then gone.
+    use_effect(move || {
+        if !veil_closing() {
+            return;
+        }
+        spawn(async move {
+            motion::settled(".up-veil").await;
+            if *veil_closing.peek() {
+                veil.set(None);
+                veil_closing.set(false);
+            }
+        });
+    });
+    let take_drop = move |e: DragEvent| {
+        e.prevent_default();
+        let (files, urls) = dropped(&e);
+        spawn(async move {
+            for url in urls {
+                activity::add(Source::Url(url), String::new());
+            }
+            add(files, false).await;
+            // Where the box is now that the tiles are in.
+            if veil.peek().is_some() {
+                veil.set(Some(drop_box().await));
+                veil_closing.set(true);
+            }
         });
     };
     let mut add_urls = move || {
@@ -95,7 +145,9 @@ pub fn Upload() -> Element {
                         multiple: true,
                         accept: PICKER_ACCEPT,
                         class: "visually-hidden",
-                        onchange: move |e| add(e.files(), false),
+                        onchange: move |e| {
+                            spawn(add(e.files(), false));
+                        },
                     }
                 }
                 label { class: "icon-btn", title: t!("upload-folder"), aria_label: t!("upload-folder"),
@@ -105,7 +157,9 @@ pub fn Upload() -> Element {
                         directory: true,
                         multiple: true,
                         class: "visually-hidden",
-                        onchange: move |e| add(e.files(), true),
+                        onchange: move |e| {
+                            spawn(add(e.files(), true));
+                        },
                     }
                 }
                 button {
@@ -173,22 +227,8 @@ pub fn Upload() -> Element {
             }
             div { class: if empty { "grid up-grid empty" } else { "grid up-grid" },
                 label {
-                    class: if dragging() { "up-drop over" } else { "up-drop" },
+                    class: if veil().is_some() { "up-drop lifted" } else { "up-drop" },
                     title: t!("upload-files"),
-                    ondragover: move |e| {
-                        e.prevent_default();
-                        dragging.set(true);
-                    },
-                    ondragleave: move |_| dragging.set(false),
-                    ondrop: move |e| {
-                        e.prevent_default();
-                        dragging.set(false);
-                        let (files, urls) = dropped(&e);
-                        for url in urls {
-                            activity::add(Source::Url(url), String::new());
-                        }
-                        add(files, false);
-                    },
                     Ico { icon: Icon::Upload, size: 40 }
                     span { {t!("upload-drop")} }
                     input {
@@ -196,7 +236,9 @@ pub fn Upload() -> Element {
                         multiple: true,
                         accept: PICKER_ACCEPT,
                         class: "visually-hidden",
-                        onchange: move |e| add(e.files(), false),
+                        onchange: move |e| {
+                            spawn(add(e.files(), false));
+                        },
                     }
                 }
                 for (index, item) in QUEUE.read().iter().enumerate() {
@@ -241,9 +283,103 @@ pub fn Upload() -> Element {
                     }
                 }
             }
+            if let Some(rect) = veil() {
+                div {
+                    class: if veil_closing() { "drop-veil up-veil closing" } else { "drop-veil up-veil" },
+                    style: rect.style(),
+                    ondragover: move |e| e.prevent_default(),
+                    ondrop: take_drop,
+                    div { class: "drop-veil-card",
+                        Ico { icon: Icon::Upload, size: 40 }
+                        strong { {t!("upload-drop-now")} }
+                    }
+                }
+            }
         }
     }
 }
+
+/// Where the drop box sits in the window, as the distance from each edge,
+/// and how round its corners are.
+#[derive(Clone, Copy, PartialEq, Default, serde::Deserialize)]
+struct BoxRect {
+    top: f64,
+    right: f64,
+    bottom: f64,
+    left: f64,
+    radius: f64,
+}
+
+impl BoxRect {
+    /// The veil's starting and ending shape.
+    fn style(&self) -> String {
+        format!(
+            "--box-t: {:.1}px; --box-r: {:.1}px; --box-b: {:.1}px; --box-l: {:.1}px; --box-radius: {:.1}px",
+            self.top, self.right, self.bottom, self.left, self.radius
+        )
+    }
+}
+
+/// Measures the drop box. One scrolled out of sight stands in as a small
+/// square in the middle of the window.
+async fn drop_box() -> BoxRect {
+    let mut eval = document::eval(MEASURE_DROP_BOX);
+    eval.recv().await.unwrap_or_default()
+}
+
+const MEASURE_DROP_BOX: &str = r#"
+const el = document.querySelector(".up-drop");
+const r = el?.getBoundingClientRect();
+const w = innerWidth, h = innerHeight;
+if (!r || r.width === 0 || r.bottom <= 0 || r.top >= h) {
+  const side = 80;
+  dioxus.send({ top: h / 2 - side, right: w / 2 - side, bottom: h / 2 - side, left: w / 2 - side, radius: 24 });
+} else {
+  dioxus.send({
+    top: Math.max(r.top, 0),
+    right: Math.max(w - r.right, 0),
+    bottom: Math.max(h - r.bottom, 0),
+    left: Math.max(r.left, 0),
+    radius: parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0,
+  });
+}
+"#;
+
+/// The Upload page's own watch for files dragged over the window. Unlike
+/// the gallery's, the drop itself closes the veil, once the tiles are in.
+const WATCH_PAGE_DROP: &str = r#"
+window.__sbPageDrop?.stop();
+let own = false;
+const files = (e) => {
+  const types = [...(e.dataTransfer?.types ?? [])];
+  return !own && (FILE_DRAG);
+};
+const over = (e) => {
+  if (!files(e)) return;
+  e.preventDefault();
+  if (!document.querySelector(".up-veil:not(.closing)")) dioxus.send(true);
+};
+const leave = (e) => {
+  if (e.target?.classList?.contains("up-veil")) dioxus.send(false);
+};
+const drop = (e) => {
+  if (files(e) && !e.target?.closest?.(".up-veil")) {
+    e.preventDefault();
+    dioxus.send(false);
+  }
+  own = false;
+};
+const start = () => { own = true; };
+const end = () => { own = false; };
+const hooks = { dragenter: over, dragover: over, dragleave: leave, drop, dragstart: start, dragend: end };
+for (const [name, hook] of Object.entries(hooks)) addEventListener(name, hook);
+window.__sbPageDrop = {
+  stop() {
+    for (const [name, hook] of Object.entries(hooks)) removeEventListener(name, hook);
+  },
+};
+"#;
+const WATCH_PAGE_DROP_OFF: &str = "window.__sbPageDrop?.stop(); window.__sbPageDrop = null;";
 
 /// The tags and rating every file in a batch gets.
 #[component]
@@ -879,6 +1015,20 @@ mod tests {
         assert!(tag_problem("sky", ["cloud", long.as_str()]).is_some());
         // Nothing to send, nothing wrong.
         assert!(tag_problem(&long, []).is_none());
+    }
+
+    #[test]
+    fn the_veil_grows_out_of_the_drop_box_and_back_into_it() {
+        let css = include_str!("../../assets/main.css");
+        let style = BoxRect::default().style();
+        for name in ["--box-t", "--box-r", "--box-b", "--box-l", "--box-radius"] {
+            assert!(style.contains(name), "{name}");
+            assert!(css.contains(&format!("var({name})")), "{name}");
+        }
+        assert!(WATCH_PAGE_DROP.contains("return !own && (FILE_DRAG)"));
+        // Its own watch, so the gallery's going doesn't stop it.
+        assert!(!WATCH_PAGE_DROP.contains("__sbDrop"));
+        assert!(WATCH_PAGE_DROP_OFF.contains("__sbPageDrop"));
     }
 
     #[test]
