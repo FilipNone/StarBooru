@@ -85,7 +85,7 @@ mod tests {
             ("post", include_str!("pages/post.rs")),
             ("tag box", include_str!("pages/tag_box.rs")),
         ] {
-            let boxes = page.matches("textarea {").count();
+            let boxes = page.lines().filter(|l| l.trim() == "textarea {").count();
             all += boxes;
             assert_eq!(page.matches("Grip {}").count(), boxes, "{name}");
             assert_eq!(

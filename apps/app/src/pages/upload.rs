@@ -1184,22 +1184,22 @@ fn ItemSheet(
                     }
                 }
                 div { class: "item-body",
-                    div { class: "item-side",
-                        div { class: "item-preview",
-                            canvas { class: "item-glow", aria_hidden: "true" }
-                            TileFace {
-                                src,
-                                icon,
-                                caption: detail.clone(),
-                                onload: move |_| {
-                                    spawn(async move {
-                                        if let Some(size) = drawn_size(".item-preview img").await {
-                                            drawn.set(Some(size));
-                                        }
-                                    });
-                                },
-                            }
+                    div { class: "item-preview",
+                        canvas { class: "item-glow", aria_hidden: "true" }
+                        TileFace {
+                            src,
+                            icon,
+                            caption: detail.clone(),
+                            onload: move |_| {
+                                spawn(async move {
+                                    if let Some(size) = drawn_size(".item-preview img").await {
+                                        drawn.set(Some(size));
+                                    }
+                                });
+                            },
                         }
+                    }
+                    div { class: "item-about",
                         dl { class: "meta item-facts",
                             if let Some(source) = facts.source {
                                 dt { {t!("post-source")} }
@@ -1244,7 +1244,7 @@ fn ItemSheet(
                                 onchange: move |v: String| activity::set_rating(key, Rating::parse(&v)),
                             }
                         }
-                        label { class: "field",
+                        label { class: "field item-tag-field",
                             span { {t!("post-tags")} }
                             TagBox {
                                 id: "item-tags",
@@ -1879,7 +1879,7 @@ mod tests {
             .and_then(|rest| rest.split_once("fn rating_choices"))
             .map(|(sheet, _)| sheet)
             .unwrap_or("");
-        let side = sheet.find(r#"class: "item-side""#).unwrap();
+        let side = sheet.find(r#"class: "item-preview""#).unwrap();
         let facts = sheet.find(r#"class: "meta item-facts""#).unwrap();
         let fields = sheet.find(r#"class: "item-fields""#).unwrap();
         let rating = sheet.find(r#"t!("rating")"#).unwrap();
@@ -1888,7 +1888,8 @@ mod tests {
         // The category hint is gone from here.
         assert!(!sheet.contains("post-tags-hint"));
         let css = include_str!("../../assets/main.css");
-        assert!(css.contains(".app[data-hand=\"left\"] .item-side { order: 1; }"));
+        // Wide, the tag box reaches down to the picture's foot.
+        assert!(css.contains(".item-tag-field textarea { flex: 1 0 auto; }"));
     }
 
     #[test]

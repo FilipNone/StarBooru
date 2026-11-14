@@ -180,8 +180,12 @@ l.style.top = l.style.left = "0px";
 // (0, 0) may not be the viewport's corner: a blurred bar is the containing block
 const o = l.getBoundingClientRect();
 const below = floor - r.bottom - gap, above = r.top - gap - ceil;
-const up = l.scrollHeight > below && above > below;
-const h = Math.max(0, Math.min(l.scrollHeight, up ? above : below, 440));
+// The height takes in the border, which scrollHeight leaves out: without it
+// a list that fits came out 2px short and grew a scroll bar.
+const frame = l.offsetHeight - l.clientHeight;
+const full = l.scrollHeight + frame;
+const up = full > below && above > below;
+const h = Math.max(0, Math.min(full, up ? above : below, 440));
 let left = r.left;
 if (left + o.width > innerWidth - edge) left = Math.max(edge, r.right - o.width);
 l.style.maxHeight = h + "px";
@@ -256,6 +260,15 @@ mod tests {
         );
         assert_eq!(key_action(&Key::End, true, 1, None, 5), Action::Show(4));
         assert_eq!(key_action(&Key::Home, true, 3, None, 5), Action::Show(0));
+    }
+
+    #[test]
+    fn a_list_that_fits_has_room_for_its_border() {
+        // Regression: the list's height was its content's alone, so with
+        // its 1px border it came out 2px short and showed a scroll bar.
+        assert!(PLACE.contains("const frame = l.offsetHeight - l.clientHeight;"));
+        assert!(PLACE.contains("Math.min(full, up ? above : below, 440)"));
+        assert!(!PLACE.contains("Math.min(l.scrollHeight,"));
     }
 
     #[test]
