@@ -450,6 +450,20 @@ pub async fn cancel(id: i64) -> Result<(), String> {
 }
 
 /// Forgets the finished jobs.
+/// Takes the finished imports off the list at once and then off the server,
+/// whatever page comes next. On a failure the next check brings them back.
+pub fn clear_jobs_now() {
+    if !JOBS.peek().iter().any(|j| !j.state.is_active()) {
+        return;
+    }
+    JOBS.write().retain(|j| j.state.is_active());
+    spawn_forever(async {
+        if let Err(message) = clear_jobs().await {
+            notify(message);
+        }
+    });
+}
+
 pub async fn clear_jobs() -> Result<(), String> {
     let client = store::client().ok_or_else(|| t!("activity-signed-out"))?;
     client.clear_imports().await.map_err(|e| e.to_string())?;

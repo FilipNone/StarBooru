@@ -1076,7 +1076,7 @@ download-no-folder = no Downloads folder found
 ## Hand (tablet rail, viewer panel and tools)
 
 settings-hand = Hand
-settings-hand-hint = Puts the side navigation on tablets and laptops, and the viewer's panel and zoom tools, on the side of the hand you use.
+settings-hand-hint = Puts the side navigation on tablets and laptops, the viewer's panel and zoom tools, and the buttons of the Upload page's popup, on the side of the hand you use.
 hand-either = Either
 hand-left = Left
 hand-right = Right

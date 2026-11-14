@@ -1084,7 +1084,7 @@ download-no-folder = nessuna cartella Download trovata
 ## Hand (tablet rail, viewer panel and tools)
 
 settings-hand = Mano
-settings-hand-hint = Mette la navigazione laterale su tablet e portatili, e il pannello e gli strumenti di zoom del visualizzatore, dal lato della mano che usi.
+settings-hand-hint = Mette la navigazione laterale su tablet e portatili, il pannello e gli strumenti di zoom del visualizzatore, e i pulsanti del popup della pagina Carica, dal lato della mano che usi.
 hand-either = Entrambe
 hand-left = Sinistra
 hand-right = Destra

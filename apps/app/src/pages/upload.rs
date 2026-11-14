@@ -2,6 +2,11 @@
 //! app-wide queue (`activity`), so they keep going on other pages.
 
 use crate::link::Link;
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
+use std::hash::Hash;
+use std::rc::Rc;
+
 use dioxus::html::{FileData, HasFileData};
 use dioxus::prelude::*;
 use starbooru_core::tag::TagError;
@@ -68,8 +73,20 @@ pub fn Upload() -> Element {
             opened.set(Some((key, from)));
         });
     };
-    // The Clear button's tiles on their way out.
-    let mut clearing = use_signal(|| false);
+    // Tiles taken off the list, shown while they go.
+    let mut leaving = use_signal(|| None::<Leaving>);
+    // Once they have gone, the grid follows the lists again.
+    use_effect(move || {
+        let Some(round) = leaving.read().as_ref().map(|l| l.round) else {
+            return;
+        };
+        spawn(async move {
+            tiles_gone().await;
+            if leaving.peek().as_ref().is_some_and(|l| l.round == round) {
+                leaving.set(None);
+            }
+        });
+    });
     // Hide URL import when the server has it off (shown while unknown).
     let url_import =
         use_resource(|| async move { store::server_info().await.is_none_or(|i| i.url_import) });
@@ -200,12 +217,12 @@ pub fn Upload() -> Element {
         .flatten()
         .filter(|s| s.tagging)
         .map(|s| s.autotag);
-    let empty = QUEUE.read().is_empty() && JOBS.read().is_empty();
-    let queued = QUEUE.read().len();
-    let grid_class = match (empty, clearing()) {
-        (true, _) => "grid up-grid empty",
-        (false, true) => "grid up-grid clearing",
-        (false, false) => "grid up-grid",
+    let (items, jobs) = shown(&leaving.read(), &QUEUE.read(), &JOBS.read());
+    let queued = items.len();
+    let grid_class = if items.is_empty() && jobs.is_empty() {
+        "grid up-grid empty"
+    } else {
+        "grid up-grid"
     };
     rsx! {
         div { class: if drafts > 0 { "page upload sending" } else { "page upload" },
@@ -269,18 +286,9 @@ pub fn Upload() -> Element {
                         title: t!("upload-clear"),
                         aria_label: t!("upload-clear"),
                         onclick: move |_| {
-                            if clearing() {
-                                return;
-                            }
-                            clearing.set(true);
-                            spawn(async move {
-                                // The tiles go first, then the list.
-                                tiles_gone().await;
+                            leave(leaving, || {
                                 activity::clear();
-                                clearing.set(false);
-                                if let Err(message) = activity::clear_jobs().await {
-                                    notice.set(Some(message));
-                                }
+                                activity::clear_jobs_now();
                             });
                         },
                         Ico { icon: Icon::Delete }
@@ -328,11 +336,11 @@ pub fn Upload() -> Element {
                         },
                     }
                 }
-                for (index, item) in QUEUE.read().iter().enumerate() {
-                    FileTile { key: "{item.key}", item: item.clone(), place: index, onopen: open_item }
+                for (index, (item, going)) in items.into_iter().enumerate() {
+                    FileTile { key: "{item.key}", item, place: index, going, onopen: open_item }
                 }
-                for (index, job) in JOBS.read().iter().enumerate() {
-                    JobTile { key: "job-{job.id}", job: job.clone(), place: queued.saturating_add(index) }
+                for (index, (job, going)) in jobs.into_iter().enumerate() {
+                    JobTile { key: "job-{job.id}", job, place: queued.saturating_add(index), going }
                 }
             }
             if drafts > 0 {
@@ -371,7 +379,13 @@ pub fn Upload() -> Element {
                 }
             }
             if let Some((key, from)) = opened() {
-                ItemSheet { key: "{key}", item_key: key, from, onclose: move |_| opened.set(None) }
+                ItemSheet {
+                    key: "{key}",
+                    item_key: key,
+                    from,
+                    onremove: move |key| leave(leaving, || activity::remove(key)),
+                    onclose: move |_| opened.set(None),
+                }
             }
             if let Some(rect) = veil() {
                 div {
@@ -918,7 +932,7 @@ fn use_face(item: &Item, preview: bool) -> Option<String> {
 
 /// One file or address waiting to go, on its way, or done.
 #[component]
-fn FileTile(item: Item, place: usize, onopen: EventHandler<u64>) -> Element {
+fn FileTile(item: Item, place: usize, going: Option<usize>, onopen: EventHandler<u64>) -> Element {
     let preview = place < MAX_PREVIEWS;
     let key = item.key;
     let name = item.name();
@@ -933,7 +947,7 @@ fn FileTile(item: Item, place: usize, onopen: EventHandler<u64>) -> Element {
     let face = rsx! { TileFace { src: shown, icon, caption } };
     if let Status::Done(id) = item.status {
         return rsx! {
-            Link { class: "thumb up-tile done", style: stagger(place), title: "{name}", to: Route::PostView { id, q: String::new() },
+            Link { class: tile_class("thumb up-tile done", going), style: going_style(going), title: "{name}", to: Route::PostView { id, q: String::new() },
                 {face}
                 span { class: "up-mark ok", aria_label: t!("upload-done"), Ico { icon: Icon::Check, size: 18 } }
             }
@@ -943,12 +957,15 @@ fn FileTile(item: Item, place: usize, onopen: EventHandler<u64>) -> Element {
     let tag_count = item.tags.split_whitespace().count();
     rsx! {
         div {
-            class: match &item.status {
-                Status::Failed(_) => "thumb up-tile failed",
-                Status::Uploading => "thumb up-tile busy stays",
-                _ => "thumb up-tile",
-            },
-            style: stagger(place),
+            class: tile_class(
+                match &item.status {
+                    Status::Failed(_) => "thumb up-tile failed",
+                    Status::Uploading => "thumb up-tile busy",
+                    _ => "thumb up-tile",
+                },
+                going,
+            ),
+            style: going_style(going),
             "data-up-key": "{key}",
             title: "{name}",
             if item.status == Status::Draft {
@@ -1034,11 +1051,24 @@ fn Switch(icon: Icon, label: String, on: bool, onchange: EventHandler<bool>) -> 
 /// tags. An address on a booru the server knows comes with the post's tags
 /// there, to change like any others.
 #[component]
-fn ItemSheet(item_key: u64, from: (f64, f64), onclose: EventHandler<()>) -> Element {
+fn ItemSheet(
+    item_key: u64,
+    from: (f64, f64),
+    onremove: EventHandler<u64>,
+    onclose: EventHandler<()>,
+) -> Element {
     let key = item_key;
     let mut closing = use_signal(|| false);
-    let item = QUEUE.read().iter().find(|i| i.key == key).cloned();
-    let first = item.clone();
+    // Removed from here: it fades, as its tile is going too.
+    let mut fading = use_signal(|| false);
+    let live = QUEUE.read().iter().find(|i| i.key == key).cloned();
+    // The item as last seen, to show while the popup goes once it is off
+    // the list.
+    let kept = use_hook(|| Rc::new(RefCell::new(None::<Item>)));
+    if let Some(item) = &live {
+        kept.replace(Some(item.clone()));
+    }
+    let first = live.clone();
     let made = use_hook(move || first.and_then(|i| face_src(&i, true)));
     let held = made.clone();
     use_drop(move || {
@@ -1061,7 +1091,8 @@ fn ItemSheet(item_key: u64, from: (f64, f64), onclose: EventHandler<()>) -> Elem
         }
     };
     // Sent, or gone from the list some other way: nothing left to show.
-    let gone = item.as_ref().is_none_or(|i| i.status != Status::Draft);
+    let gone = live.as_ref().is_none_or(|i| i.status != Status::Draft);
+    let item = live.or_else(|| kept.borrow().clone());
     use_effect(use_reactive!(|gone| {
         if gone {
             close();
@@ -1092,7 +1123,11 @@ fn ItemSheet(item_key: u64, from: (f64, f64), onclose: EventHandler<()>) -> Elem
     let (x, y) = from;
     rsx! {
         div {
-            class: if closing() { "sheet-scrim closing" } else { "sheet-scrim" },
+            class: match (closing(), fading()) {
+                (true, true) => "sheet-scrim closing fading",
+                (true, false) => "sheet-scrim closing",
+                _ => "sheet-scrim",
+            },
             onclick: move |_| close(),
             onkeydown: move |e| {
                 if e.key() == Key::Escape {
@@ -1181,8 +1216,9 @@ fn ItemSheet(item_key: u64, from: (f64, f64), onclose: EventHandler<()>) -> Elem
                         r#type: "button",
                         class: "btn text bin",
                         onclick: move |_| {
-                            activity::remove(key);
+                            fading.set(true);
                             close();
+                            onremove.call(key);
                         },
                         Ico { icon: Icon::Delete }
                         {t!("upload-remove-item")}
@@ -1205,14 +1241,120 @@ fn rating_choices(usual: String) -> Vec<Choice> {
     choices
 }
 
-/// How long a tile waits before going when the list is cleared, so they go
-/// one after another from the first. Past the first screenful, all at once.
-fn stagger(place: usize) -> String {
-    format!("--i: {}", place.min(MAX_STAGGER))
+/// Tiles taken off the list, kept on the grid while they go: the lists as
+/// they were shown when the last ones went, each gone one with its place in
+/// the order of going.
+struct Leaving {
+    items: Vec<(Item, Option<usize>)>,
+    jobs: Vec<(ImportJob, Option<usize>)>,
+    /// Which removal it is, so that the end of an earlier one leaves a later
+    /// one's tiles be.
+    round: u32,
 }
 
-/// The tiles that go one after another; enough for a screenful.
-const MAX_STAGGER: usize = 24;
+type Shown = (Vec<(Item, Option<usize>)>, Vec<(ImportJob, Option<usize>)>);
+
+/// The tiles on the grid: the lists as they are, with any that are going
+/// still in their places.
+fn shown(leaving: &Option<Leaving>, queue: &[Item], jobs: &[ImportJob]) -> Shown {
+    match leaving {
+        None => (
+            queue.iter().map(|i| (i.clone(), None)).collect(),
+            jobs.iter().map(|j| (j.clone(), None)).collect(),
+        ),
+        Some(leaving) => {
+            let (items, next) = with_leaving(&leaving.items, queue, |i| i.key, 0);
+            let (jobs, _) = with_leaving(&leaving.jobs, jobs, |j| j.id, next);
+            (items, jobs)
+        }
+    }
+}
+
+/// `before` with each entry still in `now` as it is now, and each one gone
+/// as it was, with its place in the order of going. One that has just gone
+/// gets the next place from `first`. Whatever is new in `now` comes after.
+/// Also gives the next free place.
+fn with_leaving<T: Clone, K: Eq + Hash>(
+    before: &[(T, Option<usize>)],
+    now: &[T],
+    key: impl Fn(&T) -> K,
+    first: usize,
+) -> (Vec<(T, Option<usize>)>, usize) {
+    let live: HashMap<K, &T> = now.iter().map(|t| (key(t), t)).collect();
+    let mut seen = HashSet::with_capacity(before.len());
+    let mut next = first;
+    let mut out = Vec::with_capacity(before.len().max(now.len()));
+    for (old, going) in before {
+        let k = key(old);
+        match live.get(&k) {
+            Some(current) => out.push(((*current).clone(), None)),
+            None => {
+                let place = going.unwrap_or_else(|| {
+                    let place = next;
+                    next = next.saturating_add(1);
+                    place
+                });
+                out.push((old.clone(), Some(place)));
+            }
+        }
+        seen.insert(k);
+    }
+    out.extend(
+        now.iter()
+            .filter(|t| !seen.contains(&key(t)))
+            .map(|t| (t.clone(), None)),
+    );
+    (out, next)
+}
+
+/// Does `act`, which takes tiles off the list, at once, so it holds whatever
+/// page comes next, and keeps those tiles on the grid while they go.
+fn leave(mut leaving: Signal<Option<Leaving>>, act: impl FnOnce()) {
+    let (items, jobs) = shown(&leaving.peek(), &QUEUE.peek(), &JOBS.peek());
+    let round = leaving
+        .peek()
+        .as_ref()
+        .map_or(0, |l| l.round.wrapping_add(1));
+    act();
+    leaving.set(Some(Leaving { items, jobs, round }));
+}
+
+fn tile_class(base: &str, going: Option<usize>) -> String {
+    match going {
+        Some(place) if place >= MAX_STAGGER => format!("{base} leaving far"),
+        Some(_) => format!("{base} leaving"),
+        None => base.to_owned(),
+    }
+}
+
+/// When a going tile starts and how long it takes, by its place in the
+/// order of going: the first few one after another at the usual pace, the
+/// rest quicker and closer together. Past a screenful they go at once
+/// (`tile_class`).
+fn going_style(going: Option<usize>) -> String {
+    let Some(place) = going else {
+        return String::new();
+    };
+    let place = place.min(MAX_STAGGER);
+    let slow = place.min(SLOW_TILES);
+    let quick = place.saturating_sub(SLOW_TILES);
+    let delay = slow
+        .saturating_mul(SLOW_GAP_MS)
+        .saturating_add(quick.saturating_mul(QUICK_GAP_MS));
+    let pace = if place < SLOW_TILES {
+        "--med"
+    } else {
+        "--fast"
+    };
+    format!("--d: {delay}ms; --len: var({pace})")
+}
+
+/// The tiles that go one after another; about a screenful.
+const MAX_STAGGER: usize = 40;
+/// The first tiles to go, which go at the usual pace.
+const SLOW_TILES: usize = 3;
+const SLOW_GAP_MS: usize = 28;
+const QUICK_GAP_MS: usize = 10;
 
 /// Waits for the tiles to finish going, or at most a second.
 async fn tiles_gone() {
@@ -1250,7 +1392,7 @@ fn FailMark(message: String) -> Element {
 
 /// One address the server is importing, or has.
 #[component]
-fn JobTile(job: ImportJob, place: usize) -> Element {
+fn JobTile(job: ImportJob, place: usize, going: Option<usize>) -> Element {
     let preview = place < MAX_PREVIEWS;
     let id = job.id;
     let name = job.source.clone().unwrap_or_else(|| job.url.clone());
@@ -1258,7 +1400,7 @@ fn JobTile(job: ImportJob, place: usize) -> Element {
     let face = rsx! { TileFace { src, icon: Icon::Link, caption: host_of(&name) } };
     if let (JobState::Done, Some(post)) = (job.state, job.post_id) {
         return rsx! {
-            Link { class: "thumb up-tile done", style: stagger(place), title: "{name}", to: Route::PostView { id: post, q: String::new() },
+            Link { class: tile_class("thumb up-tile done", going), style: going_style(going), title: "{name}", to: Route::PostView { id: post, q: String::new() },
                 {face}
                 span { class: "up-mark ok", aria_label: t!("upload-done"), Ico { icon: Icon::Check, size: 18 } }
             }
@@ -1267,13 +1409,15 @@ fn JobTile(job: ImportJob, place: usize) -> Element {
     let note = job.error.clone().unwrap_or_default();
     rsx! {
         div {
-            class: match job.state {
-                JobState::Failed => "thumb up-tile failed",
-                JobState::Running => "thumb up-tile busy stays",
-                JobState::Queued => "thumb up-tile stays",
-                _ => "thumb up-tile",
-            },
-            style: stagger(place),
+            class: tile_class(
+                match job.state {
+                    JobState::Failed => "thumb up-tile failed",
+                    JobState::Running => "thumb up-tile busy",
+                    _ => "thumb up-tile",
+                },
+                going,
+            ),
+            style: going_style(going),
             title: if note.is_empty() { name.clone() } else { format!("{name}\n{note}") },
             {face}
             match job.state {
@@ -1405,13 +1549,64 @@ mod tests {
     }
 
     #[test]
-    fn cleared_tiles_go_one_after_another_and_busy_ones_stay() {
+    fn the_first_three_go_at_the_usual_pace_and_the_rest_quicker() {
         let css = include_str!("../../assets/main.css");
-        assert!(css.contains(".up-grid.clearing .up-tile:not(.stays) {"));
-        assert!(css.contains("animation-delay: calc(var(--i, 0) * 28ms)"));
-        assert_eq!(stagger(3), "--i: 3");
+        assert!(css.contains("animation: tile-out var(--len, var(--med)) var(--ease) both; animation-delay: var(--d, 0ms);"));
+        assert_eq!(going_style(None), "");
+        assert_eq!(going_style(Some(0)), "--d: 0ms; --len: var(--med)");
+        assert_eq!(going_style(Some(2)), "--d: 56ms; --len: var(--med)");
+        assert_eq!(going_style(Some(3)), "--d: 84ms; --len: var(--fast)");
+        assert_eq!(going_style(Some(5)), "--d: 104ms; --len: var(--fast)");
         // A long list doesn't keep the last tile waiting.
-        assert_eq!(stagger(5000), format!("--i: {MAX_STAGGER}"));
+        assert_eq!(going_style(Some(5000)), going_style(Some(MAX_STAGGER)));
+        assert_eq!(tile_class("thumb", Some(MAX_STAGGER)), "thumb leaving far");
+        assert_eq!(tile_class("thumb", Some(1)), "thumb leaving");
+        assert_eq!(tile_class("thumb", None), "thumb");
+    }
+
+    #[test]
+    fn gone_tiles_keep_their_places_while_they_go() {
+        // 1 to 4 were shown; 2 and 4 were taken off and 5 came after.
+        let before: Vec<(u32, Option<usize>)> = (1..=4).map(|n| (n, None)).collect();
+        let (shown, next) = with_leaving(&before, &[1, 3, 5], |n| *n, 0);
+        assert_eq!(
+            shown,
+            [(1, None), (2, Some(0)), (3, None), (4, Some(1)), (5, None)]
+        );
+        assert_eq!(next, 2);
+        // Taking 3 off while those go: it goes first among the new ones, and
+        // the others keep their places, so their delays don't jump.
+        let (again, _) = with_leaving(&shown, &[1, 5], |n| *n, 0);
+        assert_eq!(
+            again,
+            [
+                (1, None),
+                (2, Some(0)),
+                (3, Some(0)),
+                (4, Some(1)),
+                (5, None)
+            ]
+        );
+        // Places go on from `first`, so the jobs follow the files.
+        let (jobs, next) = with_leaving(&[(7, None), (8, None)], &[], |n: &u32| *n, 3);
+        assert_eq!(jobs, [(7, Some(3)), (8, Some(4))]);
+        assert_eq!(next, 5);
+    }
+
+    #[test]
+    fn the_popup_follows_the_hand_and_fades_when_its_item_goes() {
+        let css = include_str!("../../assets/main.css");
+        assert!(css.contains(".app[data-hand=\"left\"] .item-head, .app[data-hand=\"left\"] .item-foot { flex-direction: row-reverse; }"));
+        assert!(css.contains(".sheet-scrim.closing.fading .item-sheet { animation: sheet-out"));
+    }
+
+    #[test]
+    fn the_upload_page_comes_in_without_moving() {
+        // Regression: the page's entrance moved it, and the floating bar,
+        // which is fixed, moved with it under the tiles for a moment.
+        let css = include_str!("../../assets/main.css");
+        assert!(css.contains(".page.upload { animation: fade-in var(--med) var(--ease); }"));
+        assert!(css.contains("@keyframes fade-in { from { opacity: 0; } }"));
     }
 
     #[test]

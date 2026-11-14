@@ -1759,6 +1759,9 @@ pre.command {
    and goes back into it (`--from-x`, `--from-y`). */
 .item-sheet { width: min(820px, 100%); animation: from-tab var(--slow) var(--ease); }
 .sheet-scrim.closing .item-sheet { animation: to-tab var(--med) var(--ease) forwards; }
+/* Removed from the popup: its tile is going, so it fades where it is. */
+.sheet-scrim.closing.fading .item-sheet { animation: sheet-out var(--med) var(--ease) forwards; }
+@keyframes sheet-out { to { opacity: 0; transform: scale(0.96); } }
 .item-head { justify-content: flex-start; }
 .item-head .item-title {
   flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 18px;
@@ -1780,6 +1783,14 @@ pre.command {
    the top, the bin that takes the item off the list. */
 .item-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 16px; }
 .item-foot .bin { margin-left: auto; }
+/* For the left hand, the popup is the other way round: the cross, the bin
+   and the fields on the left. */
+.app[data-hand="left"] .item-head, .app[data-hand="left"] .item-foot { flex-direction: row-reverse; }
+.app[data-hand="left"] .item-foot .bin { margin-left: 0; margin-right: auto; }
+@media (min-width: 601px) {
+  .app[data-hand="left"] .item-body { grid-template-columns: minmax(0, 1fr) minmax(0, 320px); }
+  .app[data-hand="left"] .item-preview { order: 1; }
+}
 .btn.text.bin { color: var(--on-surface-2); }
 .btn.text.bin:hover:not(:disabled), .btn.text.bin:focus-visible { background: var(--danger); color: var(--on-primary); }
 @media (max-width: 600px) {
@@ -2233,16 +2244,17 @@ html:has(.editor) { overflow-y: hidden; }
    and only the first screenful makes an entrance. */
 .up-tile { content-visibility: auto; contain-intrinsic-size: auto 168px; }
 .up-tile:nth-child(n + 40) { animation: none; }
-/* Clear: the tiles shrink away one after another, from the first. What is
-   still under way (`.stays`) stays. */
-.up-grid.clearing .up-tile:not(.stays) {
+/* Tiles taken off the list are already off it: these copies shrink away one
+   after another, from the first, each starting at `--d` and taking `--len`
+   (upload.rs). Past a screenful (`.far`) they go at once. */
+.up-tile.leaving {
   pointer-events: none;
-  animation: tile-out var(--med) var(--ease) both; animation-delay: calc(var(--i, 0) * 28ms);
+  animation: tile-out var(--len, var(--med)) var(--ease) both; animation-delay: var(--d, 0ms);
 }
-.up-grid.clearing .up-tile:not(.stays):nth-child(n + 40) { animation: none; opacity: 0; }
-.app[data-effects="lite"] .up-grid.clearing .up-tile { animation-delay: 0ms; }
+.up-tile.leaving.far { animation: none; opacity: 0; }
+.app[data-effects="lite"] .up-tile.leaving { animation-delay: 0ms; }
 @media (prefers-reduced-motion: reduce) {
-  .up-grid.clearing .up-tile { animation-delay: 0ms !important; }
+  .up-tile.leaving { animation-delay: 0ms !important; }
 }
 @keyframes tile-out { to { opacity: 0; transform: scale(0.6); } }
 .up-face { align-content: center; justify-items: center; gap: 6px; padding: 12px; text-align: center; }
@@ -2281,6 +2293,9 @@ html:has(.editor) { overflow-y: hidden; }
 .up-progress .transfer { gap: 8px; }
 .up-progress .transfer-text { color: white; font-size: 12px; }
 .up-progress .meter { background: oklch(1 0 0 / 0.25); }
+/* Only a fade: a moving page would carry the floating bar along while it
+   comes in, as the gallery's would. */
+.page.upload { animation: fade-in var(--med) var(--ease); }
 /* The head's buttons keep together at the far side, as the gallery's do. */
 .page.upload .page-head { justify-content: flex-start; gap: 4px; }
 .page.upload .page-title { margin-right: auto; }
