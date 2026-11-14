@@ -2300,6 +2300,10 @@ html:has(.editor) { overflow-y: hidden; }
 .page.upload .page-head { justify-content: flex-start; gap: 4px; }
 .page.upload .page-title { margin-right: auto; }
 .up-switches { display: inline-flex; align-items: center; gap: 8px; margin: 0 6px; }
+/* The gallery's bar starts with a count, so it has more room on the left.
+   This one starts with a field as round as the button at its end: the same
+   on both sides. */
+.up-bar { padding: 10px; }
 @media (min-width: 761px) {
   .up-bar .bulk-tags { flex: 3 1 220px; }
 }

@@ -1601,6 +1601,14 @@ mod tests {
     }
 
     #[test]
+    fn the_bar_has_as_much_room_on_the_left_as_on_the_right() {
+        // Regression: it kept the gallery bar's wider left side, made for
+        // a count, in front of a round field.
+        let css = include_str!("../../assets/main.css");
+        assert!(css.contains(".up-bar { padding: 10px; }"));
+    }
+
+    #[test]
     fn the_upload_page_comes_in_without_moving() {
         // Regression: the page's entrance moved it, and the floating bar,
         // which is fixed, moved with it under the tiles for a moment.
