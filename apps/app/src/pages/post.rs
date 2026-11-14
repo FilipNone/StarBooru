@@ -1003,18 +1003,21 @@ pub fn PostView(id: i64, q: String) -> Element {
                         },
                         label { class: "field",
                             span { {t!("post-tags")} }
-                            textarea {
-                                rows: "5",
-                                spellcheck: "false",
-                                value: "{tag_text}",
-                                oninput: move |e| {
-                                    let text = e.value();
-                                    if text.ends_with(char::is_whitespace) {
-                                        tag_check.set(text.clone());
-                                    }
-                                    tag_text.set(text);
-                                },
-                                onblur: move |_| tag_check.set(tag_text()),
+                            span { class: "text-box",
+                                textarea {
+                                    rows: "5",
+                                    spellcheck: "false",
+                                    value: "{tag_text}",
+                                    oninput: move |e| {
+                                        let text = e.value();
+                                        if text.ends_with(char::is_whitespace) {
+                                            tag_check.set(text.clone());
+                                        }
+                                        tag_text.set(text);
+                                    },
+                                    onblur: move |_| tag_check.set(tag_text()),
+                                }
+                                crate::grip::Grip {}
                             }
                         }
                         p { class: "muted hint", {t!("post-tags-hint")} }

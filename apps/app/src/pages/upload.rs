@@ -1196,14 +1196,17 @@ fn ItemSheet(
                         }
                         label { class: "field",
                             span { {t!("post-tags")} }
-                            textarea {
-                                class: "item-tags",
-                                rows: "8",
-                                placeholder: t!("upload-file-tags-placeholder"),
-                                spellcheck: "false",
-                                autocapitalize: "none",
-                                value: "{item.tags}",
-                                oninput: move |e| activity::set_tags(key, e.value()),
+                            span { class: "text-box",
+                                textarea {
+                                    class: "item-tags",
+                                    rows: "8",
+                                    placeholder: t!("upload-file-tags-placeholder"),
+                                    spellcheck: "false",
+                                    autocapitalize: "none",
+                                    value: "{item.tags}",
+                                    oninput: move |e| activity::set_tags(key, e.value()),
+                                }
+                                crate::grip::Grip {}
                             }
                         }
                         if let Some(problem) = problem {

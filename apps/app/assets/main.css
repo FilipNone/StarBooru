@@ -244,14 +244,34 @@ h1, h2 { line-height: 1.2; margin: 0; }
 .switch.on .switch-knob { translate: 20px 0; background: var(--on-primary); color: var(--primary); }
 
 .field { display: grid; gap: 6px; margin-bottom: 16px; }
-.field > span, .field > label:not(.check) { font-size: 14px; font-weight: 600; color: var(--on-surface-2); }
+.field > span:not(.text-box), .field > label:not(.check) { font-size: 14px; font-weight: 600; color: var(--on-surface-2); }
 .field > .field-hint { font-size: 13px; font-weight: 400; }
 .field input:not([type="range"], [type="checkbox"]), .field textarea {
   width: 100%; padding: 12px 14px; border: 1px solid var(--outline); border-radius: var(--radius-s);
   background: var(--surface); color: var(--on-surface); font: inherit;
   transition: border-color var(--fast) var(--ease), box-shadow var(--fast) var(--ease);
 }
-.field textarea { resize: vertical; font-family: ui-monospace, "Cascadia Code", "Roboto Mono", monospace; font-size: 14px; }
+.field textarea { font-family: ui-monospace, "Cascadia Code", "Roboto Mono", monospace; font-size: 14px; }
+/* Browsers draw their own handle in a text box's corner, each in its own
+   style. Ours is a grip (grip.rs) over the corner, two short strokes in the
+   app's colours, which drags the box taller or shorter. */
+textarea { resize: none; }
+.text-box { position: relative; display: block; }
+.text-box > textarea { display: block; }
+.grip {
+  position: absolute; right: 3px; bottom: 3px; width: 22px; height: 22px; border-radius: 8px;
+  color: var(--on-surface-2); cursor: ns-resize; touch-action: none;
+  transition: color var(--fast) var(--ease), background-color var(--fast) var(--ease);
+}
+.grip::before {
+  content: ""; position: absolute; inset: 4px; background: currentColor;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M10.5 3.5l-7 7M10.5 7.5l-3 3' stroke='black' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+.grip:is(:hover, .held) { color: var(--primary); background: oklch(from var(--primary) l c h / 0.12); }
+@media (pointer: coarse) {
+  .grip { width: 32px; height: 32px; right: 1px; bottom: 1px; }
+  .grip::before { inset: 9px; }
+}
 .field input:focus, .field textarea:focus {
   outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px oklch(from var(--primary) l c h / 0.25);
 }

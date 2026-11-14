@@ -14,6 +14,7 @@ mod brand_paths;
 mod cache;
 mod download;
 mod gesture;
+mod grip;
 mod icons;
 mod layout;
 mod link;
@@ -76,6 +77,7 @@ fn launch_desktop() {
 fn App() -> Element {
     cache::register();
     bridge::install();
+    grip::install();
     power::watch();
     pace::watch();
     system::watch();
