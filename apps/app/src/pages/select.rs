@@ -177,6 +177,9 @@ if (bar) { const t = bar.getBoundingClientRect(); if (t.height && t.bottom <= r.
 l.style.minWidth = r.width + "px";
 l.style.maxHeight = "none";
 l.style.top = l.style.left = "0px";
+// Measured with the entrance stopped: its first frame is scaled and moved, and
+// a list placed from that came out 4px left of its button.
+l.style.animation = "none";
 // (0, 0) may not be the viewport's corner: a blurred bar is the containing block
 const o = l.getBoundingClientRect();
 const below = floor - r.bottom - gap, above = r.top - gap - ceil;
@@ -192,6 +195,7 @@ l.style.maxHeight = h + "px";
 l.style.top = (up ? r.top - gap - h : r.bottom + gap) - o.top + "px";
 l.style.left = left - o.left + "px";
 l.dataset.placed = up ? "up" : "down";
+l.style.animation = "";
 l.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
 const close = (e) => {
   if (e && e.target === l) return;
@@ -269,6 +273,18 @@ mod tests {
         assert!(PLACE.contains("const frame = l.offsetHeight - l.clientHeight;"));
         assert!(PLACE.contains("Math.min(full, up ? above : below, 440)"));
         assert!(!PLACE.contains("Math.min(l.scrollHeight,"));
+    }
+
+    #[test]
+    fn a_list_is_measured_without_its_entrance() {
+        // Regression: the list was measured in the first frame of its
+        // entrance, scaled to 0.98, and so placed 4px left of the button.
+        let off = PLACE.find(r#"l.style.animation = "none";"#);
+        let measure = PLACE.find("const o = l.getBoundingClientRect();");
+        let on = PLACE.find(r#"l.style.animation = "";"#);
+        let placed = PLACE.find("l.style.left = left - o.left");
+        assert!(off < measure && measure < placed && placed < on);
+        assert!(off.is_some());
     }
 
     #[test]
