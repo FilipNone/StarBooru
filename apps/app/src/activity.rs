@@ -60,6 +60,9 @@ pub struct Item {
     pub progress: Option<Transfer>,
     /// For an address: the post it is on another booru, once asked.
     pub remote: Remote,
+    /// Its own rating. `None` goes with the rest: the found post's rating
+    /// for an address, the batch's otherwise.
+    pub rating: Option<Rating>,
 }
 
 impl Item {
@@ -73,6 +76,14 @@ impl Item {
     /// Sent or about to be, and not finished.
     fn pending(&self) -> bool {
         matches!(self.status, Status::Ready(..) | Status::Uploading)
+    }
+
+    /// The rating it goes with when it has none of its own.
+    pub fn usual_rating(&self, batch: Rating) -> Rating {
+        match &self.remote {
+            Remote::Found(post) => post.rating,
+            _ => batch,
+        }
     }
 }
 
@@ -126,6 +137,7 @@ pub fn add(source: Source, tags: String) -> u64 {
         status: Status::Draft,
         progress: None,
         remote: Remote::Unasked,
+        rating: None,
     });
     key
 }
@@ -183,7 +195,7 @@ fn with_tags(own: &str, more: &[String]) -> String {
 }
 
 /// What imports an address. A post found on a booru goes as its file, with
-/// its page as the source and its rating, and only with the tags the item
+/// its page as the source and its rating unless the item has its own, and only with the tags the item
 /// has now: the server doesn't look it up again, so tags taken off stay off.
 /// Anything else goes as it is, and the server finds what it can.
 fn import_of(item: &Item, url: &str, tags: Vec<String>, batch: &Batch) -> ImportRequest {
@@ -191,14 +203,14 @@ fn import_of(item: &Item, url: &str, tags: Vec<String>, batch: &Batch) -> Import
         Remote::Found(post) if !post.file_url.trim().is_empty() => ImportRequest {
             url: post.file_url.clone(),
             tags,
-            rating: post.rating,
+            rating: item.rating.unwrap_or(post.rating),
             source: Some(post.page_url.clone()),
             autotag: batch.autotag,
         },
         _ => ImportRequest {
             url: url.to_owned(),
             tags,
-            rating: batch.rating,
+            rating: item.rating.unwrap_or(batch.rating),
             source: None,
             autotag: batch.autotag,
         },
@@ -209,6 +221,13 @@ fn import_of(item: &Item, url: &str, tags: Vec<String>, batch: &Batch) -> Import
 /// sent, so whatever is on the list belongs to one already sent.
 fn starts_batch(queue: &[Item]) -> bool {
     !queue.iter().any(|i| i.status == Status::Draft)
+}
+
+/// Gives an item its own rating, or `None` to go with the rest.
+pub fn set_rating(key: u64, rating: Option<Rating>) {
+    if let Some(item) = QUEUE.write().iter_mut().find(|i| i.key == key) {
+        item.rating = rating;
+    }
 }
 
 pub fn set_tags(key: u64, tags: String) {
@@ -286,7 +305,9 @@ fn send(batch: &Batch, wanted: impl Fn(u64) -> bool) {
             }
         };
         item.status = match &item.source {
-            Source::File(_) => Status::Ready(tags, batch.rating, batch.autotag),
+            Source::File(_) => {
+                Status::Ready(tags, item.rating.unwrap_or(batch.rating), batch.autotag)
+            }
             Source::Url(url) => {
                 imports.push((item.key, import_of(item, url, tags, batch)));
                 Status::Uploading
@@ -583,6 +604,7 @@ mod tests {
             status,
             progress: None,
             remote: Remote::Unasked,
+            rating: None,
         }
     }
 
@@ -641,6 +663,13 @@ mod tests {
         // "cloud" was taken off, and stays off.
         assert_eq!(found.tags, tags);
 
+        // A rating picked for the item wins over the site's.
+        it.rating = Some(Rating::Questionable);
+        let picked = import_of(&it, "https://booru.example/post/1", tags.clone(), &batch);
+        assert_eq!(picked.rating, Rating::Questionable);
+        assert_eq!(it.usual_rating(Rating::Safe), Rating::Explicit);
+        it.rating = None;
+
         // A post whose site showed no file goes by its page.
         it.remote = Remote::Found(Rc::new(RemotePost {
             file_url: String::new(),
@@ -649,6 +678,22 @@ mod tests {
         let by_page = import_of(&it, "https://booru.example/post/1", tags, &batch);
         assert_eq!(by_page.url, "https://booru.example/post/1");
         assert_eq!(by_page.source, None);
+    }
+
+    #[test]
+    fn an_item_without_its_own_rating_goes_with_the_batch() {
+        let batch = Batch {
+            tags: String::new(),
+            rating: Rating::Questionable,
+            autotag: None,
+        };
+        let mut it = item(1, Status::Draft);
+        assert_eq!(it.usual_rating(batch.rating), Rating::Questionable);
+        let plain = import_of(&it, "https://example.org/1.png", Vec::new(), &batch);
+        assert_eq!(plain.rating, Rating::Questionable);
+        it.rating = Some(Rating::Explicit);
+        let own = import_of(&it, "https://example.org/1.png", Vec::new(), &batch);
+        assert_eq!(own.rating, Rating::Explicit);
     }
 
     #[test]

@@ -235,24 +235,20 @@ pub fn Upload() -> Element {
                         },
                     }
                 }
-                button {
-                    r#type: "button",
-                    class: if folder_tags() { "icon-btn on" } else { "icon-btn" },
-                    title: t!("upload-folder-tags"),
-                    aria_label: t!("upload-folder-tags"),
-                    aria_pressed: folder_tags(),
-                    onclick: move |_| folder_tags.toggle(),
-                    Ico { icon: Icon::Label }
-                }
-                if let Some(ai) = ai_tagging {
-                    button {
-                        r#type: "button",
-                        class: if autotag_on(ai) { "icon-btn on" } else { "icon-btn" },
-                        title: t!("upload-autotag"),
-                        aria_label: t!("upload-autotag"),
-                        aria_pressed: autotag_on(ai),
-                        onclick: move |_| *AUTOTAG.write() = Some(!autotag_on(ai)),
-                        Ico { icon: Icon::Sparkle }
+                span { class: "up-switches",
+                    Switch {
+                        icon: Icon::Label,
+                        label: t!("upload-folder-tags"),
+                        on: folder_tags(),
+                        onchange: move |on| folder_tags.set(on),
+                    }
+                    if let Some(ai) = ai_tagging {
+                        Switch {
+                            icon: Icon::Sparkle,
+                            label: t!("upload-autotag"),
+                            on: autotag_on(ai),
+                            onchange: move |on| *AUTOTAG.write() = Some(on),
+                        }
                     }
                 }
                 if show_url {
@@ -269,7 +265,7 @@ pub fn Upload() -> Element {
                 if clearable {
                     button {
                         r#type: "button",
-                        class: "icon-btn",
+                        class: "icon-btn danger",
                         title: t!("upload-clear"),
                         aria_label: t!("upload-clear"),
                         onclick: move |_| {
@@ -973,7 +969,7 @@ fn FileTile(item: Item, place: usize, onopen: EventHandler<u64>) -> Element {
                 {face}
             }
             if removable {
-                BinButton { class: "up-btn up-x", size: 18, label: t!("upload-remove", name = name.clone()), onclick: move |_| activity::remove(key) }
+                CrossButton { label: t!("upload-remove", name = name.clone()), onclick: move |_| activity::remove(key) }
             }
             if item.status == Status::Uploading {
                 div { class: "up-progress",
@@ -1001,25 +997,35 @@ async fn tile_offset(key: u64) -> (f64, f64) {
     eval.recv().await.unwrap_or_default()
 }
 
-/// A button that removes something: a cross, which turns into a bin when
-/// pointed at or reached with the keyboard, so it isn't mistaken for a way
-/// to close.
+/// The cross in a tile's corner that takes it off the list.
 #[component]
-fn BinButton(
-    class: String,
-    size: u32,
-    label: String,
-    onclick: EventHandler<MouseEvent>,
-) -> Element {
+fn CrossButton(label: String, onclick: EventHandler<MouseEvent>) -> Element {
     rsx! {
         button {
             r#type: "button",
-            class: "{class} bin-x",
+            class: "up-btn up-x",
             aria_label: "{label}",
             title: "{label}",
             onclick: move |e| onclick.call(e),
-            span { class: "bin-rest", Ico { icon: Icon::Close, size } }
-            span { class: "bin-hover", Ico { icon: Icon::Delete, size } }
+            Ico { icon: Icon::Close, size: 18 }
+        }
+    }
+}
+
+/// An on/off switch with its icon on the knob, so it isn't taken for a
+/// button that does something once.
+#[component]
+fn Switch(icon: Icon, label: String, on: bool, onchange: EventHandler<bool>) -> Element {
+    rsx! {
+        button {
+            r#type: "button",
+            class: if on { "switch on" } else { "switch" },
+            role: "switch",
+            aria_checked: on,
+            aria_label: "{label}",
+            title: "{label}",
+            onclick: move |_| onchange.call(!on),
+            span { class: "switch-knob", Ico { icon, size: 16 } }
         }
     }
 }
@@ -1074,6 +1080,15 @@ fn ItemSheet(item_key: u64, from: (f64, f64), onclose: EventHandler<()>) -> Elem
         Source::Url(url) => (Icon::Link, host_of(url)),
     };
     let problem = tag_problem("", [item.tags.as_str()]);
+    let usual = rating_label(item.usual_rating(*RATING.read()));
+    let usual = match &item.remote {
+        Remote::Found(post) => t!(
+            "upload-rating-site",
+            site = super::boorus::site_name(&post.site),
+            rating = usual
+        ),
+        _ => t!("upload-rating-usual", rating = usual),
+    };
     let (x, y) = from;
     rsx! {
         div {
@@ -1092,24 +1107,15 @@ fn ItemSheet(item_key: u64, from: (f64, f64), onclose: EventHandler<()>) -> Elem
                 aria_labelledby: "item-sheet-title",
                 onclick: move |e| e.stop_propagation(),
                 div { class: "sheet-head item-head",
+                    h2 { id: "item-sheet-title", class: "card-title item-title", title: "{name}", "{name}" }
                     button {
                         r#type: "button",
                         class: "icon-btn",
-                        aria_label: t!("post-back"),
-                        title: t!("post-back"),
+                        aria_label: t!("upload-close"),
+                        title: t!("upload-close"),
                         autofocus: true,
                         onclick: move |_| close(),
-                        Ico { icon: Icon::ArrowBack }
-                    }
-                    h2 { id: "item-sheet-title", class: "card-title item-title", title: "{name}", "{name}" }
-                    BinButton {
-                        class: "icon-btn danger",
-                        size: 24,
-                        label: t!("upload-remove", name = name.clone()),
-                        onclick: move |_| {
-                            activity::remove(key);
-                            close();
-                        },
+                        Ico { icon: Icon::Close }
                     }
                 }
                 div { class: "item-body",
@@ -1133,6 +1139,18 @@ fn ItemSheet(item_key: u64, from: (f64, f64), onclose: EventHandler<()>) -> Elem
                             },
                             _ => rsx! {},
                         }
+                        // Not a `label`: a click on the list would also
+                        // press the button inside it and open it again.
+                        div { class: "field",
+                            span { {t!("rating")} }
+                            Select {
+                                class: "boxed item-rating",
+                                aria_label: t!("rating"),
+                                value: item.rating.map(|r| r.as_str().to_string()).unwrap_or_default(),
+                                options: rating_choices(usual),
+                                onchange: move |v: String| activity::set_rating(key, Rating::parse(&v)),
+                            }
+                        }
                         label { class: "field",
                             span { {t!("post-tags")} }
                             textarea {
@@ -1152,9 +1170,39 @@ fn ItemSheet(item_key: u64, from: (f64, f64), onclose: EventHandler<()>) -> Elem
                         }
                     }
                 }
+                div { class: "item-foot",
+                    if let Source::Url(url) = &item.source {
+                        a { class: "btn text", href: "{url}", target: "_blank", rel: "noopener noreferrer",
+                            Ico { icon: Icon::Link }
+                            {t!("upload-open-link")}
+                        }
+                    }
+                    button {
+                        r#type: "button",
+                        class: "btn text bin",
+                        onclick: move |_| {
+                            activity::remove(key);
+                            close();
+                        },
+                        Ico { icon: Icon::Delete }
+                        {t!("upload-remove-item")}
+                    }
+                }
             }
         }
     }
+}
+
+/// The ratings an item can have: first going with the rest (`usual` says
+/// which that is), then each one.
+fn rating_choices(usual: String) -> Vec<Choice> {
+    let mut choices = vec![Choice::new("", usual)];
+    choices.extend(
+        Rating::ALL
+            .into_iter()
+            .map(|r| Choice::new(r.as_str(), rating_label(r))),
+    );
+    choices
 }
 
 /// How long a tile waits before going when the list is cleared, so they go
@@ -1230,9 +1278,7 @@ fn JobTile(job: ImportJob, place: usize) -> Element {
             {face}
             match job.state {
                 JobState::Queued => rsx! {
-                    BinButton {
-                        class: "up-btn up-x",
-                        size: 18,
+                    CrossButton {
                         label: t!("upload-job-cancel"),
                         onclick: move |_| {
                             spawn(async move {
@@ -1317,22 +1363,45 @@ mod tests {
     }
 
     #[test]
-    fn removing_shows_a_bin_and_the_tags_live_in_the_popup() {
+    fn the_popup_has_a_red_bin_and_the_tiles_a_plain_cross() {
         let css = include_str!("../../assets/main.css");
+        // The bin at the popup's foot turns red when pointed at.
         assert!(css.contains(
-            ".bin-x .bin-hover, .bin-x:hover .bin-rest, .bin-x:focus-visible .bin-rest { display: none; }"
+            ".btn.text.bin:hover:not(:disabled), .btn.text.bin:focus-visible { background: var(--danger);"
         ));
-        assert!(
-            css.contains(
-                ".bin-x:hover .bin-hover, .bin-x:focus-visible .bin-hover { display: grid;"
-            )
-        );
+        // The cross on a tile stays a cross, and the picture stays zoomed
+        // while it is pointed at.
+        assert!(!css.contains(".bin-x"));
+        assert!(css.contains(".up-tile:hover .up-open .thumb-media { transform: scale(1.04); }"));
         // The popup comes out of its tile and goes back into it.
         assert!(css.contains(".item-sheet { width: min(820px, 100%); animation: from-tab"));
         assert!(css.contains(".sheet-scrim.closing .item-sheet { animation: to-tab"));
         // The tiles' own little tag field is gone.
         assert!(!css.contains(".up-tags {"));
         assert!(!css.contains(".up-tag {"));
+    }
+
+    #[test]
+    fn the_toggles_are_switches_that_slide() {
+        let css = include_str!("../../assets/main.css");
+        assert!(css.contains(".switch.on .switch-knob { translate: 20px 0;"));
+        assert!(
+            css.contains(
+                ".switch.on { border-color: var(--primary); background: var(--primary); }"
+            )
+        );
+    }
+
+    #[test]
+    fn an_item_can_go_with_the_rest_or_have_its_own_rating() {
+        let choices = rating_choices("Same as the rest (Safe)".into());
+        assert_eq!(choices.len(), Rating::ALL.len() + 1);
+        // The first one gives no rating of its own.
+        assert_eq!(choices.first().map(|c| c.value.as_str()), Some(""));
+        assert_eq!(Rating::parse(""), None);
+        for (choice, rating) in choices.iter().skip(1).zip(Rating::ALL) {
+            assert_eq!(Rating::parse(&choice.value), Some(rating));
+        }
     }
 
     #[test]

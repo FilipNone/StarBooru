@@ -225,6 +225,24 @@ h1, h2 { line-height: 1.2; margin: 0; }
 .icon-btn.danger:hover:not(:disabled) { background: var(--danger-container); color: var(--on-danger-container); }
 .icon-btn:disabled { opacity: 0.45; cursor: default; }
 
+/* An on/off switch, its icon on the knob. Off it sits in the track's start;
+   on, the track fills with the primary colour and the knob slides across. */
+.switch {
+  position: relative; flex: none; width: 52px; height: 32px; padding: 0; border: 2px solid var(--outline);
+  border-radius: 999px; background: var(--surface-3); cursor: pointer;
+  transition: background-color var(--med) var(--ease), border-color var(--med) var(--ease);
+}
+.switch-knob {
+  position: absolute; top: 2px; left: 2px; display: grid; place-items: center; width: 24px; height: 24px;
+  border-radius: 999px; background: var(--on-surface-2); color: var(--surface-3);
+  transition: translate var(--med) var(--ease-spring), scale var(--fast) var(--ease),
+    background-color var(--med) var(--ease), color var(--med) var(--ease);
+}
+.switch:hover .switch-knob { scale: 1.08; }
+.switch:active .switch-knob { scale: 0.92; }
+.switch.on { border-color: var(--primary); background: var(--primary); }
+.switch.on .switch-knob { translate: 20px 0; background: var(--on-primary); color: var(--primary); }
+
 .field { display: grid; gap: 6px; margin-bottom: 16px; }
 .field > span, .field > label:not(.check) { font-size: 14px; font-weight: 600; color: var(--on-surface-2); }
 .field > .field-hint { font-size: 13px; font-weight: 400; }
@@ -1758,6 +1776,12 @@ pre.command {
 .item-source { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--primary); font-size: 14px; }
 .item-source.muted { color: var(--on-surface-2); }
 .item-tags { min-height: 200px; }
+/* At the foot: the link on one side, and well away from the close cross at
+   the top, the bin that takes the item off the list. */
+.item-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 16px; }
+.item-foot .bin { margin-left: auto; }
+.btn.text.bin { color: var(--on-surface-2); }
+.btn.text.bin:hover:not(:disabled), .btn.text.bin:focus-visible { background: var(--danger); color: var(--on-primary); }
 @media (max-width: 600px) {
   .item-body { grid-template-columns: 1fr; gap: 14px; }
   .item-preview { aspect-ratio: 4 / 3; }
@@ -2246,18 +2270,13 @@ html:has(.editor) { overflow-y: hidden; }
 }
 .up-open:focus-visible { outline-offset: -3px; }
 .up-open .thumb-media { transition: transform var(--med) var(--ease); }
-.up-open:hover .thumb-media { transform: scale(1.04); }
+/* On the tile, not just its picture, so it stays zoomed under the cross. */
+.up-tile:hover .up-open .thumb-media { transform: scale(1.04); }
 .up-count {
   position: absolute; left: 6px; bottom: 6px; display: inline-flex; align-items: center; gap: 4px;
   height: 26px; padding: 0 10px 0 8px; border-radius: 999px; pointer-events: none;
   background: var(--primary); color: var(--on-primary); font-size: 12px; font-weight: 600;
 }
-/* A cross that turns into a bin when pointed at, so removing isn't taken
-   for closing. */
-.bin-x .bin-rest, .bin-x .bin-hover { display: grid; place-items: center; }
-.bin-x .bin-hover, .bin-x:hover .bin-rest, .bin-x:focus-visible .bin-rest { display: none; }
-.bin-x:hover .bin-hover, .bin-x:focus-visible .bin-hover { display: grid; animation: pop-in var(--fast) var(--ease-spring); }
-.up-x.bin-x:hover, .up-x.bin-x:focus-visible { background: var(--danger); color: var(--on-primary); }
 .up-progress { position: absolute; left: 8px; right: 8px; bottom: 8px; padding: 6px 10px; border-radius: 999px; background: oklch(0 0 0 / 0.65); }
 .up-progress .transfer { gap: 8px; }
 .up-progress .transfer-text { color: white; font-size: 12px; }
@@ -2265,10 +2284,17 @@ html:has(.editor) { overflow-y: hidden; }
 /* The head's buttons keep together at the far side, as the gallery's do. */
 .page.upload .page-head { justify-content: flex-start; gap: 4px; }
 .page.upload .page-title { margin-right: auto; }
+.up-switches { display: inline-flex; align-items: center; gap: 8px; margin: 0 6px; }
 @media (min-width: 761px) {
   .up-bar .bulk-tags { flex: 3 1 220px; }
 }
 @media (max-width: 760px) {
   .page.upload.sending { padding-bottom: 190px; }
   .up-bar { padding: 8px; }
+  /* Narrower buttons and switches, so the head stays one line on a phone. */
+  .page.upload .page-head .icon-btn { width: 40px; height: 40px; }
+  .up-switches { gap: 6px; margin: 0 2px; }
+  .up-switches .switch { width: 48px; height: 30px; }
+  .up-switches .switch-knob { width: 22px; height: 22px; }
+  .up-switches .switch.on .switch-knob { translate: 18px 0; }
 }
