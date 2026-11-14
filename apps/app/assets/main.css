@@ -1808,11 +1808,11 @@ pre.command {
 .item-glow.on { opacity: 0.85; }
 .app:is([data-saver="on"], [data-effects="lite"]) .item-glow { display: none; }
 /* The picture with what is known of it, then the rating and the tags. */
-.item-about, .item-fields { display: grid; align-content: start; gap: 12px; min-width: 0; }
+.item-about, .item-fields, .item-note { display: grid; align-content: start; gap: 12px; min-width: 0; }
 .item-facts { font-size: 13px; gap: 4px 14px; }
 .item-facts dd { min-width: 0; }
 .item-fields .field { margin: 0; }
-.item-fields .hint, .item-fields .queue-error { margin: 0; }
+.item-fields .hint, .item-note .queue-error { margin: 0; }
 .item-source { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--primary); font-size: 14px; }
 .item-source.muted { color: var(--on-surface-2); }
 .item-tags { min-height: 200px; }
@@ -1825,17 +1825,19 @@ pre.command {
 .app[data-hand="left"] .item-head, .app[data-hand="left"] .item-foot { flex-direction: row-reverse; }
 .app[data-hand="left"] .item-foot .bin { margin-left: 0; margin-right: auto; }
 /* Side by side, the details go under the picture and the rating and tags
-   beside it, the tag box reaching down to the picture's foot. The tags it
-   offers go below that, beside the details, so nothing moves when they
-   come. */
+   beside it, the tag box reaching down to the picture's foot whatever its
+   rows. Below the box, beside the details, is the note (where the tags came
+   from, what is wrong with them), and the tags it offers cover it while there
+   are any, so nothing moves when they come. */
 @media (min-width: 601px) {
-  .item-body { grid-template-rows: auto minmax(66px, 1fr); }
+  .item-body { grid-template-rows: auto minmax(0, 1fr) auto; }
   .item-preview { grid-area: 1 / 1; }
   .item-about { grid-area: 2 / 1; }
+  .item-note { grid-area: 2 / 2; min-height: 66px; }
   .item-fields { grid-area: 1 / 2; display: flex; flex-direction: column; }
   .item-tag-field { flex: 1 0 auto; display: flex; flex-direction: column; position: relative; }
   .item-tag-field .text-box { flex: 1 0 auto; display: flex; flex-direction: column; }
-  .item-tag-field textarea { flex: 1 0 auto; }
+  .item-tag-field textarea { flex: 1 0 auto; height: 96px; }
   .item-tag-field .tag-offers {
     position: absolute; top: calc(100% + 12px); left: 0; right: 0; max-height: 66px; overflow: hidden;
   }
@@ -1843,13 +1845,17 @@ pre.command {
   .app[data-hand="left"] .item-preview { grid-area: 1 / 2; }
   .app[data-hand="left"] .item-about { grid-area: 2 / 2; }
   .app[data-hand="left"] .item-fields { grid-area: 1 / 1; }
+  .app[data-hand="left"] .item-note { grid-area: 2 / 1; }
+  /* The offers, while there are any, take the note's place under the box. */
+  .item-body:has(.tag-offers:not(:empty)) .item-note > * { visibility: hidden; }
   /* A tag box made taller by its grip takes the second row too, so it grows
      past the details instead of pushing them down from under the picture.
-     The second row is flexible, so the first stays the picture's height. The
-     padding keeps room for the offers under the box. */
+     The second row is flexible, so the first stays the picture's height, and
+     the note goes under both. */
   .app .item-body > .item-fields:has(textarea[data-sized]) {
-    grid-row: 1 / 3; align-self: start; padding-bottom: 78px;
+    grid-row: 1 / 3; align-self: start;
   }
+  .app .item-body:has(textarea[data-sized]) > .item-note { grid-row: 3; }
 }
 .btn.text.bin { color: var(--on-surface-2); }
 .btn.text.bin:hover:not(:disabled), .btn.text.bin:focus-visible { background: var(--danger); color: var(--on-primary); }

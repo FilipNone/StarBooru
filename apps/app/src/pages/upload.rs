@@ -1215,21 +1215,6 @@ fn ItemSheet(
                                 dt { {t!("post-type")} } dd { "{kind}" }
                             }
                         }
-                        match &item.remote {
-                            Remote::Asking => rsx! {
-                                p { class: "item-source muted", role: "status",
-                                    span { class: "spinner small", aria_hidden: "true" }
-                                    {t!("upload-looking-up")}
-                                }
-                            },
-                            Remote::Found(post) => rsx! {
-                                p { class: "item-source", role: "status",
-                                    Ico { icon: Icon::Check, size: 18 }
-                                    {t!("upload-tags-from", site = super::boorus::site_name(&post.site))}
-                                }
-                            },
-                            _ => rsx! {},
-                        }
                     }
                     div { class: "item-fields",
                         // Not a `label`: a click on the list would also
@@ -1254,6 +1239,25 @@ fn ItemSheet(
                                 value: item.tags.clone(),
                                 oninput: move |tags: String| activity::set_tags(key, tags),
                             }
+                        }
+                    }
+                    // Under the tag box: where its tags came from, and what is
+                    // wrong with them. Wide, it keeps the room the offers take.
+                    div { class: "item-note",
+                        match &item.remote {
+                            Remote::Asking => rsx! {
+                                p { class: "item-source muted", role: "status",
+                                    span { class: "spinner small", aria_hidden: "true" }
+                                    {t!("upload-looking-up")}
+                                }
+                            },
+                            Remote::Found(post) => rsx! {
+                                p { class: "item-source", role: "status",
+                                    Ico { icon: Icon::Check, size: 18 }
+                                    {t!("upload-tags-from", site = super::boorus::site_name(&post.site))}
+                                }
+                            },
+                            _ => rsx! {},
                         }
                         if let Some(problem) = problem {
                             p { class: "queue-error", role: "alert", "{problem}" }
@@ -1883,17 +1887,25 @@ mod tests {
         let facts = sheet.find(r#"class: "meta item-facts""#).unwrap();
         let fields = sheet.find(r#"class: "item-fields""#).unwrap();
         let rating = sheet.find(r#"t!("rating")"#).unwrap();
+        let note = sheet.find(r#"class: "item-note""#).unwrap();
+        let from = sheet.find(r#""upload-tags-from""#).unwrap();
+        let problem = sheet.find(r#"role: "alert""#).unwrap();
         assert!(side < facts && facts < fields && fields < rating);
+        // Where the tags came from, and their problems, go under the box.
+        assert!(rating < note && note < from && note < problem);
         assert!(sheet.contains("TagBox {"));
         // The category hint is gone from here.
         assert!(!sheet.contains("post-tags-hint"));
         let css = include_str!("../../assets/main.css");
         // Wide, the tag box reaches down to the picture's foot.
-        assert!(css.contains(".item-tag-field textarea { flex: 1 0 auto; }"));
+        // Its rows don't set the column's height, which with a larger font
+        // came out taller than the picture.
+        assert!(css.contains(".item-tag-field textarea { flex: 1 0 auto; height: 96px; }"));
         // A box made taller by hand doesn't push the details down: its
         // column takes both rows, and the second row is the flexible one.
-        assert!(css.contains("grid-template-rows: auto minmax(66px, 1fr);"));
+        assert!(css.contains("grid-template-rows: auto minmax(0, 1fr) auto;"));
         assert!(css.contains(".item-fields:has(textarea[data-sized]) {\n    grid-row: 1 / 3;"));
+        assert!(css.contains(".item-body:has(textarea[data-sized]) > .item-note { grid-row: 3; }"));
     }
 
     #[test]
