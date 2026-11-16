@@ -379,9 +379,11 @@ window.__sbHero ??= {
     // At the side it takes no height from the screen.
     const nav = dock?.width > dock?.height ? dock.top : innerHeight;
     const start = grid.getBoundingClientRect().top + top;
-    // Mostly out of sight: bring it into view.
+    // Mostly out of sight: the gallery moves there as it does to its top.
     if (Math.min(start + height, nav) - Math.max(start, bar) < height / 2) {
-      scrollBy({ top: start - (innerHeight - height) / 2, behavior: "instant" });
+      const by = start - (innerHeight - height) / 2;
+      if (window.__sbTop) window.__sbTop.toward(id, by);
+      else scrollBy({ top: by, behavior: "instant" });
     }
   },
   recent(from) {
@@ -837,15 +839,24 @@ return true;"#
 /// Back to the top of the gallery without scrolling past everything in between.
 /// Copies of the tiles on the screen float over the page, the page jumps to the
 /// top under them, and each copy moves up its column to the place of a tile at
-/// the top while that tile's picture fades in over its own. The grid itself
-/// stays hidden until they have landed, and where there are more tiles on one
-/// side than the other, the extra ones fade. Any wheel, touch, click or key
-/// stops it and shows the grid as it is.
+/// the top while that tile's picture fades in over its own. The grid stays
+/// hidden until the tiles from the top are on the page, and then only those
+/// under a copy are, until they have landed. Where there are more tiles on one
+/// side than the other, the extra ones fade.
+///
+/// Nothing waits for it. The copies are on the page, so the wheel scrolls them
+/// with the tiles they're going to, as it does the tail of the two-finger swipe
+/// that closed a post. A touch, click or key stops it and shows the grid as it
+/// is, and as hidden tiles are only see-through, that touch is on a real tile.
+///
+/// Coming back from a post far from where the gallery was left goes the same
+/// way, to that post's tile (`toward`, from `HERO`'s `home`). The post's picture
+/// flies back into that tile and hides it until it lands, so no copy goes there.
 const TO_TOP: &str = concat!(
     flip_js!(),
     r##"
 window.__sbTop ??= {
-  layer: null, timer: 0, head: [],
+  layer: null, timer: 0, head: [], hidden: [], runs: 0,
   calm() {
     return matchMedia("(prefers-reduced-motion: reduce)").matches
       || !!document.querySelector('.app[data-saver="on"]');
@@ -854,13 +865,19 @@ window.__sbTop ??= {
     window.__sbTop.clear();
   },
   clear() {
+    this.runs++;
     clearTimeout(this.timer);
     this.layer?.remove();
     this.layer = null;
-    for (const el of this.head) el.style.visibility = "";
+    for (const el of this.head) el.style.opacity = "";
     this.head = [];
-    for (const kind of ["wheel", "touchstart", "pointerdown", "keydown"]) removeEventListener(kind, this.cut);
+    this.uncover();
+    for (const kind of ["touchstart", "pointerdown", "keydown"]) removeEventListener(kind, this.cut);
     document.documentElement.classList.remove("sb-to-top");
+  },
+  uncover() {
+    for (const tile of this.hidden) tile.removeAttribute("data-covered");
+    this.hidden = [];
   },
   // The tiles on the screen, in the grid's order.
   seen() {
@@ -868,7 +885,10 @@ window.__sbTop ??= {
     for (const tile of document.querySelectorAll(".masonry .thumb")) {
       const box = tile.getBoundingClientRect();
       if (box.bottom <= 0 || box.top >= innerHeight || !box.width) continue;
-      out.push({ box, img: tile.querySelector(".thumb-media > img"), tint: tile.style.getPropertyValue("--tint") });
+      out.push({
+        tile, box, img: tile.querySelector(".thumb-media > img"), tint: tile.style.getPropertyValue("--tint"),
+        post: Number(tile.querySelector("[data-post]")?.dataset.post),
+      });
     }
     return out;
   },
@@ -894,39 +914,83 @@ window.__sbTop ??= {
     }
     return el;
   },
-  async go() {
+  go() {
+    return this.move(() => scrollTo({ top: 0, behavior: "instant" }), () => this.top(), null);
+  },
+  // `by` pixels down the page, to post `id`'s tile.
+  toward(id, by) {
+    const there = () => !!document.querySelector(`.masonry [data-post="${id}"]`);
+    return this.move(() => scrollBy({ top: by, behavior: "instant" }), () => (there() ? this.seen() : []), id);
+  },
+  // The page jumps with `scroll`. `arrived` gives the tiles on the screen once
+  // the app has put those from there on the page. `hole` is the post whose
+  // picture flies back to its tile.
+  async move(scroll, arrived, hole) {
     this.clear();
+    const run = ++this.runs;
     const jump = () => {
-      scrollTo({ top: 0, behavior: "instant" });
+      scroll();
       window.__sbNear?.check(true);
     };
     const app = document.querySelector(".app");
+    if (!app || this.calm()) return jump();
+    for (const kind of ["touchstart", "pointerdown", "keydown"]) {
+      addEventListener(kind, this.cut, { passive: true });
+    }
+    // A gallery just back on the screen may have put only part of it on the
+    // page yet. The rest comes once the app has heard where the page is.
+    const grid = () => document.querySelector(".masonry")?.getBoundingClientRect();
+    const covered = () => (grid()?.bottom ?? 0) <= innerHeight || this.seen().some((t) => t.box.bottom >= innerHeight);
+    window.__sbNear?.check(true);
+    for (let frame = 0; frame < 10 && !covered(); frame++) {
+      await new Promise(requestAnimationFrame);
+      if (this.runs !== run) return;
+    }
     const from = this.seen();
-    if (!app || !from.length || this.calm()) return jump();
-    const at = (b) => ({ left: `${b.left}px`, top: `${b.top}px`, width: `${b.width}px`, height: `${b.height}px` });
+    if (!from.length) {
+      this.clear();
+      return jump();
+    }
     const layer = document.createElement("div");
     layer.className = "to-top-layer";
     layer.setAttribute("aria-hidden", "true");
-    const olds = from.map((item) => {
-      const el = this.copy(item, "to-top-tile");
-      Object.assign(el.style, at(item.box));
-      layer.append(el);
-      return el;
-    });
-    app.append(layer);
+    // Under a picture already flying back to its tile.
+    const ghost = window.__sbHero?.ghost;
+    if (ghost?.parentNode === app) app.insertBefore(layer, ghost);
+    else app.append(layer);
+    // Back from a post, the gallery fades in as the picture lifts off
+    // (`sb-hero-back`), and its copies with it.
+    if (hole !== null) layer.animate([{ opacity: 0 }, {}], { duration: 250, easing: "cubic-bezier(0.2, 0, 0, 1)" });
     this.layer = layer;
     document.documentElement.classList.add("sb-to-top");
     this.timer = setTimeout(() => this.clear(), 3000);
-    for (const kind of ["wheel", "touchstart", "pointerdown", "keydown"]) {
-      addEventListener(kind, this.cut, { passive: true });
-    }
+    // The title and the menus above the grid come down into their places later.
+    this.head = [...document.querySelectorAll(".page.gallery > :not(.masonry-box)")];
+    for (const el of this.head) el.style.opacity = "0";
     jump();
-    // The top of the grid comes once the app has heard where the page is.
+    // The layer is as tall as the page and scrolls with it. A box on the
+    // screen is at this place in it, for as long as the page stays where it
+    // was when the layer's own box (`o`) was measured.
+    layer.style.height = `${document.documentElement.scrollHeight}px`;
+    const inLayer = (o, b) => ({ left: b.left - o.left, top: b.top - o.top, width: b.width, height: b.height });
+    const at = (b) => ({ left: `${b.left}px`, top: `${b.top}px`, width: `${b.width}px`, height: `${b.height}px` });
+    // Where they were on the screen before the jump.
+    const jumped = layer.getBoundingClientRect();
+    const olds = from.map((item) => {
+      const el = this.copy(item, "to-top-tile");
+      item.at = inLayer(jumped, item.box);
+      Object.assign(el.style, at(item.at));
+      layer.append(el);
+      return el;
+    });
+    // The tiles from there come once the app has heard where the page is, the
+    // first of them often a frame or two before the rest of the screen.
     let to = [];
-    for (let frame = 0; frame < 30 && !to.length; frame++) {
+    for (let frame = 0; frame < 30; frame++) {
       await new Promise(requestAnimationFrame);
       if (this.layer !== layer) return;
-      to = this.top();
+      to = arrived();
+      if (to.length && covered()) break;
     }
     if (!to.length) to = this.seen();
     // Their pictures decoded, or their colours if that takes too long.
@@ -936,6 +1000,8 @@ window.__sbTop ??= {
     ]);
     if (this.layer !== layer) return;
     to = this.seen();
+    const now = layer.getBoundingClientRect();
+    for (const goal of to) goal.at = inLayer(now, goal.box);
     const ease = "cubic-bezier(0.2, 0, 0, 1)";
     const time = 560;
     const radius = parseFloat(getComputedStyle(olds[0]).borderTopLeftRadius) || 0;
@@ -956,6 +1022,8 @@ window.__sbTop ??= {
     const tops = columns(to);
     const taken = new Set();
     const moves = [];
+    // The tile a picture is flying back to.
+    const hollow = hole === null ? null : to.find((t) => t.post === hole) ?? null;
     for (const [key, column] of columns(from.map((item, i) => ({ ...item, el: olds[i] })))) {
       column.forEach((item, rank) => {
         const goal = tops.get(key)?.[rank];
@@ -966,26 +1034,35 @@ window.__sbTop ??= {
           return;
         }
         taken.add(goal);
-        const next = this.copy(goal, "to-top-next");
-        el.append(next);
+        const next = goal === hollow ? null : this.copy(goal, "to-top-next");
+        if (next) el.append(next);
         // On the compositor: the page lays out the grid under it meanwhile.
-        moves.push(window.__sbFlip(el, item.box, goal.box,
+        moves.push(window.__sbFlip(el, item.at, goal.at,
           { duration: time, delay: wave(goal.box), easing: ease, fill: "both" }, radius, radius));
-        next.animate([{ opacity: 0 }, { opacity: 1 }],
-          { duration: time * 0.7, delay: wave(goal.box) + time * 0.15, easing: "ease-in-out", fill: "both" });
+        if (next) {
+          next.animate([{ opacity: 0 }, { opacity: 1 }],
+            { duration: time * 0.7, delay: wave(goal.box) + time * 0.15, easing: "ease-in-out", fill: "both" });
+        } else {
+          // The picture flying back lands here, so this copy fades on its way.
+          el.animate([{ opacity: 1 }, { opacity: 0 }],
+            { duration: time * 0.7, delay: wave(goal.box), easing: ease, fill: "both" });
+        }
       });
     }
-    for (const goal of to.filter((t) => !taken.has(t))) {
+    for (const goal of to.filter((t) => !taken.has(t) && t !== hollow)) {
       const el = this.copy(goal, "to-top-tile");
-      Object.assign(el.style, at(goal.box));
+      Object.assign(el.style, at(goal.at));
       layer.append(el);
       moves.push(el.animate([{ opacity: 0, transform: "scale(0.9)" }, { opacity: 1, transform: "none" }],
         { duration: time, delay: wave(goal.box) + time / 3, easing: ease, fill: "both" }));
     }
-    // The title and the menus above the grid come down into their places.
-    this.head = [...document.querySelectorAll(".page.gallery > :not(.masonry-box)")];
+    // From here only the tiles under a copy are hidden, so a scroll shows the
+    // grid around them.
+    this.hidden = to.filter((t) => t !== hollow).map((t) => t.tile);
+    for (const tile of this.hidden) tile.setAttribute("data-covered", "");
+    document.documentElement.classList.remove("sb-to-top");
     for (const el of this.head) {
-      el.style.visibility = "visible";
+      el.style.opacity = "";
       el.animate([{ opacity: 0, transform: "translateY(-12px)" }, { opacity: 1, transform: "none" }],
         { duration: time, delay: time / 3, easing: ease, fill: "backwards" });
     }
@@ -993,7 +1070,7 @@ window.__sbTop ??= {
     if (this.layer !== layer) return;
     // The copies end where the tiles are, so the grid shows under them a
     // frame before they go.
-    document.documentElement.classList.remove("sb-to-top");
+    this.uncover();
     await new Promise(requestAnimationFrame);
     if (this.layer === layer) this.clear();
   },
@@ -1018,9 +1095,10 @@ pub fn arrive(id: i64) {
     document::eval(&format!("{HERO}\nwindow.__sbHero.arrive({id});"));
 }
 
-/// The viewer is going away.
+/// The viewer is going away. The gallery it may go back to can need
+/// `__sbTop` to get to the picture's tile (`HERO`'s `home`).
 pub fn leave() {
-    document::eval(&format!("{HERO}\nwindow.__sbHero.leave();"));
+    document::eval(&format!("{HERO}\n{TO_TOP}\nwindow.__sbHero.leave();"));
 }
 
 #[cfg(test)]
@@ -1047,7 +1125,7 @@ mod tests {
         let (fly, _) = fly.split_once("\n  },").unwrap();
         assert!(fly.contains("window.__sbFlip(ghost, start, to, timing, r0, rounded)"));
         assert!(!fly.contains("Object.assign(ghost.style"));
-        assert!(TO_TOP.contains("moves.push(window.__sbFlip(el, item.box, goal.box,"));
+        assert!(TO_TOP.contains("moves.push(window.__sbFlip(el, item.at, goal.at,"));
         assert!(!TO_TOP.contains("el.animate([at("));
         // Each frame is a transform; only the corners are the page's.
         let (_, frames) = flip
@@ -1106,9 +1184,14 @@ mod tests {
     #[test]
     fn tiles_going_to_the_top_stay_under_the_bars() {
         let css = include_str!("../assets/main.css");
-        assert!(css.contains(".to-top-layer { position: fixed; inset: 0; z-index: 1;"));
+        assert!(css.contains(
+            ".to-top-layer { position: absolute; left: 0; top: 0; width: 100%; z-index: 1;"
+        ));
         assert!(TO_TOP.contains(r#"const app = document.querySelector(".app");"#));
         assert!(TO_TOP.contains("app.append(layer);"));
+        // A picture flying back to its tile is put up before the copies when
+        // it was swiped away, and they go under it.
+        assert!(TO_TOP.contains("if (ghost?.parentNode === app) app.insertBefore(layer, ghost);"));
     }
 
     #[test]
@@ -1122,19 +1205,45 @@ mod tests {
     #[test]
     fn going_to_the_top_jumps_while_motion_is_calmed() {
         assert!(TO_TOP.contains(r#"matchMedia("(prefers-reduced-motion: reduce)").matches"#));
-        assert!(TO_TOP.contains("if (!app || !from.length || this.calm()) return jump();"));
+        assert!(TO_TOP.contains("if (!app || this.calm()) return jump();"));
+    }
+
+    #[test]
+    fn the_copies_wait_for_the_screen_to_be_on_the_page() {
+        // Regression: back from a post far away on a phone, the gallery had put
+        // only the top of the screen on the page when the copies were made, and
+        // the rest of the screen was empty until the tiles moved.
+        let (_, go) = TO_TOP
+            .split_once("  async move(scroll, arrived, hole) {")
+            .unwrap();
+        let wait = go
+            .find("for (let frame = 0; frame < 10 && !covered(); frame++) {")
+            .unwrap();
+        assert!(wait < go.find("const from = this.seen();").unwrap());
+        assert!(go.contains("if (this.runs !== run) return;"));
+        // And for the screen it goes to: the tile it is going to can be on the
+        // page before the rest, and the copies with nowhere to go faded.
+        assert!(go.contains("if (to.length && covered()) break;"));
+        // Anything that stops the move stops the wait too.
+        let (_, clear) = TO_TOP.split_once("clear() {").unwrap();
+        assert!(clear.trim_start().starts_with("this.runs++;"));
+        assert!(go.find(r#"addEventListener(kind, this.cut"#).unwrap() < wait);
     }
 
     #[test]
     fn going_to_the_top_always_ends() {
-        // A wheel, touch, click or key stops it, and if nothing does and the
-        // tiles never come, a timer does. Each way shows the grid again.
+        // A touch, click or key stops it, and if nothing does and the tiles
+        // never come, a timer does. Each way shows the grid again.
         assert!(TO_TOP.contains("this.timer = setTimeout(() => this.clear(), 3000);"));
         let (_, clear) = TO_TOP.split_once("clear() {").unwrap();
         let (clear, _) = clear.split_once("\n  },").unwrap();
         assert!(clear.contains(r#"classList.remove("sb-to-top")"#));
+        assert!(clear.contains("this.uncover();"));
+        assert!(clear.contains(r#"el.style.opacity = """#));
         assert!(clear.contains("removeEventListener(kind, this.cut)"));
         assert!(clear.contains("this.layer?.remove();"));
+        let (_, uncover) = TO_TOP.split_once("uncover() {").unwrap();
+        assert!(uncover.contains(r#"tile.removeAttribute("data-covered")"#));
         assert!(include_str!("pages/gallery.rs").contains("motion::stop_to_top();"));
     }
 
@@ -1142,13 +1251,71 @@ mod tests {
     fn the_grid_shows_again_before_the_copies_go() {
         // The copies end where the tiles are; taking them away first would
         // leave the page empty for a frame.
-        let shown = TO_TOP.rfind(r#"classList.remove("sb-to-top")"#).unwrap();
+        let shown = TO_TOP.rfind("this.uncover();").unwrap();
         let gone = TO_TOP
             .rfind("if (this.layer === layer) this.clear();")
             .unwrap();
         assert!(shown < gone);
         let css = include_str!("../assets/main.css");
-        assert!(css.contains("html.sb-to-top .page.gallery { visibility: hidden; }"));
+        assert!(css.contains("html.sb-to-top .masonry-box { opacity: 0; }"));
+        assert!(css.contains(".masonry .thumb[data-covered] { opacity: 0 !important; }"));
+    }
+
+    #[test]
+    fn a_post_far_from_where_the_gallery_was_brings_it_there_like_the_top() {
+        // Regression: coming back from a post several screens away, the gallery
+        // jumped there in one frame while going to the top had tiles move.
+        let (_, home) = HERO.split_once("  home(id, top, height) {").unwrap();
+        let (home, _) = home.split_once("\n  },").unwrap();
+        assert!(home.contains("window.__sbTop.toward(id, by)"));
+        // Without `__sbTop` it jumps, as before.
+        assert!(home.contains(r#"scrollBy({ top: by, behavior: "instant" })"#));
+        // `__sbTop` is there before the gallery is.
+        let source = include_str!("motion.rs");
+        let (_, leave) = source.split_once("pub fn leave() {").unwrap();
+        let (leave, _) = leave.split_once("\n}").unwrap();
+        assert!(leave.contains(r#""{HERO}\n{TO_TOP}\nwindow.__sbHero.leave();""#));
+        // The same move as to the top, to the tile's place.
+        let (_, toward) = TO_TOP.split_once("  toward(id, by) {").unwrap();
+        let (toward, _) = toward.split_once("\n  },").unwrap();
+        assert!(toward.contains("return this.move("));
+        assert!(toward.contains(r#"scrollBy({ top: by, behavior: "instant" })"#));
+        // The post's own picture flies into its tile: no copy goes there, the
+        // one bound for it fades on the way, and the tile is left to `HERO`.
+        assert!(
+            TO_TOP.contains(
+                r#"const next = goal === hollow ? null : this.copy(goal, "to-top-next");"#
+            )
+        );
+        assert!(TO_TOP.contains("to.filter((t) => !taken.has(t) && t !== hollow)"));
+        assert!(
+            TO_TOP.contains("this.hidden = to.filter((t) => t !== hollow).map((t) => t.tile);")
+        );
+    }
+
+    #[test]
+    fn nothing_waits_for_the_gallery_to_move() {
+        // Regression: the grid was `visibility: hidden` while the tiles moved,
+        // so the touch that stopped the move landed on nothing, and the tail of
+        // the two-finger swipe that closed a post stopped it at once.
+        let (_, go) = TO_TOP
+            .split_once("  async move(scroll, arrived, hole) {")
+            .unwrap();
+        assert!(go.contains(r#"for (const kind of ["touchstart", "pointerdown", "keydown"])"#));
+        assert!(!TO_TOP.contains(r#""wheel""#));
+        // The copies are on the page and scroll with it.
+        assert!(go.contains("layer.style.height = `${document.documentElement.scrollHeight}px`;"));
+        let css = include_str!("../assets/main.css");
+        let layer = rule(".to-top-layer");
+        assert!(layer.contains("position: absolute") && !layer.contains("fixed"));
+        assert!(rule(".to-top-tile").contains("position: absolute"));
+        // Only the tiles under a copy are hidden while it moves, and only by
+        // opacity: a touch still finds them.
+        assert!(!css.contains("html.sb-to-top .page.gallery"));
+        let covered = go.find(r#"tile.setAttribute("data-covered", "")"#).unwrap();
+        let shown = go.find(r#"classList.remove("sb-to-top")"#).unwrap();
+        assert!(covered < shown);
+        assert!(!go.contains("visibility"));
     }
 
     #[test]

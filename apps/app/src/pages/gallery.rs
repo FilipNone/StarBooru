@@ -398,8 +398,13 @@ pub(super) const WATCH_NEAR_OFF: &str = "window.__sbNear?.stop(); window.__sbNea
 /// Puts a remembered tile back where it was on the screen, or failing that,
 /// the scroll position. The list may land a frame after this. It works from the
 /// layout, as the tile itself isn't on the page until the screen gets near it.
+///
+/// On the web, the router also puts the page back where it was on Back and
+/// Forward, in the frame after `popstate`, and that would undo this and the
+/// way to a post far from here. So this waits until it has (`index.html`).
 const JUMP_TO_SPOT: &str = r#"
 const [top, offset, y, home] = await dioxus.recv();
+if (window.__sbPop?.pending) await new Promise(requestAnimationFrame);
 const go = tries => {
   const grid = document.querySelector(".masonry")?.getBoundingClientRect();
   const anchored = grid && y >= 1 && top != null;
@@ -2017,6 +2022,27 @@ mod tests {
         let (_, stop) = WATCH_SCROLL.split_once("stop() {").unwrap();
         assert!(stop.contains("rest();"));
         assert!(WATCH_SCROLL.contains(r#"root.classList.remove("sb-scrolling")"#));
+    }
+
+    #[test]
+    fn going_back_to_the_gallery_comes_after_the_routers_own_scroll() {
+        // Regression: on the web, Back to the gallery put the remembered tile on
+        // the screen and the way to the post's tile after it, and the router
+        // then scrolled the page back to where it had been a frame later.
+        // The router's listener is added when the app starts, and the gallery
+        // is drawn right after it runs: this one has to be on the page before.
+        let page = include_str!("../../index.html");
+        let (script, _) = page.split_once("</script>").unwrap();
+        assert!(script.contains(r#"addEventListener("popstate", () => {"#));
+        assert!(script.contains("window.__sbPop.pending = true;"));
+        assert!(
+            script.contains("requestAnimationFrame(() => { window.__sbPop.pending = false; });")
+        );
+        assert!(page.find("</script>").unwrap() < page.find("{style_include}").unwrap());
+        let wait = JUMP_TO_SPOT
+            .find("if (window.__sbPop?.pending) await new Promise(requestAnimationFrame);")
+            .unwrap();
+        assert!(wait < JUMP_TO_SPOT.find("const go = tries => {").unwrap());
     }
 
     #[test]

@@ -787,12 +787,16 @@ html.sb-scrolling .thumb img { filter: none; transition: none; }
   .to-top { left: auto; right: 12px; bottom: calc(max(12px, env(safe-area-inset-bottom)) + 72px); }
   .app[data-hand="left"] .to-top { left: 12px; right: auto; }
 }
-/* While the tiles move back to the top (motion.rs), copies of them stand in
-   for the grid, under the bars like the picture that opens a post. */
-html.sb-to-top .page.gallery { visibility: hidden; }
-.to-top-layer { position: fixed; inset: 0; z-index: 1; overflow: hidden; pointer-events: none; contain: strict; }
+/* While the tiles move back to the top or to a post (motion.rs), copies of
+   them stand in for the grid, under the bars like the picture that opens a
+   post. The layer they're on is as tall as the page and scrolls with it. The
+   tiles they cover are see-through rather than hidden, so a touch that stops
+   the move lands on them. `!important` wins over a tile's entrance. */
+html.sb-to-top .masonry-box { opacity: 0; }
+.masonry .thumb[data-covered] { opacity: 0 !important; }
+.to-top-layer { position: absolute; left: 0; top: 0; width: 100%; z-index: 1; overflow: clip; pointer-events: none; contain: strict; }
 .to-top-tile {
-  position: fixed; overflow: hidden; border-radius: var(--tile-radius); background: var(--tint, var(--surface-2));
+  position: absolute; overflow: hidden; border-radius: var(--tile-radius); background: var(--tint, var(--surface-2));
 }
 .to-top-next { position: absolute; inset: 0; background: var(--tint, var(--surface-2)); }
 .to-top-tile img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }

@@ -51,6 +51,15 @@
         if (prefs.theme === "dark" || prefs.theme === "light") boot.dataset.theme = prefs.theme;
         if (Number.isFinite(prefs.accent_hue)) boot.style.setProperty("--h", prefs.accent_hue);
       } catch {}
+      // On Back and Forward the web router puts the scroll back a frame after
+      // `popstate`, and the gallery's own spot has to come after that
+      // (gallery.rs, `JUMP_TO_SPOT`). The gallery is drawn right after the
+      // router's listener, so this one has to be added before the router's.
+      window.__sbPop = { pending: false };
+      addEventListener("popstate", () => {
+        window.__sbPop.pending = true;
+        requestAnimationFrame(() => { window.__sbPop.pending = false; });
+      });
     </script>
     <!-- The stylesheet, which `dx` links here. After the loading screen, so
          the screen doesn't wait for it. -->
