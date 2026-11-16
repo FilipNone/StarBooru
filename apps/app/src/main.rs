@@ -27,6 +27,7 @@ mod power;
 mod route;
 mod store;
 mod system;
+mod taps;
 mod util;
 mod zoom;
 
@@ -78,6 +79,7 @@ fn App() -> Element {
     cache::register();
     bridge::install();
     grip::install();
+    taps::install();
     power::watch();
     pace::watch();
     system::watch();
