@@ -54,17 +54,22 @@ window.__sbWake = () => {
 };
 for (const type of REST_ON) window.addEventListener(type, window.__sbWake, { passive: true });
 if (window.__sbWheel) window.removeEventListener('wheel', window.__sbWheel, true);
-let quiet = 0;
+const turns = {};
 let scrolls = false;
 let swipes = false;
 window.__sbWheel = (e) => {
   const stage = e.target.closest?.('.stage');
   if (!stage) return;
-  if (e.timeStamp > quiet) {
+  // A swipe that has turned the page, or let go short of it, doesn't hold up
+  // the next one while the last one's tail runs out (gesture.rs, `WHEEL_TURNS`).
+  // A scroll stays one to its end, so that reaching the top on its way up
+  // doesn't turn it into a pull that closes the post.
+  if (window.__sbTurns(turns, e, swipes && !!window.__sbStage?.rolled())) {
     swipes = !!window.__sbStage?.rollStarts(e, stage);
     scrolls = !swipes && !e.ctrlKey && !stage.matches('.full, .zoomed') && (e.deltaY > 0 || scrollY > 0);
+    // What's left is the zoom's, which a picture's entrance would hide.
+    if (!swipes && !scrolls) window.__sbStage?.arrive(stage);
   }
-  quiet = e.timeStamp + 300;
   if (swipes) {
     e.stopPropagation();
     window.__sbStage?.rolls(e, stage);
@@ -79,6 +84,10 @@ window.__sbKeys = (e) => {
   const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
   if (!keys.includes(key)) return;
   e.preventDefault();
+  if ('+=-0'.includes(key)) {
+    const stage = document.querySelector('.stage');
+    if (stage) window.__sbStage?.arrive(stage);
+  }
   dioxus.send(key);
 };
 window.addEventListener('keydown', window.__sbKeys);
@@ -101,7 +110,10 @@ document.addEventListener('fullscreenchange', window.__sbFs);
 /// - a tap on the picture: `tap`, for fullscreen. It waits to be sure it isn't
 ///   the first of a double tap, which zooms.
 ///
-/// Anything else and it goes back. Where it is lives in `--swipe-x`,
+/// Anything else and it goes back. A finger that comes down on it on its way
+/// back stops it there and carries on from there, and one on a turn still
+/// waiting for the next picture brings that picture in at once. Where it is
+/// lives in `--swipe-x`,
 /// `--swipe-y` and `--swipe-s` (its size) on the post's layout, with `--pull`
 /// for how far the rest has faded. `data-swipe` says how it moves: with the
 /// finger (`drag`), back (`back`), away (`gone`), or between the page and
@@ -270,52 +282,80 @@ window.__sbStage = (() => {
     return last[0] > first[0] ? (last[i] - first[i]) / (last[0] - first[0]) : 0;
   };
 
+  // A picture still making its entrance has its `transform` taken by it, so a
+  // zoom wouldn't show until it ends: it ends now.
+  const arrive = (stage) => {
+    for (const run of media(stage)?.getAnimations() ?? []) {
+      if (run instanceof CSSAnimation) run.finish();
+    }
+  };
   const down = (e) => {
     const stage = e.target.closest?.('.stage');
     if (!stage) return;
     // A second finger: a pinch, for the zoom.
     if (p) {
-      if (p.axis) home(p.stage);
+      if (p.axis || p.caught) home(p.stage);
       p = null;
+      arrive(stage);
       return;
     }
+    // The zoom's own buttons.
+    if (e.target.closest('.stage-tools')) arrive(stage);
     if (e.button !== 0 || stage.matches('.zoomed')) return;
     if (e.target.closest('button, a, input, textarea, select, .panel-block')) return;
+    // The next post's picture is still waiting to come in: it comes now, as
+    // this press is on it and not on the one going.
+    if (stage.querySelector(':scope > [data-turn="wait"]')) window.__sbTurn?.end();
     const m = media(stage);
+    const r = m?.getBoundingClientRect();
     // A video's own controls are along its bottom.
-    if (m?.tagName === 'VIDEO') {
-      const r = m.getBoundingClientRect();
-      if (e.clientY > r.bottom - 64 && e.clientY <= r.bottom) return;
-    }
+    if (m?.tagName === 'VIDEO' && e.clientY > r.bottom - 64 && e.clientY <= r.bottom) return;
     const second = !!tapping;
     clearTimeout(tapping);
     tapping = 0;
+    if (second) arrive(stage);
+    // On its way back from a swipe, it stops under the finger and goes on from
+    // there. The offset it shows is what's left of a drag, less at an end.
+    let bx = 0, by = 0;
+    const h = host(stage);
+    const caught = h.dataset.swipe === 'back' && !!m;
+    if (caught) {
+      const [x, y] = getComputedStyle(m).translate.split(' ').map((v) => parseFloat(v) || 0);
+      by = y ?? 0;
+      bx = atEnd(stage, (x ?? 0) < 0) ? (x ?? 0) * 4 : x ?? 0;
+      show(stage, resist(stage, bx), by, 'drag');
+    }
+    // A picture flying in is hidden, so a tap on it finds the stage.
+    const inside = !!r && e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
     p = {
       id: e.pointerId, stage, x0: e.clientX, y0: e.clientY, t0: e.timeStamp, axis: null,
-      dx: 0, dy: 0, trail: [[e.timeStamp, e.clientX, e.clientY]],
-      onPicture: m?.tagName === 'IMG' && e.target === m, second,
+      dx: bx, dy: by, bx, by, caught, trail: [[e.timeStamp, e.clientX, e.clientY]],
+      onPicture: m?.tagName === 'IMG' && (e.target === m || (e.target === stage && inside)), second,
     };
   };
   const move = (e) => {
     if (!p || e.pointerId !== p.id) return;
     const { stage } = p;
-    const dx = e.clientX - p.x0, dy = e.clientY - p.y0;
+    // The finger's way, and where that puts the picture.
+    const fx = e.clientX - p.x0, fy = e.clientY - p.y0;
     p.trail.push([e.timeStamp, e.clientX, e.clientY]);
     if (p.trail.length > 8) p.trail.shift();
     if (!p.axis) {
-      if (Math.hypot(dx, dy) < 10) return;
+      if (Math.hypot(fx, fy) < 10) return;
       p.axis = stage.matches('.zoomed') ? null
-        : Math.abs(dx) > Math.abs(dy) ? 'x'
-        : dy > 0 && pullable(stage) ? 'y' : null;
+        : Math.abs(fx) > Math.abs(fy) ? 'x'
+        : fy > 0 && pullable(stage) ? 'y' : null;
       if (!p.axis) {
+        if (p.caught) home(stage);
         p = null;
         return;
       }
     }
+    const dx = p.bx + fx, dy = p.by + fy;
     p.dx = dx;
     p.dy = dy;
-    if (p.axis === 'x') show(stage, resist(stage, dx), 0, 'drag');
-    else show(stage, dx * 0.5, dy > 0 ? dy : dy * 0.2, 'drag');
+    if (p.axis === 'x') show(stage, resist(stage, dx), p.by, 'drag');
+    else show(stage, p.bx + fx * 0.5, dy > 0 ? dy : dy * 0.2, 'drag');
   };
   const up = (e) => {
     if (!p || e.pointerId !== p.id) return;
@@ -323,6 +363,7 @@ window.__sbStage = (() => {
     p = null;
     const { stage } = q;
     if (!q.axis) {
+      if (q.caught) home(stage);
       if (q.second || !q.onPicture || e.timeStamp - q.t0 > 400 || stage.matches('.full, .zoomed')) return;
       tapping = setTimeout(() => {
         tapping = 0;
@@ -344,12 +385,13 @@ window.__sbStage = (() => {
   };
   const lost = (e) => {
     if (!p || e.pointerId !== p.id) return;
-    if (p.axis) home(p.stage);
+    if (p.axis || p.caught) home(p.stage);
     p = null;
   };
 
   const self = {
     lift,
+    arrive,
     // The start of a wheel gesture: is it two fingers swiping on a touchpad?
     // A mouse wheel's notch is bigger, or counted in lines.
     rollStarts(e, stage) {
@@ -384,9 +426,16 @@ window.__sbStage = (() => {
         }
         show(stage, 0, r.d, 'drag');
       }
+      // The fingers stopped short: back it goes, and that swipe is over.
       r.timer = setTimeout(() => {
-        if (!r.done) home(stage);
+        if (r.done) return;
+        r.done = true;
+        home(stage);
       }, 160);
+    },
+    // The swipe on the wheel is over, done or let go.
+    rolled() {
+      return !roll || !!roll.done;
     },
     // For the turn to the next post: where the picture was let go, with the
     // stage made ready for the next one.
@@ -486,6 +535,8 @@ pub fn PostView(id: i64, q: String) -> Element {
     let mut editing = use_signal(|| false);
     let mut sharing = use_signal(|| false);
     let mut media_editing = use_signal(|| false);
+    // The media editor is fading out, and the stage under it takes gestures.
+    let mut editor_leaving = use_signal(|| false);
     let mut tag_text = use_signal(String::new);
     // The tag text as of the last finished word, for "did you mean".
     let mut tag_check = use_signal(String::new);
@@ -767,11 +818,15 @@ pub fn PostView(id: i64, q: String) -> Element {
     };
 
     use_future(move || async move {
-        let mut keys = document::eval(&format!("{KEY_LISTENER}\n{STAGE}"));
+        let mut keys = document::eval(&format!(
+            "{}\n{KEY_LISTENER}\n{STAGE}",
+            crate::gesture::WHEEL_TURNS
+        ));
         while let Ok(key) = keys.recv::<String>().await {
-            // The media editor covers the stage; the tag editor only the panel,
-            // so swipes still work while tags are being edited.
-            if media_editing() {
+            // The media editor covers the stage until it starts to fade; the tag
+            // editor only the panel, so swipes still work while tags are being
+            // edited.
+            if media_editing() && !editor_leaving() {
                 continue;
             }
             match key.as_str() {
@@ -959,7 +1014,10 @@ pub fn PostView(id: i64, q: String) -> Element {
                                 span { class: "bar-label", {t!("share-button")} }
                             }
                             if let Some(kind) = editable {
-                                button { class: "icon-btn", aria_label: t!("editor-open"), title: t!("editor-open"), onclick: move |_| media_editing.set(true),
+                                button { class: "icon-btn", aria_label: t!("editor-open"), title: t!("editor-open"), onclick: move |_| {
+                                        editor_leaving.set(false);
+                                        media_editing.set(true);
+                                    },
                                     Ico { icon: if kind == EditKind::Video { Icon::Cut } else { Icon::Crop } }
                                     span { class: "bar-label",
                                         if kind == EditKind::Video { {t!("editor-video-short")} } else { {t!("editor-image-short")} }
@@ -1104,6 +1162,7 @@ pub fn PostView(id: i64, q: String) -> Element {
                     post: p.clone(),
                     kind,
                     file_url: file_url.clone(),
+                    onleave: move |()| editor_leaving.set(true),
                     onclose: move |()| media_editing.set(false),
                     onsaved: move |saved: Saved| {
                         media_editing.set(false);
@@ -2094,9 +2153,11 @@ fn Stage(
 
     let z = zoom();
     let mut class = String::from("stage");
+    // Only `zoomed` holds gestures for zoom and pan (`STAGE`, bridge.js).
     for (on, name) in [
         (full(), " full"),
-        (z.is_zoomed() || shrinking(), " zoomed"),
+        (z.is_zoomed(), " zoomed"),
+        (!z.is_zoomed() && shrinking(), " shrinking"),
         (dragging(), " dragging"),
     ] {
         if on {
@@ -2465,7 +2526,9 @@ mod tests {
     #[test]
     fn the_picture_keeps_its_corners_when_zoomed() {
         // The transform scales the radius too, so it's divided back down.
-        assert!(rule(".stage.zoomed img").contains("calc(var(--r) / var(--z, 1))"));
+        assert!(
+            rule(".stage:is(.zoomed, .shrinking) img").contains("calc(var(--r) / var(--z, 1))")
+        );
         assert!(Zoom::default().css().contains("--z: 1.000"));
     }
 
@@ -2539,6 +2602,84 @@ mod tests {
             .unwrap();
         assert!(SHRINK_MS > fast);
         assert!(rule(".stage.zoomed").contains("overflow: hidden"));
+        assert!(rule(".stage.shrinking").contains("overflow: hidden"));
+    }
+
+    #[test]
+    fn a_picture_on_its_way_back_stops_under_the_finger() {
+        // Regression: a drag that began while the picture went back started
+        // from its place, and it jumped there from where it showed.
+        let (_, down) = STAGE.split_once("  const down = (e) => {").unwrap();
+        let (down, _) = down.split_once("\n  };").unwrap();
+        assert!(down.contains("const caught = h.dataset.swipe === 'back' && !!m;"));
+        assert!(down.contains("getComputedStyle(m).translate"));
+        assert!(down.contains("show(stage, resist(stage, bx), by, 'drag');"));
+        // Let go without a swipe, it goes on back.
+        let (_, up) = STAGE.split_once("  const up = (e) => {").unwrap();
+        assert!(up.contains("if (q.caught) home(stage);"));
+        let (_, lost) = STAGE.split_once("  const lost = (e) => {").unwrap();
+        assert!(lost.contains("if (p.axis || p.caught) home(p.stage);"));
+        // The next picture waiting to come in comes for a press on the stage.
+        assert!(down.contains(
+            r#"if (stage.querySelector(':scope > [data-turn="wait"]')) window.__sbTurn?.end();"#
+        ));
+    }
+
+    #[test]
+    fn a_tap_on_a_picture_still_flying_in_is_on_it() {
+        // Regression: the picture is hidden while its copy flies in, so a tap
+        // found the stage, and fullscreen didn't come.
+        assert!(STAGE.contains(
+            "onPicture: m?.tagName === 'IMG' && (e.target === m || (e.target === stage && inside)), second,"
+        ));
+    }
+
+    #[test]
+    fn a_zoom_doesnt_wait_for_the_pictures_entrance() {
+        // Regression: the entrance animates `transform`, which the zoom sets, so
+        // a pinch, a double tap, the wheel or a key showed nothing until it ended.
+        let (_, arrive) = STAGE.split_once("  const arrive = (stage) => {").unwrap();
+        let (arrive, _) = arrive.split_once("\n  };").unwrap();
+        assert!(arrive.contains("if (run instanceof CSSAnimation) run.finish();"));
+        let (_, down) = STAGE.split_once("  const down = (e) => {").unwrap();
+        let (down, _) = down.split_once("\n  };").unwrap();
+        // A second finger, a second tap, and the zoom's buttons.
+        assert!(down.contains("p = null;\n      arrive(stage);"));
+        assert!(down.contains("if (second) arrive(stage);"));
+        assert!(down.contains("if (e.target.closest('.stage-tools')) arrive(stage);"));
+        assert!(KEY_LISTENER.contains("if (!swipes && !scrolls) window.__sbStage?.arrive(stage);"));
+        assert!(KEY_LISTENER.contains("if ('+=-0'.includes(key)) {"));
+    }
+
+    #[test]
+    fn the_media_editor_fading_out_lets_the_viewer_be_used() {
+        // Regression: for its 180 ms fade the editor still covered the window,
+        // held the page still and kept the viewer's gestures from it.
+        let css = include_str!("../../assets/main.css");
+        assert!(rule(".editor.closing").contains("pointer-events: none"));
+        assert!(css.contains("html:has(.editor:not(.closing)) { overflow-y: hidden; }"));
+        let source = include_str!("post.rs");
+        assert!(source.contains("if media_editing() && !editor_leaving() {"));
+        assert!(source.contains("onleave: move |()| editor_leaving.set(true),"));
+        let editor = include_str!("editor.rs");
+        let (_, close) = editor.split_once("let mut close = move || {").unwrap();
+        let (close, _) = close.split_once("\n    };").unwrap();
+        assert!(close.find("onleave.call(());").unwrap() < close.find("wait_ms(180)").unwrap());
+    }
+
+    #[test]
+    fn a_picture_going_back_to_size_takes_gestures_at_once() {
+        // Regression: for the 200 ms the picture took to shrink, the stage kept
+        // `zoomed`, which holds swipes, scrolls and taps for zoom and pan, so a
+        // swipe right after a double tap out or a pinch back did nothing.
+        let source = include_str!("post.rs");
+        assert!(source.contains(r#"(z.is_zoomed(), " zoomed"),"#));
+        assert!(source.contains(r#"(!z.is_zoomed() && shrinking(), " shrinking"),"#));
+        let shrinking = rule(".stage.shrinking");
+        assert!(!shrinking.contains("touch-action"));
+        for script in [STAGE, KEY_LISTENER] {
+            assert!(!script.contains("shrinking"));
+        }
     }
 
     #[test]

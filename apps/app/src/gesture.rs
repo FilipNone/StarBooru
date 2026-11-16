@@ -144,7 +144,7 @@ pub fn use_press(kind: &'static str, on: Callback<Press>) {
     });
     use_future(move || async move {
         let mut eval = document::eval(&format!(
-            "{PRESS}\nwindow.__sbPress.start({token}, {kind:?}, (m) => dioxus.send(m));"
+            "{WHEEL_TURNS}\n{PRESS}\nwindow.__sbPress.start({token}, {kind:?}, (m) => dioxus.send(m));"
         ));
         while let Ok(value) = eval.recv::<serde_json::Value>().await {
             if let Some(press) = Press::parse(value) {
@@ -156,6 +156,35 @@ pub fn use_press(kind: &'static str, on: Callback<Press>) {
         document::eval(&format!("window.__sbPress?.stop({token});"));
     });
 }
+
+/// Whether a wheel event starts a new turn of the wheel: two fingers that have
+/// just come down on a touchpad, or a mouse wheel turned again. Until then the
+/// events are one gesture, its tail included: a touchpad carries on after the
+/// fingers lift with ever smaller steps, for a second or more.
+///
+/// A gesture already handled shouldn't wait for that tail to end before the
+/// next can start. Once the caller has used its gesture (`settled`), a new one
+/// starts after a pause of `PAUSE` ms, or when steps that were getting smaller
+/// grow again: fingers come down on the tail. Until then only a pause of `GAP`
+/// ms starts one. `w` is the caller's own state.
+pub(crate) const WHEEL_TURNS: &str = r#"
+window.__sbTurns ??= (w, e, settled) => {
+  const GAP = 300, PAUSE = 80;
+  const size = Math.abs(e.deltaX) + Math.abs(e.deltaY);
+  const since = e.timeStamp - (w.at ?? -1e9);
+  w.at = e.timeStamp;
+  const again = since > GAP || (settled && (since > PAUSE || (w.falling && size >= w.low * 2 + 2)));
+  if (again) {
+    w.falling = false;
+  } else if (size < w.last) {
+    // The lowest step since they began to get smaller.
+    w.low = w.falling ? Math.min(w.low, size) : size;
+    w.falling = true;
+  }
+  w.last = size;
+  return again;
+};
+"#;
 
 /// The page's side of [`use_press`].
 ///
@@ -178,7 +207,7 @@ window.__sbPress ??= (() => {
   const HOLD = 450, SLOP = 10, EASE = "cubic-bezier(0.2, 0, 0, 1)";
   // Who listens for each kind: its token and where to send.
   const self = { kinds: new Map() };
-  let press = null, shown = -1e9, swallow = -1e9, wheel = { quiet: -1e9, p: null };
+  let press = null, shown = -1e9, swallow = -1e9, wheel = { p: null };
 
   const find = (e) => {
     if (!self.kinds.size || !(e.target instanceof Element)) return null;
@@ -258,6 +287,10 @@ window.__sbPress ??= (() => {
     if (p.axis === "x") settle(p, null);
   };
   const down = (e) => {
+    // A new press: the click and the menu of the last one have come by now or
+    // never will, and whatever comes next is this one's.
+    swallow = -1e9;
+    shown = -1e9;
     // A second finger: a pinch or a scroll, not a hold.
     if (press) {
       cancel();
@@ -342,7 +375,9 @@ window.__sbPress ??= (() => {
   // Two fingers sideways on a touchpad. A mouse wheel's notch is bigger, and
   // isn't a swipe.
   const roll = (e) => {
-    if (e.timeStamp > wheel.quiet) {
+    // A swipe that has done its work, or a scroll that wasn't one, doesn't
+    // hold up the next (`WHEEL_TURNS`).
+    if (window.__sbTurns(wheel, e, !wheel.p || wheel.p.done)) {
       wheel.p = null;
       const ax = Math.abs(e.deltaX), ay = Math.abs(e.deltaY);
       if (!e.ctrlKey && e.deltaMode === 0 && ax > ay && ax < 40) {
@@ -353,7 +388,6 @@ window.__sbPress ??= (() => {
         }
       }
     }
-    wheel.quiet = e.timeStamp + 300;
     const p = wheel.p;
     if (!p || p.done) return;
     clearTimeout(p.back);
@@ -365,8 +399,11 @@ window.__sbPress ??= (() => {
       return;
     }
     drag(p, p.dx);
+    // The fingers stopped short of it: back it goes, and that swipe is over.
     p.back = setTimeout(() => {
-      if (!p.done) settle(p, null);
+      if (p.done) return;
+      p.done = true;
+      settle(p, null);
     }, 160);
   };
 
@@ -572,5 +609,42 @@ mod tests {
         assert!(sink.contains("if (!calm())"));
         // Every way a press ends lets it up.
         assert_eq!(PRESS.matches("rise(p);").count(), 4);
+    }
+
+    #[test]
+    fn a_new_press_is_never_eaten_for_the_last_one() {
+        // Regression: after a hold or a swipe, the next tap within half a
+        // second was dropped, as touch sends no click for those and the one
+        // waited for was the next tap's. A second menu within 800 ms didn't open.
+        let (_, down) = PRESS.split_once("const down = (e) => {").unwrap();
+        let (down, _) = down.split_once("\n  };").unwrap();
+        let reset = down.find("swallow = -1e9;").unwrap();
+        assert!(down.find("shown = -1e9;").unwrap() < down.find("const t = find(e);").unwrap());
+        assert!(reset < down.find("if (e.pointerType === \"mouse\"").unwrap());
+    }
+
+    #[test]
+    fn a_wheel_swipe_doesnt_wait_for_the_last_ones_tail() {
+        // Regression: every wheel event held the gesture open for 300 ms more,
+        // so a touchpad's tail kept a swipe that was over from letting the
+        // next one start for a second or more.
+        assert!(!PRESS.contains("quiet"));
+        assert!(PRESS.contains("if (window.__sbTurns(wheel, e, !wheel.p || wheel.p.done)) {"));
+        let source = include_str!("gesture.rs");
+        assert!(source.contains(r#""{WHEEL_TURNS}\n{PRESS}\nwindow.__sbPress.start("#));
+        // A pause, or steps growing again after they had been dying away, and
+        // only once the last one has been used.
+        assert!(WHEEL_TURNS.contains(
+            "const again = since > GAP || (settled && (since > PAUSE || (w.falling && size >= w.low * 2 + 2)));"
+        ));
+        // A swipe let go short of the mark is over too.
+        let (_, back) = PRESS.split_once("p.back = setTimeout(() => {").unwrap();
+        let (back, _) = back.split_once("}, 160);").unwrap();
+        assert!(back.contains("p.done = true;"));
+        let post = include_str!("pages/post.rs");
+        assert!(
+            post.contains("window.__sbTurns(turns, e, swipes && !!window.__sbStage?.rolled())")
+        );
+        assert!(post.contains("crate::gesture::WHEEL_TURNS"));
     }
 }

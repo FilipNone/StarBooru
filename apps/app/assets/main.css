@@ -10,7 +10,7 @@ html { overflow-y: scroll; }
 body { background: #111; }
 /* The loading screen of index.html goes once the app is on the page. This file
    has loaded by then, so nothing shows without its styles. */
-#main:not(:empty) + #boot { opacity: 0; visibility: hidden; transition: opacity 150ms ease-out, visibility 0s 150ms; }
+#main:not(:empty) + #boot { opacity: 0; visibility: hidden; pointer-events: none; transition: opacity 150ms ease-out, visibility 0s 150ms; }
 #main:not(:empty) + #boot::after { animation: none; }
 @media (prefers-reduced-motion: reduce) {
   #main:not(:empty) + #boot { transition: none; }
@@ -777,6 +777,8 @@ html.sb-scrolling .thumb img { filter: none; transition: none; }
   opacity: 0; visibility: hidden; transform: translateY(16px) scale(0.8);
   transition: opacity var(--med) var(--ease), transform var(--med) var(--ease-spring), visibility 0s var(--med);
 }
+/* On its way out, a touch goes through it to what's under it. */
+.to-top:not(.shown) { pointer-events: none; }
 .to-top.shown { opacity: 1; visibility: visible; transform: none; transition-delay: 0s; }
 .to-top.shown:active { transform: scale(0.9); }
 .to-top:focus-visible { outline-offset: 3px; }
@@ -1173,9 +1175,12 @@ html.sb-to-top .masonry-box { opacity: 0; }
 .stage { touch-action: pan-y; user-select: none; -webkit-user-select: none; }
 .stage img { transform-origin: center; transition: transform var(--fast) var(--ease), border-radius var(--fast) var(--ease); }
 .stage:not(.zoomed) img { cursor: zoom-in; }
-/* Grown past the stage, it's seen through the stage's own rounded window. */
+/* Grown past the stage, it's seen through the stage's own rounded window. On
+   its way back to size (`shrinking`) it still is, but the stage takes swipes,
+   scrolls and taps again as it would at its size. */
 .stage.zoomed { overflow: hidden; touch-action: none; cursor: grab; }
-.stage.zoomed img { border-radius: calc(var(--r) / var(--z, 1)); }
+.stage.shrinking { overflow: hidden; }
+.stage:is(.zoomed, .shrinking) img { border-radius: calc(var(--r) / var(--z, 1)); }
 .stage.zoomed:active { cursor: grabbing; }
 .stage.dragging img { transition: none; }
 .stage.full {
@@ -1185,7 +1190,7 @@ html.sb-to-top .masonry-box { opacity: 0; }
   --glass: oklch(0.2 0.015 var(--h) / 0.62); --glass-edge: oklch(1 0 0 / 0.14); --glass-line: oklch(1 0 0 / 0.08);
   --on-surface: oklch(0.96 0.01 var(--h)); --on-surface-2: oklch(0.86 0.015 var(--h));
 }
-.stage.full.zoomed { border-radius: 0; }
+.stage.full:is(.zoomed, .shrinking) { border-radius: 0; }
 /* A finger moving down at the top of the page pulls the picture (post.rs,
    `STAGE`); further down it scrolls. In fullscreen every swipe is the viewer's. */
 html[data-sb-top] .stage:not(.zoomed, .full) { touch-action: pan-down; }
@@ -1785,7 +1790,9 @@ pre.command {
 }
 .upload-sheet { animation: from-tab var(--slow) var(--ease); }
 .upload-sheet .queue { margin: 12px 0 16px; max-height: 32dvh; overflow-y: auto; }
-.sheet-scrim.closing { animation: fade-out var(--med) var(--ease) forwards; }
+/* A sheet on its way out is gone as far as a touch is concerned: what's under
+   it can be pressed and scrolled while it leaves. */
+.sheet-scrim.closing { animation: fade-out var(--med) var(--ease) forwards; pointer-events: none; }
 .sheet-scrim.closing .upload-sheet { animation: to-tab var(--med) var(--ease) forwards; }
 /* A file or an address opened from the Upload page. It comes out of its tile
    and goes back into it (`--from-x`, `--from-y`). */
@@ -1928,8 +1935,9 @@ pre.command {
   background: var(--canvas); overscroll-behavior: contain;
   animation: fade-in var(--med) var(--ease);
 }
-.editor.closing { animation: fade-out 180ms var(--ease) forwards; }
-html:has(.editor) { overflow-y: hidden; }
+/* Fading out, it lets touches and the wheel through to the viewer under it. */
+.editor.closing { animation: fade-out 180ms var(--ease) forwards; pointer-events: none; }
+html:has(.editor:not(.closing)) { overflow-y: hidden; }
 .editor-top {
   grid-area: top; position: relative; z-index: 2; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 8px;
   animation: drop-in var(--slow) var(--ease-spring);

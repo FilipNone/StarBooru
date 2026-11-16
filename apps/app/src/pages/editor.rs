@@ -679,6 +679,9 @@ pub fn EditorSheet(
     post: Post,
     kind: EditKind,
     file_url: String,
+    /// The editor has begun to fade: it no longer covers what's under it.
+    onleave: EventHandler<()>,
+    /// It has gone.
     onclose: EventHandler<()>,
     onsaved: EventHandler<Saved>,
 ) -> Element {
@@ -771,6 +774,7 @@ pub fn EditorSheet(
             return;
         }
         closing.set(true);
+        onleave.call(());
         spawn(async move {
             crate::activity::wait_ms(180).await;
             onclose.call(());

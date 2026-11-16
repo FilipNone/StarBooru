@@ -16,7 +16,8 @@ const close = () => {
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     return true;
   }
-  const open = document.querySelector(".lightbox-btn.close, .select-backdrop, .sheet-scrim");
+  // A sheet that is already closing has had its key: this one is for what's under it.
+  const open = document.querySelector(".lightbox-btn.close, .select-backdrop, .sheet-scrim:not(.closing)");
   open?.click();
   return !!open;
 };
@@ -46,4 +47,20 @@ pub fn watch(route: &Route) {
     use_drop(|| {
         document::eval("window.__sbBack = null;");
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_sheet_on_its_way_out_leaves_the_key_to_what_is_under_it() {
+        // Regression: Back pressed while a sheet faded out clicked its scrim
+        // again, which did nothing, and the key was used up.
+        assert!(WATCH.contains(".sheet-scrim:not(.closing)"));
+        let css = include_str!("../assets/main.css");
+        let (_, closing) = css.split_once("\n.sheet-scrim.closing {").unwrap();
+        let (closing, _) = closing.split_once('}').unwrap();
+        assert!(closing.contains("pointer-events: none"));
+    }
 }

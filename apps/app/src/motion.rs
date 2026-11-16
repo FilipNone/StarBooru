@@ -330,9 +330,10 @@ window.__sbHero ??= {
       for (const running of [...el.getAnimations(), ...(page?.getAnimations() ?? [])]) running.cancel();
     }
     this.watch(el, id);
+    // To the top once: a scroll begun while the picture is on its way stays.
+    if (this.ghost && !this.flying) scrollTo({ top: 0, behavior: "instant" });
     const go = (tries) => {
       if (!this.ghost || this.flying) return;
-      scrollTo({ top: 0, behavior: "instant" });
       const box = el.getBoundingClientRect();
       if (box.width >= 2 && box.height >= 2) {
         document.documentElement.classList.add("sb-hero-flying");

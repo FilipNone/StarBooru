@@ -2126,6 +2126,8 @@ mod tests {
             css.contains("opacity: 0; visibility: hidden; transform: translateY(16px) scale(0.8);")
         );
         assert!(css.contains(".to-top.shown { opacity: 1; visibility: visible;"));
+        // On its way out too, as it stays visible while it fades.
+        assert!(css.contains(".to-top:not(.shown) { pointer-events: none; }"));
         // It comes a screen down, and the app hears only when that changes.
         assert!(WATCH_FAR.contains("const now = scrollY > innerHeight;"));
         assert!(WATCH_FAR.contains("if (now !== far) {"));

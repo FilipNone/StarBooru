@@ -182,6 +182,10 @@ mod tests {
         );
         let css = include_str!("../assets/main.css");
         assert!(css.contains("#main:not(:empty) + #boot { opacity: 0; visibility: hidden;"));
+        // Fading, it lets the app under it have the first touch.
+        assert!(css.contains(
+            "#main:not(:empty) + #boot { opacity: 0; visibility: hidden; pointer-events: none;"
+        ));
         // The stylesheet is linked by the page, after the loading screen.
         assert!(page.find("id=\"boot\"").unwrap() < page.find("{style_include}").unwrap());
         let source = include_str!("main.rs");
